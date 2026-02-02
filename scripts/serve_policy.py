@@ -18,6 +18,7 @@ class EnvMode(enum.Enum):
     ALOHA_SIM = "aloha_sim"
     DROID = "droid"
     LIBERO = "libero"
+    FALCONVLA_ALOHA = "falconvla_aloha"
 
 
 @dataclasses.dataclass
@@ -60,6 +61,10 @@ DEFAULT_CHECKPOINT: dict[EnvMode, Checkpoint] = {
     EnvMode.ALOHA: Checkpoint(
         config="pi05_aloha",
         dir="gs://openpi-assets/checkpoints/pi05_base",
+    ),
+    EnvMode.FALCONVLA_ALOHA: Checkpoint(
+        config="falconvla_aloha",
+        dir="tiiuae/FalconVLA-8B-ALOHA-FM-DiT-3V-NP",
     ),
     EnvMode.ALOHA_SIM: Checkpoint(
         config="pi0_aloha_sim",

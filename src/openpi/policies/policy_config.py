@@ -53,10 +53,13 @@ def create_trained_policy(
     if is_pytorch:
         model = train_config.model.load_pytorch(train_config, weight_path)
         model.paligemma_with_expert.to_bfloat16_for_selected_params("bfloat16")
+    elif "falconvla" in checkpoint_dir.stem.split("-")[0].lower():
+        from openpi.models.falconvla import FalconVLA
+        model = FalconVLA(train_config.model)
     else:
         model = train_config.model.load(_model.restore_params(checkpoint_dir / "params", dtype=jnp.bfloat16))
     data_config = train_config.data.create(train_config.assets_dirs, train_config.model)
-    if norm_stats is None:
+    if norm_stats is None and not("falconvla" in checkpoint_dir.stem.split("-")[0].lower()):
         # We are loading the norm stats from the checkpoint instead of the config assets dir to make sure
         # that the policy is using the same normalization stats as the original training process.
         if data_config.asset_id is None:
