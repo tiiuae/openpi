@@ -1213,8 +1213,13 @@ _CONFIGS = [
         wandb_enabled=False,
     ),
     TrainConfig(
-        name="falconvla_aloha",
-        model=falconvla_config.FalconVLAConfig(),
+        name="falconvla_aloha_burger270",
+        model=falconvla_config.FalconVLAConfig(
+            unnorm_key="burger_270_episodes",
+            action_dim=14,
+            action_horizon=25,
+            
+        ),
         data=LeRobotFalconVLADataConfig(
             assets=AssetsConfig(asset_id="trossen"),
         ),
