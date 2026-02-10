@@ -1,10 +1,25 @@
 import dataclasses
 from typing import ClassVar
+from collections.abc import Sequence
+import logging
+import time
+from typing import Any, TypeAlias
 
 import einops
 import numpy as np
+import jax
+import jax.numpy as jnp
+import torch
+from typing_extensions import override
 
 from openpi import transforms
+from openpi import transforms as _transforms
+from openpi.models import falconvla_config, model as _model
+from openpi.shared import array_typing as at
+from openpi_client import base_policy as _base_policy
+from openpi.training.config import get_config
+
+
 
 
 def make_falconvla_example() -> dict:
@@ -19,6 +34,101 @@ def make_falconvla_example() -> dict:
         },
         "prompt": "do something",
     }
+
+
+BasePolicy: TypeAlias = _base_policy.BasePolicy
+
+
+class FalconVLAPolicy(BasePolicy):
+    def __init__(
+        self,
+        model: _model.BaseModel,
+        *,
+        transforms: Sequence[_transforms.DataTransformFn] = (),
+        output_transforms: Sequence[_transforms.DataTransformFn] = (),
+        sample_kwargs: dict[str, Any] | None = None,
+        metadata: dict[str, Any] | None = None,
+        pytorch_device: str = "cuda" if torch.cuda.is_available() else "cpu",
+    ):
+        """Initialize the FalconVLA Policy.
+
+        Args:
+            model: The FalconVLA model to use for action sampling.
+            transforms: Input data transformations to apply before inference.
+            output_transforms: Output data transformations to apply after inference.
+            sample_kwargs: Additional keyword arguments to pass to model.sample_actions.
+            metadata: Additional metadata to store with the policy.
+            pytorch_device: Device to use for PyTorch models (e.g., "cpu", "cuda:0").
+        """
+        self._model = model
+        self._input_transform = _transforms.compose(transforms)
+        self._output_transform = _transforms.compose(output_transforms)
+        self._sample_kwargs = sample_kwargs or {}
+        self._metadata = metadata or {}
+        self._pytorch_device = pytorch_device
+
+        if hasattr(self._model, 'eval'):
+            self._model.eval()
+    ''' 
+    @override
+    def infer(self, obs: dict, *, noise: np.ndarray | None = None) -> dict:  # type: ignore[misc]
+        
+        #input=self._input_transform(obs)
+        # observation = _model.Observation.from_dict(input)
+        
+        
+        start_time = time.monotonic()
+        # actions = self._model.sample_actions(self._pytorch_device, observation)
+        
+        try:
+            outputs = self._model.inference(obs)
+        except Exception as e:
+            logging.error(f"Error during model inference: {e}")
+            raise e
+        
+        outputs["policy_timing"] = {
+            "infer_ms": (time.monotonic() - start_time) * 1000,
+        }
+        
+        return outputs
+    '''
+
+    @override
+    def infer(self, obs: dict, *, noise: np.ndarray | None = None) -> dict:  # type: ignore[misc]
+
+        start_time = time.monotonic()
+        
+        try:
+            outputs = self._model.inference(obs)   # this is the flat (350,) array
+        except Exception as e:
+            logging.error(f"Error during model inference: {e}")
+            raise e
+        
+        # Turn model output into actions
+        actions = np.asarray(outputs)
+
+        if actions.ndim == 1:
+            train_config = get_config("falconvla_aloha_burger270")
+            model_config = train_config.model
+
+            actions = actions.reshape(model_config.action_horizon, model_config.action_dim)  # reshape to (25, 14)
+            #actions = actions.reshape(falconvla_config.FalconVLAConfig.action_dim, falconvla_config.FalconVLAConfig.action_horizon)    #action_dim=14, action_horizon=25
+
+        outputs = {
+            "actions": actions,
+            "policy_timing": {
+                "infer_ms": (time.monotonic() - start_time) * 1000,
+            },
+        }
+
+        return outputs
+
+        
+    @property
+    def metadata(self) -> dict[str, Any]:
+        return self._metadata
+
+
 
 
 @dataclasses.dataclass(frozen=True)

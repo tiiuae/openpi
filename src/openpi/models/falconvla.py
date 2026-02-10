@@ -26,18 +26,19 @@ def load_falcon_model(model_name: str, device: str, hf_token: Optional[str]) -> 
 
 
 class FalconVLA(_model.BaseModel):
-    def __init__(self, config: FalconVLAConfig):
+    def __init__(self, config: FalconVLAConfig, checkpoint_dir: str = ""):
         self.config = config
+        self.checkpoint_dir = checkpoint_dir
 
         # Load hf token from environment variable if available
         hf_token = os.getenv("HF_TOKEN", None)
         print("HF_TOKEN found in environment." if hf_token else "No HF_TOKEN found in environment.")
 
         # Initialize model parameters or load pretrained weights here
-        self.processor, self.model = load_falcon_model(config.model_name, config.device, hf_token)
+        self.processor, self.model = load_falcon_model(checkpoint_dir, config.device, hf_token)
 
     @torch.no_grad()
-    def __call__(self, observation: _model.Observation, task_label: str = None) -> _model.Actions:
+    def inference(self, observation: _model.Observation, task_label: str = None) -> _model.Actions:
         """Run inference on observation.
         
         Args:
@@ -60,34 +61,34 @@ class FalconVLA(_model.BaseModel):
 
         # Getting the images from the observation
         # Observation.images should be a dict with standard keys
-        images = observation.images
+        images = observation.get("images", None)
         
         # Map from standard image keys to camera names
         # base_0_rgb -> primary/main image (cam_high)
         # right_wrist_0_rgb -> wrist image (cam_right_wrist)
         # left_wrist_0_rgb -> secondary image (cam_left_wrist)
         
-        primary_image = images.get("base_0_rgb")
+        primary_image = images.get("cam_high", None)
         if primary_image is None:
-            raise ValueError("Missing required 'base_0_rgb' image in observation")
+            raise ValueError("Missing required 'cam_high' image in observation")
         
         # Adding the primary image to the prompt
         input_builder.add_main_image(image=primary_image)
 
         if self.config.use_wrist:
-            wrist_image = images.get("right_wrist_0_rgb")
+            wrist_image = images.get("cam_right_wrist", None)
             if wrist_image is not None:
                 input_builder.add_wrist_image(wrist_image)
 
         if self.config.use_secondary:
-            secondary_image = images.get("left_wrist_0_rgb")
+            secondary_image = images.get("cam_left_wrist", None)
             if secondary_image is not None:
                 input_builder.add_secondary_image(secondary_image)
 
         if self.config.use_proprio:
             # Computing the proprio tokens
             proprio_stats = fetch_proprio_stats(self.model, self.config.unnorm_key)
-            normalized_proprio = normalize_proprio(observation.state, proprio_stats)
+            normalized_proprio = normalize_proprio(observation.get("state",None), proprio_stats)
             tokenized_proprio = tokenize_proprio(normalized_proprio, self.config.num_bins)
             proprio_tokens = get_proprio_tokens(tokenized_proprio)
 
@@ -102,7 +103,7 @@ class FalconVLA(_model.BaseModel):
             unnorm_key=self.config.unnorm_key,
             horizon=self.config.action_horizon,
             do_sample=False
-            )
+            )     
         return actions
 
     @override
@@ -116,4 +117,7 @@ class FalconVLA(_model.BaseModel):
     ) -> at.Float[at.Array, "*b ah"]: ...
 
     @override
-    def sample_actions(self, rng: at.KeyArrayLike, observation: _model.Observation, **kwargs) -> _model.Actions: ...
+    def sample_actions(self, rng: at.KeyArrayLike, observation: _model.Observation, **kwargs) -> _model.Actions:
+        # Extract task_label from kwargs if provided
+        task_label = kwargs.get('task_label', None)
+        return self.__call__(observation, task_label=task_label) 
