@@ -14,6 +14,7 @@ class FalconVLAConfig(_model.BaseModelConfig):
 
     # Model name or path in HuggingFace model hub
     model_name: str = "tiiuae/FalconVLA-8B-ALOHA-FM-DiT-3V-NP"
+    model_path: str = "falconvla"
 
     max_token_len: int = None  # type: ignore
     discrete_state_input: bool = None  # type: ignore

@@ -64,7 +64,7 @@ DEFAULT_CHECKPOINT: dict[EnvMode, Checkpoint] = {
     ),
     EnvMode.FALCONVLA_ALOHA: Checkpoint(
         config="falconvla_aloha",
-        dir="tiiuae/FalconVLA-8B-ALOHA-FM-DiT-3V-NP",
+        dir="",
     ),
     EnvMode.ALOHA_SIM: Checkpoint(
         config="pi0_aloha_sim",
@@ -91,6 +91,11 @@ def create_default_policy(env: EnvMode, *, default_prompt: str | None = None) ->
 
 
 def create_policy(args: Args) -> _policy.Policy:
+
+    # Route to FalconVLA-specific function if needed
+    if args.env == EnvMode.FALCONVLA_ALOHA:
+        return create_falconvla_policy_from_args(args)
+    
     """Create a policy from the given arguments."""
     match args.policy:
         case Checkpoint():
@@ -102,6 +107,7 @@ def create_policy(args: Args) -> _policy.Policy:
 
 
 def main(args: Args) -> None:
+
     policy = create_policy(args)
     policy_metadata = policy.metadata
 
@@ -122,6 +128,27 @@ def main(args: Args) -> None:
     server.serve_forever()
 
 
+def create_falconvla_policy_from_args(args: Args) -> _policy.Policy:
+    """Create a FalconVLA policy from the given arguments."""
+    match args.policy:
+        case Checkpoint():
+            return _policy_config.create_falconvla_policy(
+                _config.get_config(args.policy.config),
+                args.policy.dir,
+                default_prompt=args.default_prompt
+            )
+        case Default():
+            # Use the default FalconVLA checkpoint
+            checkpoint = DEFAULT_CHECKPOINT[EnvMode.FALCONVLA_ALOHA]
+            return _policy_config.create_falconvla_policy(
+                _config.get_config(checkpoint.config),
+                checkpoint.dir,
+                default_prompt=args.default_prompt
+            )
+
 if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO, force=True)
     main(tyro.cli(Args))
+
+
+
