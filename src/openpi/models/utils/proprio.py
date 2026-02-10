@@ -1,6 +1,8 @@
 # import Any
 from typing import Any, Dict
 import numpy as np
+import jax.numpy as jnp
+from openpi.models.utils.prompt_builder import ACTION_PROPRIO_NORMALIZATION_TYPE, NormalizationType
 
 
 def fetch_proprio_stats(falconvla_model: Any, unnorm_key: str) -> dict:
@@ -13,7 +15,13 @@ def fetch_proprio_stats(falconvla_model: Any, unnorm_key: str) -> dict:
     Returns:
         dict: A Dict containing the norm stats 
     """
-    return falconvla_model.get_proprio_stats(unnorm_key=unnorm_key)
+    try:
+        proprio_stats = falconvla_model.norm_stats[unnorm_key]['proprio']
+        return proprio_stats
+    except KeyError:
+        raise ValueError(f"Could not find proprio stats for unnorm_key: {unnorm_key}\n\r"\
+                         f"Available keys: {list(falconvla_model.norm_stats.keys())}")
+
 
 def normalize_proprio(proprio: np.ndarray, norm_stats: Dict[str, Any]) -> np.ndarray:
     """
@@ -37,8 +45,8 @@ def normalize_proprio(proprio: np.ndarray, norm_stats: Dict[str, Any]) -> np.nda
     else:
         raise ValueError("Unsupported action/proprio normalization type detected!")
 
-    normalized_proprio = np.clip(
-        np.where(
+    normalized_proprio = jnp.clip(
+        jnp.where(
             mask,
             2 * (proprio - proprio_low) / (proprio_high - proprio_low + 1e-8) - 1,
             proprio,
