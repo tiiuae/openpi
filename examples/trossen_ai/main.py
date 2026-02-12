@@ -23,6 +23,7 @@ import time
 
 import cv2
 from lerobot.cameras.realsense.configuration_realsense import RealSenseCameraConfig
+from lerobot.cameras.opencv.configuration_opencv import OpenCVCameraConfig
 from lerobot.robots import make_robot_from_config
 from lerobot_robot_trossen.config_bi_widowxai_follower import BiWidowXAIFollowerRobotConfig
 import numpy as np
@@ -61,32 +62,35 @@ class TrossenOpenPIBridge:
             min_time_to_move_multiplier=4.0,
             loop_rate=30,
             cameras={
-                "cam_high": RealSenseCameraConfig(
-                    serial_number_or_name="218622270304", width=640, height=480, fps=30, use_depth=False
+                "cam_high": OpenCVCameraConfig(
+                    index_or_path=16, width=640, height=480, fps=30
                 ),
-                "cam_low": RealSenseCameraConfig(
-                    serial_number_or_name="130322272628", width=640, height=480, fps=30, use_depth=False
+                # "cam_low": RealSenseCameraConfig(
+                #     serial_number_or_name="130322272628", width=640, height=480, fps=30, use_depth=False
+                # ),
+                "cam_right_wrist": OpenCVCameraConfig(
+                    index_or_path=10, width=640, height=480, fps=30
                 ),
-                "cam_right_wrist": RealSenseCameraConfig(
-                    serial_number_or_name="128422271347", width=640, height=480, fps=30, use_depth=False
-                ),
-                "cam_left_wrist": RealSenseCameraConfig(
-                    serial_number_or_name="218622274938", width=640, height=480, fps=30, use_depth=False
+                "cam_left_wrist": OpenCVCameraConfig(
+                    index_or_path=4, width=640, height=480, fps=30
                 ),
             },
         )
         self.robot = make_robot_from_config(robot_config)
-        self.robot.connect()
+        self.robot.connect() 
 
         self.current_action_chunk = None
         self.action_chunk_idx = 0
+
+        ########## originally was 50 changed for falconvla #############3
         self.action_chunk_size = (
-            50  # Number of actions per chunk from the policy (Defined by the policy server in this case 50)
+            25  # Number of actions per chunk from the policy (Defined by the policy server in this case 50)
         )
         self.episode_step = 0
         self.is_running = False
-        self.rate_of_inference = 50  # Number of control steps per policy inference (matches README and Pi-0 paper)
 
+        ########## originally was 50 changed for the falconvla  #############3
+        self.rate_of_inference = 25  # Number of control steps per policy inference 
         self.temporal_ensemble_coefficient = None  # Temporal ensembling weight (can be set to None for no ensembling)
 
         # FIFO Buffer for actions
