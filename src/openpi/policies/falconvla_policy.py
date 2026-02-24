@@ -17,7 +17,7 @@ from openpi import transforms as _transforms
 from openpi.models import falconvla_config, model as _model
 from openpi.shared import array_typing as at
 from openpi_client import base_policy as _base_policy
-from openpi.training.config import get_config
+
 
 
 
@@ -69,33 +69,10 @@ class FalconVLAPolicy(BasePolicy):
 
         if hasattr(self._model, 'eval'):
             self._model.eval()
-    ''' 
-    @override
-    def infer(self, obs: dict, *, noise: np.ndarray | None = None) -> dict:  # type: ignore[misc]
-        
-        #input=self._input_transform(obs)
-        # observation = _model.Observation.from_dict(input)
-        
-        
-        start_time = time.monotonic()
-        # actions = self._model.sample_actions(self._pytorch_device, observation)
-        
-        try:
-            outputs = self._model.inference(obs)
-        except Exception as e:
-            logging.error(f"Error during model inference: {e}")
-            raise e
-        
-        outputs["policy_timing"] = {
-            "infer_ms": (time.monotonic() - start_time) * 1000,
-        }
-        
-        return outputs
-    '''
 
     @override
     def infer(self, obs: dict, *, noise: np.ndarray | None = None) -> dict:  # type: ignore[misc]
-
+        from openpi.training.config import get_config
         start_time = time.monotonic()
         
         try:
@@ -111,8 +88,7 @@ class FalconVLAPolicy(BasePolicy):
             train_config = get_config("falconvla_aloha_burger270")
             model_config = train_config.model
 
-            actions = actions.reshape(model_config.action_horizon, model_config.action_dim)  # reshape to (25, 14)
-            #actions = actions.reshape(falconvla_config.FalconVLAConfig.action_dim, falconvla_config.FalconVLAConfig.action_horizon)    #action_dim=14, action_horizon=25
+            actions = actions.reshape(model_config.action_horizon, model_config.action_dim)  # reshape to (14, 25)
 
         outputs = {
             "actions": actions,
