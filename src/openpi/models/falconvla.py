@@ -22,6 +22,41 @@ def load_falcon_model(model_name: str, device: str, hf_token: Optional[str]) -> 
         torch_dtype=torch.bfloat16,
         token=hf_token
     ).to(device)
+    
+    # Patch config to ensure required token IDs are available
+    # The HuggingFace model's forward pass expects these attributes to exist
+    
+    # Try to get image_token_id from processor's tokenizer
+    image_token_id = 32000  # Default value
+    if hasattr(processor, 'tokenizer') and processor.tokenizer is not None:
+        if hasattr(processor.tokenizer, 'image_token_id'):
+            image_token_id = processor.tokenizer.image_token_id
+        elif hasattr(processor.tokenizer, 'convert_tokens_to_ids'):
+            # Try to find the image token by string
+            for token_str in ["|<image>|", "<image>", "[IMG]"]:
+                try:
+                    token_id = processor.tokenizer.convert_tokens_to_ids(token_str)
+                    if token_id and token_id not in [processor.tokenizer.unk_token_id, 0]:
+                        image_token_id = token_id
+                        break
+                except:
+                    pass
+    
+    # Set the token IDs on the main config
+    if not hasattr(model.config, 'image_token_id'):
+        model.config.image_token_id = image_token_id
+    
+    # Set video and vision_start token IDs with reasonable defaults
+    if not hasattr(model.config, 'video_token_id'):
+        model.config.video_token_id = image_token_id + 1
+    if not hasattr(model.config, 'vision_start_token_id'):
+        model.config.vision_start_token_id = image_token_id + 2
+    
+    # Also ensure vision_config has image_token_id in case the model code accesses it there
+    if hasattr(model.config, 'vision_config'):
+        if not hasattr(model.config.vision_config, 'image_token_id'):
+            model.config.vision_config.image_token_id = image_token_id
+    
     return processor, model
 
 
