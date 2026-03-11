@@ -42,5 +42,6 @@ RUN GIT_LFS_SKIP_SMUDGE=1 uv pip install -e .
 
 RUN uv pip install -e /app/transformers-internal
 RUN uv pip install timm
+RUN uv pip install 'accelerate>=0.26.0'
 
 CMD /bin/bash -c "/.venv/bin/python scripts/serve_policy.py $SERVER_ARGS"

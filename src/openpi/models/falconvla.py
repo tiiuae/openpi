@@ -20,7 +20,8 @@ def load_falcon_model(model_name: str, device: str, hf_token: Optional[str]) -> 
         model_name,
         trust_remote_code=True,
         torch_dtype=torch.bfloat16,
-        token=hf_token
+        token=hf_token,
+        low_cpu_mem_usage=True
     ).to(device)
     
     # Patch config to ensure required token IDs are available
@@ -84,6 +85,7 @@ class FalconVLA(_model.BaseModel):
             Predicted actions
         """
         # Extract task label from observation if not provided
+        # TODO: Fix this mess
         if task_label is None:
             if hasattr(observation, 'tokenized_prompt') and observation.tokenized_prompt is not None:
                 # If we have tokenized prompt, we need to decode it (simplified approach)
@@ -92,7 +94,7 @@ class FalconVLA(_model.BaseModel):
                 task_label = "complete the task"  # Default fallback
 
         # Building the prompt for the model
-        input_builder = ActionPromptBuilder(task_label=task_label)
+        input_builder = ActionPromptBuilder(task_label=observation['prompt'])
 
         # Getting the images from the observation
         # Observation.images should be a dict with standard keys
@@ -102,7 +104,34 @@ class FalconVLA(_model.BaseModel):
         # base_0_rgb -> primary/main image (cam_high)
         # right_wrist_0_rgb -> wrist image (cam_right_wrist)
         # left_wrist_0_rgb -> secondary image (cam_left_wrist)
+
+#! ### Debug - Saving images to disk just before they are consumed by
+        # Create a folder if doensn't exist for storing the images (for debugging)
+        # add timestamp to the folder name to avoid overwriting
+        import time
+        import cv2
+        import numpy as np
         
+        timestamp = time.strftime("%Y%m%d-%H%M%S")
+        debug_folder = f"debug/{timestamp}"
+        os.makedirs(debug_folder, exist_ok=True)
+        if images is not None:
+            for key, img in images.items():
+                try:
+                    img_path = f"{debug_folder}/{timestamp}_{key}.png"
+                    img_np = img.cpu().numpy() if isinstance(img, torch.Tensor) else np.array(img)
+
+                    # Convert CHW to HWC and RGB to BGR for cv2
+                    if img_np.shape[0] == 3:
+                        img_np = np.transpose(img_np, (1, 2, 0))
+                        # img_np = cv2.cvtColor(img_np, cv2.COLOR_RGB2BGR)
+
+                    cv2.imwrite(img_path, img_np)
+                    print(f"Saved {key} to {img_path}")
+                except Exception as e:
+                    print(f"Failed to save {key}: {e}")
+#! ####
+
         primary_image = images.get("cam_high", None)
         if primary_image is None:
             raise ValueError("Missing required 'cam_high' image in observation")

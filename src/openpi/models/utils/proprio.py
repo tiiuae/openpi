@@ -45,8 +45,8 @@ def normalize_proprio(proprio: np.ndarray, norm_stats: Dict[str, Any]) -> np.nda
     else:
         raise ValueError("Unsupported action/proprio normalization type detected!")
 
-    normalized_proprio = jnp.clip(
-        jnp.where(
+    normalized_proprio = np.clip(
+        np.where(
             mask,
             2 * (proprio - proprio_low) / (proprio_high - proprio_low + 1e-8) - 1,
             proprio,
