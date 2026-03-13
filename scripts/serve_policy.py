@@ -5,8 +5,11 @@ import socket
 
 import tyro
 
+
 from openpi.policies import policy as _policy
 from openpi.policies import policy_config as _policy_config
+from openpi.policies import openvla_policy as _openvla_policy
+from openpi.policies import openvlaoft_policy as _openvlaoft_policy
 from openpi.serving import websocket_policy_server
 from openpi.training import config as _config
 
@@ -19,6 +22,8 @@ class EnvMode(enum.Enum):
     DROID = "droid"
     LIBERO = "libero"
     FALCONVLA_ALOHA = "falconvla_aloha"
+    OPENVLA = "openvla" 
+    OPENVLA_OFT = "openvla-oft"
 
 
 @dataclasses.dataclass
@@ -43,12 +48,10 @@ class Args:
     # Environment to serve the policy for. This is only used when serving default policies.
     env: EnvMode = EnvMode.ALOHA_SIM
 
-    # If provided, will be used in case the "prompt" key is not present in the data, or if the model doesn't have a default
-    # prompt.
     default_prompt: str | None = None
 
     # Port to serve the policy on.
-    port: int = 8000
+    port: int = 8800
     # Record the policy's behavior for debugging.
     record: bool = False
 
@@ -78,8 +81,15 @@ DEFAULT_CHECKPOINT: dict[EnvMode, Checkpoint] = {
         config="pi05_libero",
         dir="gs://openpi-assets/checkpoints/pi05_libero",
     ),
+    EnvMode.OPENVLA: Checkpoint(
+        config="openvla",
+        dir="",
+    ),
+    EnvMode.OPENVLA_OFT: Checkpoint(
+        config="openvla-oft",
+        dir="",
+    )
 }
-
 
 def create_default_policy(env: EnvMode, *, default_prompt: str | None = None) -> _policy.Policy:
     """Create a default policy for the given environment."""
@@ -90,13 +100,32 @@ def create_default_policy(env: EnvMode, *, default_prompt: str | None = None) ->
     raise ValueError(f"Unsupported environment mode: {env}")
 
 
+
 def create_policy(args: Args) -> _policy.Policy:
 
-    # Route to FalconVLA-specific function if needed
+    # 1. Route to FalconVLA-specific function if needed
     if args.env == EnvMode.FALCONVLA_ALOHA:
         return create_falconvla_policy_from_args(args)
-    
-    """Create a policy from the given arguments."""
+    # 2. Route to OpenVLA
+    if args.env == EnvMode.OPENVLA:
+        logging.info("Using OpenVLAClientPolicy (REST backend)")
+        return _openvla_policy.OpenVLAClientPolicy(
+            server_url="http://localhost:8000/act",
+            timeout=10.0,
+            unnorm_key="bridge_orig",
+            default_prompt=args.default_prompt,
+        )
+
+    # 3. Route to OpenVLA-OFT
+    if args.env == EnvMode.OPENVLA_OFT:
+        logging.info("Using OpenVLA-OFTClientPolicy (REST backend)")
+        return _openvlaoft_policy.OpenVLAOFTClientPolicy(
+            server_url="http://localhost:8777/act",
+            timeout=10.0,
+            unnorm_key="bridge_orig",
+            default_prompt=args.default_prompt,
+        )
+    #  Check if a specific policy checkpoint was provided
     match args.policy:
         case Checkpoint():
             return _policy_config.create_trained_policy(
