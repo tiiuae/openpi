@@ -10,10 +10,10 @@ Handles:
 4. Executing actions on the arm
 
 Usage:
-    python main.py --mode autonomous --task_prompt "grab and handover red cube"
+    python main.py --mode autonomous --task_prompt "Pick up the blue cup and place it in the orange basket"
 
     Test mode (no movement):
-    python main.py --mode test --task_prompt "grab and handover red cube"
+    python main.py --mode test --task_prompt "Pick up the blue cup and place it in the orange basket"
 """
 
 import argparse
@@ -91,7 +91,7 @@ class TrossenOpenPIBridge:
 
         ########## originally was 50 changed for the falconvla  #############3
         self.rate_of_inference = 25  # Number of control steps per policy inference 
-        self.temporal_ensemble_coefficient = None  # Temporal ensembling weight (can be set to None for no ensembling)
+        self.temporal_ensemble_coefficient = True  # Temporal ensembling weight (can be set to None for no ensembling)
 
         # FIFO Buffer for actions
         self.action_buffer = defaultdict(list)
@@ -242,9 +242,9 @@ class TrossenOpenPIBridge:
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Trossen AI Stationary Kit <-> OpenPI Policy Server Bridge")
-    parser.add_argument("--policy_host", default="localhost", help="Policy server host")
-    parser.add_argument("--policy_port", type=int, default=8000, help="Policy server port")
-    parser.add_argument("--control_freq", type=int, default=30, help="Control frequency in Hz")
+    parser.add_argument("--policy_host", default="wss://vla-openpi.apps.dhabi.aidrc.tii.ae", help="Policy server host")
+    parser.add_argument("--policy_port", type=int, default=None, help="Policy server port")
+    parser.add_argument("--control_freq", type=int, default=20, help="Control frequency in Hz")
     parser.add_argument(
         "--mode",
         choices=["autonomous", "test"],

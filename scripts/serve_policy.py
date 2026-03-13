@@ -66,8 +66,8 @@ DEFAULT_CHECKPOINT: dict[EnvMode, Checkpoint] = {
         dir="gs://openpi-assets/checkpoints/pi05_base",
     ),
     EnvMode.FALCONVLA_ALOHA: Checkpoint(
-        config="falconvla_aloha",
-        dir="",
+        config="FalconVLA-AD14-H25",
+        dir="/models/FalconVLA-8B-aidrc_cups_manipulation-er-3v-p",
     ),
     EnvMode.ALOHA_SIM: Checkpoint(
         config="pi0_aloha_sim",

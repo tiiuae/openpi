@@ -14,10 +14,14 @@ services:
     volumes:
       - $PWD:/app
       - ${OPENPI_DATA_HOME:-~/.cache/openpi}:/openpi_assets
+      - /lustre1/tier2/projects/falcon-vla/vla_training/personal_temp/brahim/post_train_aidrc_cups_manipulation:/models
     environment:
-      - SERVER_ARGS
+      - SERVER_ARGS=policy:checkpoint --policy.config=FalconVLA-AD14-H25 --policy.dir=/models/FalconVLA-8B-aidrc_cups_manipulation-dualarm-3v-p
       - OPENPI_DATA_HOME=/openpi_assets
       - IS_DOCKER=true
+
+    # user: "2200065:2200065"
+    # command: bash
 
     # Comment out this block if not running on a machine with GPUs.
     deploy:
@@ -25,5 +29,5 @@ services:
         reservations:
           devices:
             - driver: nvidia
-              count: 1
+              device_ids: ["7"]
               capabilities: [gpu]
