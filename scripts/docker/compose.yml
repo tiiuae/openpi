@@ -14,9 +14,9 @@ services:
     volumes:
       - $PWD:/app
       - ${OPENPI_DATA_HOME:-~/.cache/openpi}:/openpi_assets
-      - /lustre1/tier2/projects/falcon-vla/vla_training/personal_temp/brahim/post_train_aidrc_cups_manipulation:/models
+      - /home/ibrahim/storage/VLA_MODELS:/models
     environment:
-      - SERVER_ARGS=policy:checkpoint --policy.config=FalconVLA-AD14-H25 --policy.dir=/models/FalconVLA-8B-aidrc_cups_manipulation-dualarm-3v-p
+      - SERVER_ARGS=policy:checkpoint --policy.config=FalconVLA-AD14-H25 --policy.dir=/models/FalconVLA-8B-aidrc_cups_manipulation-dualarm-3v-np
       - OPENPI_DATA_HOME=/openpi_assets
       - IS_DOCKER=true
 
@@ -29,5 +29,5 @@ services:
         reservations:
           devices:
             - driver: nvidia
-              device_ids: ["7"]
+              device_ids: ["0"]
               capabilities: [gpu]

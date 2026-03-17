@@ -37,11 +37,14 @@ ENV UV_PROJECT_ENVIRONMENT=/.venv
 
 COPY . /app/
 
-RUN UV_HTTP_TIMEOUT=600 UV_HTTP_RETRIES=10 UV_CONCURRENT_DOWNLOADS=1 GIT_LFS_SKIP_SMUDGE=1 uv sync
+RUN apt-get update && apt-get install -y libgl1 libglib2.0-0 && rm -rf /var/lib/apt/lists/*
+
+RUN UV_HTTP_TIMEOUT=600 UV_HTTP_RETRIES=10 GIT_LFS_SKIP_SMUDGE=1 uv sync
 RUN GIT_LFS_SKIP_SMUDGE=1 uv pip install -e .
 
 RUN uv pip install -e /app/transformers-internal
 RUN uv pip install timm
 RUN uv pip install 'accelerate>=0.26.0'
+RUN uv pip install json-numpy
 
 CMD /bin/bash -c "/.venv/bin/python scripts/serve_policy.py $SERVER_ARGS"
