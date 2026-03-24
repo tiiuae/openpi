@@ -22,16 +22,18 @@ import logging
 import time
 
 import cv2
-from lerobot.cameras.realsense.configuration_realsense import RealSenseCameraConfig
 from lerobot.cameras.opencv.configuration_opencv import OpenCVCameraConfig
 from lerobot.robots import make_robot_from_config
 from lerobot_robot_trossen.config_bi_widowxai_follower import BiWidowXAIFollowerRobotConfig
 import numpy as np
+from PIL import Image
 from openpi_client import websocket_client_policy
 from scipy.interpolate import PchipInterpolator
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
+
+DEFAULT_TRAINING_SIZE = (224, 224)
 
 
 class TrossenOpenPIBridge:
@@ -40,10 +42,13 @@ class TrossenOpenPIBridge:
     def __init__(
         self,
         policy_server_host: str = "localhost",
-        policy_server_port: int = 8000,
+        policy_server_port: int = 8080,
         control_frequency: int = 30,
         test_mode: str = "autonomous",  # "autonomous" or "test"
         max_steps: int = 1000,
+        action_chunk_size: int = 25,
+        rate_of_inference: int = 20,
+        temporal_ensemble: bool = True,
     ):
         self.control_frequency = control_frequency
         self.max_steps = max_steps
@@ -59,39 +64,29 @@ class TrossenOpenPIBridge:
             id="bimanual_follower",
             left_arm_ip_address="192.168.1.5",
             right_arm_ip_address="192.168.1.4",
-            min_time_to_move_multiplier=4.0,
+            min_time_to_move_multiplier=3.0,
             loop_rate=30,
             cameras={
-                "cam_high": OpenCVCameraConfig(
-                    index_or_path=16, width=640, height=480, fps=30
-                ),
+                "cam_high": OpenCVCameraConfig(index_or_path=16, width=640, height=480, fps=30),
                 # "cam_low": RealSenseCameraConfig(
                 #     serial_number_or_name="130322272628", width=640, height=480, fps=30, use_depth=False
                 # ),
-                "cam_right_wrist": OpenCVCameraConfig(
-                    index_or_path=10, width=640, height=480, fps=30
-                ),
-                "cam_left_wrist": OpenCVCameraConfig(
-                    index_or_path=4, width=640, height=480, fps=30
-                ),
+                "cam_right_wrist": OpenCVCameraConfig(index_or_path=10, width=640, height=480, fps=30),
+                "cam_left_wrist": OpenCVCameraConfig(index_or_path=4, width=640, height=480, fps=30),
             },
         )
         self.robot = make_robot_from_config(robot_config)
-        self.robot.connect() 
+        self.robot.connect()
 
         self.current_action_chunk = None
         self.action_chunk_idx = 0
 
-        ########## originally was 50 changed for falconvla #############3
-        self.action_chunk_size = (
-            25  # Number of actions per chunk from the policy (Defined by the policy server in this case 50)
-        )
+        self.action_chunk_size = action_chunk_size
         self.episode_step = 0
         self.is_running = False
 
-        ########## originally was 50 changed for the falconvla  #############3
-        self.rate_of_inference = 25  # Number of control steps per policy inference 
-        self.temporal_ensemble_coefficient = True  # Temporal ensembling weight (can be set to None for no ensembling)
+        self.rate_of_inference = rate_of_inference  # Number of control steps per policy inference
+        self.temporal_ensemble_coefficient = True if temporal_ensemble else None  # Temporal ensembling weight (can be set to None for no ensembling)
 
         # FIFO Buffer for actions
         self.action_buffer = defaultdict(list)
@@ -168,7 +163,34 @@ class TrossenOpenPIBridge:
                 for cam in cameras:
                     image_hwc = observation_dict[cam]
                     # convert BGR to RGB
-                    image_resized = cv2.resize(image_hwc, (224, 224))
+
+                    def center_crop_resize(image, target_h, target_w):
+                        h, w = image.shape[:2]
+
+                        # Find the largest centered crop matching target aspect ratio
+                        target_aspect = target_w / target_h
+                        src_aspect = w / h
+
+                        if src_aspect > target_aspect:
+                            # Image is wider than target — crop width
+                            crop_h = h
+                            crop_w = round(h * target_aspect)
+                        else:
+                            # Image is taller than target — crop height
+                            crop_w = w
+                            crop_h = round(w / target_aspect)
+
+                        # Center the crop
+                        top = (h - crop_h) // 2
+                        left = (w - crop_w) // 2
+                        image = image[top : top + crop_h, left : left + crop_w]
+
+                        # Resize to target
+                        image = cv2.resize(image, (target_w, target_h), interpolation=cv2.INTER_LANCZOS4)
+
+                        return image
+
+                    image_resized = center_crop_resize(image_hwc, *DEFAULT_TRAINING_SIZE)
                     image_rgb = cv2.cvtColor(image_resized, cv2.COLOR_BGR2RGB)
                     image_chw = np.transpose(image_rgb, (2, 0, 1))
                     observation_dict[cam] = image_chw
@@ -242,9 +264,9 @@ class TrossenOpenPIBridge:
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Trossen AI Stationary Kit <-> OpenPI Policy Server Bridge")
-    parser.add_argument("--policy_host", default="wss://vla-openpi.apps.dhabi.aidrc.tii.ae", help="Policy server host")
-    parser.add_argument("--policy_port", type=int, default=None, help="Policy server port")
-    parser.add_argument("--control_freq", type=int, default=20, help="Control frequency in Hz")
+    parser.add_argument("--policy_host", default="192.168.195.166", help="Policy server host")
+    parser.add_argument("--policy_port", type=int, default=8800, help="Policy server port")
+    parser.add_argument("--control_freq", type=int, default=25, help="Control frequency in Hz")
     parser.add_argument(
         "--mode",
         choices=["autonomous", "test"],
@@ -253,6 +275,9 @@ if __name__ == "__main__":
     )
     parser.add_argument("--task_prompt", default="move the arm to the left", help="Task description for the policy")
     parser.add_argument("--max_steps", type=int, default=1000, help="Maximum steps per episode")
+    parser.add_argument("--action_chunk_size", type=int, default=25, help="Number of actions predicted per inference call")
+    parser.add_argument("--rate_of_inference", type=int, default=20, help="Control steps between policy inference calls")
+    parser.add_argument("--no_temporal_ensemble", action="store_true", help="Disable temporal ensembling of actions")
     args = parser.parse_args()
 
     bridge = TrossenOpenPIBridge(
@@ -261,6 +286,9 @@ if __name__ == "__main__":
         control_frequency=args.control_freq,
         test_mode=args.mode,
         max_steps=args.max_steps,
+        action_chunk_size=args.action_chunk_size,
+        rate_of_inference=args.rate_of_inference,
+        temporal_ensemble=not args.no_temporal_ensemble,
     )
 
     bridge.autonomous_mode(task_prompt=args.task_prompt)
