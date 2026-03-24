@@ -1,14 +1,20 @@
+from pathlib import Path
 from typing import Any, Dict, Optional, TypeAlias
 from pprint import pprint
 import requests
 import numpy as np
 import json_numpy
 import numpy as np
+from PIL import Image
 from openpi_client import base_policy as _base_policy
 
 
 BasePolicy: TypeAlias = _base_policy.BasePolicy
 json_numpy.patch()
+
+# Debug image saving — same folder as openvla_utils.py debug output
+_DEBUG_DIR = Path(__file__).parent.parent.parent.parent / "openvla-oft" / "debug"
+_debug_step = 0
 
 
 def _ensure_hwc_uint8(image: Any) -> np.ndarray:
@@ -26,6 +32,16 @@ def _ensure_hwc_uint8(image: Any) -> np.ndarray:
         img = img.astype(np.uint8)
 
     return img
+
+
+def _save_debug_image(img: np.ndarray, path: Path) -> None:
+    """Save a raw array (HWC or CHW, any numeric dtype) as a PNG for debugging.
+
+    Assumes channels are in BGR order (OpenCV convention) and converts to RGB for PIL.
+    """
+    hwc = _ensure_hwc_uint8(img)
+    Image.fromarray(hwc[..., ::-1]).save(path)
+
 
 class OpenVLAOFTClientPolicy(BasePolicy):
     def __init__(
@@ -70,11 +86,30 @@ class OpenVLAOFTClientPolicy(BasePolicy):
             cam_right_wrist = image_data.get("cam_right_wrist")
             if cam_right_wrist is None:
                 raise ValueError("Expected 'cam_right_wrist' key in image data for OpenVLA-OFT policy.")
-            
+
+            # # Save images before conversion for debugging
+            # global _debug_step
+            # step_dir = _DEBUG_DIR / f"step_{_debug_step:06d}"
+            # step_dir.mkdir(parents=True, exist_ok=True)
+            # _save_debug_image(np.asarray(cam_high),       step_dir / "openvlaoft_policy__cam_high__before.png")
+            # _save_debug_image(np.asarray(cam_left_wrist), step_dir / "openvlaoft_policy__cam_left_wrist__before.png")
+            # _save_debug_image(np.asarray(cam_right_wrist),step_dir / "openvlaoft_policy__cam_right_wrist__before.png")
+
             # Convert to HWC uint8
-            cam_high = _ensure_hwc_uint8(cam_high) 
-            cam_left_wrist = _ensure_hwc_uint8(cam_left_wrist) 
-            cam_right_wrist = _ensure_hwc_uint8(cam_right_wrist) 
+            cam_high = _ensure_hwc_uint8(cam_high)
+            cam_left_wrist = _ensure_hwc_uint8(cam_left_wrist)
+            cam_right_wrist = _ensure_hwc_uint8(cam_right_wrist)
+
+            # Rectify the colors (BGR -> RGB)
+            cam_high = cam_high[..., ::-1]
+            cam_left_wrist = cam_left_wrist[..., ::-1]
+            cam_right_wrist = cam_right_wrist[..., ::-1]
+
+            # # Save images after conversion for debugging
+            # _save_debug_image(cam_high,        step_dir / "openvlaoft_policy__cam_high__after.png")
+            # _save_debug_image(cam_left_wrist,  step_dir / "openvlaoft_policy__cam_left_wrist__after.png")
+            # _save_debug_image(cam_right_wrist, step_dir / "openvlaoft_policy__cam_right_wrist__after.png")
+            _debug_step += 1
             
 
         ##### Build payload for openVLA-OFT server 
