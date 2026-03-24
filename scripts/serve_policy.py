@@ -112,7 +112,7 @@ def create_policy(args: Args) -> _policy.Policy:
         return _openvla_policy.OpenVLAClientPolicy(
             server_url="http://localhost:8000/act",
             timeout=10.0,
-            unnorm_key="bridge_orig",
+            unnorm_key="aidrc_cups_manipulation_14",
             default_prompt=args.default_prompt,
         )
 
@@ -122,7 +122,7 @@ def create_policy(args: Args) -> _policy.Policy:
         return _openvlaoft_policy.OpenVLAOFTClientPolicy(
             server_url="http://localhost:8777/act",
             timeout=10.0,
-            unnorm_key="bridge_orig",
+            unnorm_key="aidrc_cups_manipulation_14",
             default_prompt=args.default_prompt,
         )
     #  Check if a specific policy checkpoint was provided

@@ -87,8 +87,6 @@ class FalconVLAPolicy(BasePolicy):
         return self._metadata
 
 
-
-
 @dataclasses.dataclass(frozen=True)
 class FalconVLAInputs(transforms.DataTransformFn):
     """Inputs for the FalconVLA policy.

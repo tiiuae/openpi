@@ -1231,13 +1231,27 @@ _CONFIGS = [
             unnorm_key="aidrc_cups_manipulation_14",
             action_dim=14,
             action_horizon=25,
-            
+            use_proprio=True,
         ),
         data=LeRobotFalconVLADataConfig(
             assets=AssetsConfig(asset_id="trossen"),
         ),
         policy_metadata={"reset_pose": [0, -1.5, 1.5, 0, 0, 0]},
     ),
+    TrainConfig(
+        name="FalconVLA-AD14-H10-NP",
+        model=falconvla_config.FalconVLAConfig(
+            unnorm_key="aidrc_cups_manipulation_14",
+            action_dim=14,
+            action_horizon=10,
+            use_proprio=False
+        ),
+        data=LeRobotFalconVLADataConfig(
+            assets=AssetsConfig(asset_id="trossen"),
+        ),
+        policy_metadata={"reset_pose": [0, -1.5, 1.5, 0, 0, 0]},
+    ),
+    
     #
     # RoboArena configs.
     #

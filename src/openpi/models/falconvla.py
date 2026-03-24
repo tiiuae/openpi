@@ -106,30 +106,30 @@ class FalconVLA(_model.BaseModel):
         # left_wrist_0_rgb -> secondary image (cam_left_wrist)
 
 #! ### Debug - Saving images to disk just before they are consumed by
-        # Create a folder if doensn't exist for storing the images (for debugging)
-        # add timestamp to the folder name to avoid overwriting
-        import time
-        import cv2
-        import numpy as np
+        # # Create a folder if doensn't exist for storing the images (for debugging)
+        # # add timestamp to the folder name to avoid overwriting
+        # import time
+        # import cv2
+        # import numpy as np
         
-        timestamp = time.strftime("%Y%m%d-%H%M%S")
-        debug_folder = f"debug/{timestamp}"
-        os.makedirs(debug_folder, exist_ok=True)
-        if images is not None:
-            for key, img in images.items():
-                try:
-                    img_path = f"{debug_folder}/{timestamp}_{key}.png"
-                    img_np = img.cpu().numpy() if isinstance(img, torch.Tensor) else np.array(img)
+        # timestamp = time.strftime("%Y%m%d-%H%M%S")
+        # debug_folder = f"debug/{timestamp}"
+        # os.makedirs(debug_folder, exist_ok=True)
+        # if images is not None:
+        #     for key, img in images.items():
+        #         try:
+        #             img_path = f"{debug_folder}/{timestamp}_{key}.png"
+        #             img_np = img.cpu().numpy() if isinstance(img, torch.Tensor) else np.array(img)
 
-                    # Convert CHW to HWC and RGB to BGR for cv2
-                    if img_np.shape[0] == 3:
-                        img_np = np.transpose(img_np, (1, 2, 0))
-                        # img_np = cv2.cvtColor(img_np, cv2.COLOR_RGB2BGR)
+        #             # Convert CHW to HWC and RGB to BGR for cv2
+        #             if img_np.shape[0] == 3:
+        #                 img_np = np.transpose(img_np, (1, 2, 0))
+        #                 # img_np = cv2.cvtColor(img_np, cv2.COLOR_RGB2BGR)
 
-                    cv2.imwrite(img_path, img_np)
-                    print(f"Saved {key} to {img_path}")
-                except Exception as e:
-                    print(f"Failed to save {key}: {e}")
+        #             cv2.imwrite(img_path, img_np)
+        #             print(f"Saved {key} to {img_path}")
+        #         except Exception as e:
+        #             print(f"Failed to save {key}: {e}")
 #! ####
 
         primary_image = images.get("cam_high", None)
