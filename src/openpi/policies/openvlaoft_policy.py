@@ -1,14 +1,14 @@
 from typing import Any, Dict, Optional, TypeAlias
-import cv2
+from pprint import pprint
 import requests
 import numpy as np
 import json_numpy
-json_numpy.patch()
 import numpy as np
-
-
-
 from openpi_client import base_policy as _base_policy
+
+
+BasePolicy: TypeAlias = _base_policy.BasePolicy
+json_numpy.patch()
 
 
 def _ensure_hwc_uint8(image: Any) -> np.ndarray:
@@ -26,8 +26,6 @@ def _ensure_hwc_uint8(image: Any) -> np.ndarray:
         img = img.astype(np.uint8)
 
     return img
-
-BasePolicy: TypeAlias = _base_policy.BasePolicy
 
 class OpenVLAOFTClientPolicy(BasePolicy):
     def __init__(
@@ -54,13 +52,12 @@ class OpenVLAOFTClientPolicy(BasePolicy):
         self.metadata = metadata or {}
         self.default_prompt = default_prompt
 
-
     def infer(self, obs: Dict[str, Any]) -> Dict[str, Any]:
         """Infer an action from an observation by querying the OpenVLA-OFT REST server."""
         image_data = obs["images"]
-        proprio_data = obs.get("proprio", None)
+        proprio_data = obs.get("state", None)
         state_data = obs.get("state", None)
-        instruction = self.default_prompt
+        instruction = obs.get("prompt") or self.default_prompt or ""
 
         # Extract cam_high from the observation
         if isinstance(image_data, dict):
@@ -80,10 +77,7 @@ class OpenVLAOFTClientPolicy(BasePolicy):
             cam_right_wrist = _ensure_hwc_uint8(cam_right_wrist) 
             
 
-    
-
         ##### Build payload for openVLA-OFT server 
-
         observation = {
             "full_image": cam_high,  
             "cam_left_wrist": cam_left_wrist,  
@@ -98,29 +92,27 @@ class OpenVLAOFTClientPolicy(BasePolicy):
         # Send the entire observation as the payload
         payload = observation
 
-
-
         ##### Send request to OpenVLA-OFT server
+        import time
+        infer_start = time.monotonic()
         try:
             response = requests.post(
                 self.server_url,
-                data= json_numpy.dumps(payload),
+                data=json_numpy.dumps(payload),
                 headers={"Content-Type": "application/json"},
                 timeout=self.timeout,
-                )
+            )
             response.raise_for_status()
         except requests.RequestException as e:
-        
             raise RuntimeError(f"OpenVLA-OFT server request failed: {e}")
-        
+        infer_ms = (time.monotonic() - infer_start) * 1000
 
-        ##### Parse response 
-        action =json_numpy.loads(response.text)  
-        
-        chunk_size = 25
-        # Action chunking expects multiple timesteps - repeat action for chunk_size
-        action = np.tile(action, (chunk_size, 1))
-
-        out: Dict[str, Any] = {"actions": action}
+        ##### Parse response
+        action = np.array(json_numpy.loads(response.text))
+        out: Dict[str, Any] = {
+            "state": obs.get("state"),
+            "actions": action,
+            "policy_timing": {"infer_ms": infer_ms},
+        }
 
         return out
