@@ -17,18 +17,19 @@ Usage:
 """
 
 import argparse
-from collections import defaultdict
 import logging
 import time
-from pprint import pprint
 
+from action_ensemble import ActionLogger
+from action_ensemble import AsyncPolicyWorker
+from action_ensemble import make_ensemble
 import cv2
 from lerobot.cameras.opencv.configuration_opencv import OpenCVCameraConfig
 from lerobot.robots import make_robot_from_config
 from lerobot_robot_trossen.config_bi_widowxai_follower import BiWidowXAIFollowerRobotConfig
 import numpy as np
-from PIL import Image
 from openpi_client import websocket_client_policy
+from PIL import Image
 from scipy.interpolate import PchipInterpolator
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
@@ -49,8 +50,14 @@ class TrossenOpenPIBridge:
         max_steps: int = 1000,
         action_chunk_size: int = 10,
         rate_of_inference: int = 10,
-        temporal_ensemble: bool = True,
+        ensemble_type: str = "exp",
+        async_inference: bool = False,
+        log_dir: str | None = None,
+        use_left_arm_only: bool = False,
+        use_right_arm_only: bool = False,
+        starvla: bool = False,
     ):
+        self.starvla = starvla
         self.control_frequency = control_frequency
         self.max_steps = max_steps
         self.dt = 1.0 / control_frequency
@@ -68,12 +75,12 @@ class TrossenOpenPIBridge:
             min_time_to_move_multiplier=3.0,
             loop_rate=30,
             cameras={
-                "cam_high": OpenCVCameraConfig(index_or_path=16, width=640, height=480, fps=30),
+                "cam_high": OpenCVCameraConfig(index_or_path=18, width=640, height=480, fps=30),
                 # "cam_low": RealSenseCameraConfig(
                 #     serial_number_or_name="130322272628", width=640, height=480, fps=30, use_depth=False
                 # ),
-                "cam_right_wrist": OpenCVCameraConfig(index_or_path=10, width=640, height=480, fps=30),
-                "cam_left_wrist": OpenCVCameraConfig(index_or_path=4, width=640, height=480, fps=30),
+                "cam_right_wrist": OpenCVCameraConfig(index_or_path=12, width=640, height=480, fps=30),
+                "cam_left_wrist": OpenCVCameraConfig(index_or_path=6, width=640, height=480, fps=30),
             },
         )
         self.robot = make_robot_from_config(robot_config)
@@ -87,21 +94,32 @@ class TrossenOpenPIBridge:
         self.is_running = False
 
         self.rate_of_inference = rate_of_inference  # Number of control steps per policy inference
-        self.temporal_ensemble_coefficient = (
-            True if temporal_ensemble else None
-        )  # Temporal ensembling weight (can be set to None for no ensembling)
-
-        # FIFO Buffer for actions
-        self.action_buffer = defaultdict(list)
-        self.action_buffer_size = (
-            self.max_steps + self.action_chunk_size
-        )  # Buffer size to hold actions for the entire episode
-
         self.action_dim = len(self.robot._joint_ft)  # 7 joints per arm * 2 arms
+        self.ensemble = make_ensemble(ensemble_type)
+
+        if async_inference and self.ensemble is None:
+            raise ValueError("--async_inference requires an ensemble (ensemble_type cannot be 'none')")
+        self.async_inference = async_inference
+        self._policy_worker = (
+            AsyncPolicyWorker(self.policy_client, self.ensemble, self.action_dim) if async_inference else None
+        )
+
+        self.action_logger = ActionLogger(log_dir) if log_dir else None
+
+        self.use_left_arm_only = use_left_arm_only
+        self.use_right_arm_only = use_right_arm_only
 
     def execute_action(self, action: np.ndarray):
         """Execute action on the arm."""
         full_action = action.copy()
+
+        if self.use_left_arm_only or self.use_right_arm_only:
+            if self.use_right_arm_only:
+                # Freeze left arm (indices 0:7) at current pose; only right arm (7:14) moves
+                full_action[:7] = self._frozen_arm_pose[:7]
+            elif self.use_left_arm_only:
+                # Freeze right arm (indices 7:14) at current pose; only left arm (0:7) moves
+                full_action[7:] = self._frozen_arm_pose[7:]
 
         if self.test_mode == "test":
             logger.info(f"TEST MODE: Would execute action: {full_action}")
@@ -110,13 +128,24 @@ class TrossenOpenPIBridge:
             joint_features = list(self.robot._joint_ft.keys())
             action_dict = {k: full_action[i] for i, k in enumerate(joint_features)}
 
-            print("*" * 10)
-            print("Action sent to the Arms:")
-            pprint(action_dict)
             self.robot.send_action(action_dict)
-            print("*" * 10)
         else:
             logger.error(f"Unknown mode: {self.test_mode}. No action executed.")
+
+    def _build_observation(self, observation_dict: dict, task_prompt: str) -> dict:
+        joint_pos_keys = [k for k in observation_dict if k.endswith(".pos")]
+        joint_positions = np.array([observation_dict[k] for k in joint_pos_keys])
+        cameras = list(self.robot._cameras_ft.keys())
+        images = {}
+        for cam in cameras:
+            image_hwc = observation_dict[cam]
+            if self.starvla:
+                image_rgb = np.array(Image.fromarray(cv2.cvtColor(image_hwc, cv2.COLOR_BGR2RGB)).resize((224, 224)))
+            else:
+                image_resized = cv2.resize(image_hwc, DEFAULT_TRAINING_SIZE, interpolation=cv2.INTER_LANCZOS4)
+                image_rgb = cv2.cvtColor(image_resized, cv2.COLOR_BGR2RGB)
+            images[cam] = np.transpose(image_rgb, (2, 0, 1))
+        return {"state": joint_positions, "images": images, "prompt": task_prompt}
 
     def move_to_start_position(self, goal_position: np.ndarray, duration: float = 5.0):
         """The first position queried from the policy depends on the training data.
@@ -126,14 +155,14 @@ class TrossenOpenPIBridge:
         jumps and triggering safety stops (velocity limits)."""
 
         joint_pos_keys = [k for k in self.robot.get_observation().keys() if k.endswith(".pos")]
-        current_pose = np.array([self.robot.get_observation()[k] for k in joint_pos_keys])
+        self._frozen_arm_pose = np.array([self.robot.get_observation()[k] for k in joint_pos_keys])
         # Example stage_pose for bimanual WidowX arms.
         # Each value corresponds to a joint position (in radians) for the 14 joints:
         # [left_joint_0, left_joint_1, left_joint_2, left_joint_3, left_joint_4, left_joint_5, left_left_carriage_joint,
         #  right_joint_0, right_joint_1, right_joint_2, right_joint_3, right_joint_4, right_joint_5, right_left_carriage_joint]
         # The values below represent a "stage" pose, e.g. arms up and open, ready for task start.
         # stage_pose = np.array([0, np.pi/3, np.pi/6, np.pi/5, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0])
-        waypoints = np.array([current_pose, goal_position])
+        waypoints = np.array([self._frozen_arm_pose, goal_position])
         timepoints = np.array([0, duration])  # Use the provided duration
         interpolator_position = PchipInterpolator(timepoints, waypoints, axis=0)
 
@@ -153,85 +182,86 @@ class TrossenOpenPIBridge:
         self.action_chunk_idx = 0
         self.current_action_chunk = None
         self.is_running = True
+        if self.ensemble is not None:
+            self.ensemble.reset()
+        if self.action_logger is not None:
+            self.action_logger.reset()
         is_first_step = True
 
-        while self.is_running and self.episode_step < self.max_steps:
-            start_loop_time = time.perf_counter()
+        if self.use_left_arm_only or self.use_right_arm_only:
+            _obs = self.robot.get_observation()
+            _joint_pos_keys = [k for k in _obs.keys() if k.endswith(".pos")]
+            self._frozen_arm_pose = np.array([_obs[k] for k in _joint_pos_keys])
 
-            # Request new action chunk after consuming the previous one
-            if self.current_action_chunk is None or self.action_chunk_idx >= self.rate_of_inference:
-                observation_dict = self.robot.get_observation()
+        if self.async_inference:
+            self._policy_worker.start()
 
-                # Extract joint positions from observation
-                joint_pos_keys = [k for k in observation_dict.keys() if k.endswith(".pos")]
-                joint_positions = np.array([observation_dict[k] for k in joint_pos_keys])
+        try:
+            while self.is_running and self.episode_step < self.max_steps:
+                start_loop_time = time.perf_counter()
 
-                # Transform and resize images from all cameras
-                cameras = list(self.robot._cameras_ft.keys())
-                for cam in cameras:
-                    image_hwc = observation_dict[cam]
-                    # convert BGR to RGB
+                if self.async_inference:
+                    # Submit fresh observation every step — non-blocking
+                    obs = self._build_observation(self.robot.get_observation(), task_prompt)
+                    self._policy_worker.submit(obs, self.episode_step)
+                    if is_first_step:
+                        logger.info("Waiting for first inference result...")
+                        if not self._policy_worker.wait_for_first(timeout=30.0):
+                            logger.error("Timed out waiting for first inference — aborting")
+                            break
+                    a_t = self.ensemble.get_action(self.episode_step)
+                    if a_t is None:
+                        a_t = np.zeros(self.action_dim)
 
-                    image_resized = cv2.resize(image_hwc, DEFAULT_TRAINING_SIZE, interpolation=cv2.INTER_LANCZOS4)
-                    image_rgb = cv2.cvtColor(image_resized, cv2.COLOR_BGR2RGB)
-                    image_chw = np.transpose(image_rgb, (2, 0, 1))
-                    observation_dict[cam] = image_chw
-
-                # Create observation for policy to follow the ALOHA format
-                observation = {
-                    "state": joint_positions,
-                    "images": {cam: observation_dict[cam] for cam in cameras},
-                    "prompt": task_prompt,
-                }
-
-                logger.info(f"Step {self.episode_step}: Requesting new action chunk")
-                response = self.policy_client.infer(observation)
-                self.current_action_chunk = response["actions"]
-
-                for k in range(self.action_chunk_size):
-                    future_t = self.episode_step + k
-                    if future_t < self.action_buffer_size:
-                        self.action_buffer[future_t].append(self.current_action_chunk[k])
-
-                self.action_chunk_idx = 0
-                logger.info(f"Received action chunk: {self.current_action_chunk.shape}")
-
-            # Select action using temporal ensembling if enabled
-            if self.temporal_ensemble_coefficient is not None:
-                if len(self.action_buffer[self.episode_step]) == 0:
-                    a_t = np.zeros(self.action_dim)
                 else:
-                    candidates = np.array(self.action_buffer[self.episode_step])  # shape: (N, 14)
-                    weights = self._get_weights(len(candidates))  # shape: (N,)
-                    a_t = np.average(candidates, axis=0, weights=weights)  # shape: (14,)
-            else:
-                a_t = self.current_action_chunk[self.action_chunk_idx]
-            # Execute the current action
-            if is_first_step:
-                logger.info("Moving to start position to avoid large jumps...")
-                self.move_to_start_position(a_t, duration=5.0)
-                is_first_step = False
-            else:
-                self.execute_action(a_t)
+                    # Synchronous: request new chunk every rate_of_inference steps
+                    if self.current_action_chunk is None or self.action_chunk_idx >= self.rate_of_inference:
+                        observation = self._build_observation(self.robot.get_observation(), task_prompt)
+                        logger.info(f"Step {self.episode_step}: Requesting new action chunk")
+                        response = self.policy_client.infer(observation)
+                        self.current_action_chunk = response["actions"][:, : self.action_dim]
+                        if self.ensemble is not None:
+                            self.ensemble.add_chunk(self.episode_step, self.current_action_chunk)
+                        self.action_chunk_idx = 0
+                        logger.info(f"Received action chunk: {self.current_action_chunk.shape}")
 
-            self.action_chunk_idx += 1
-            self.episode_step += 1
+                    if self.ensemble is not None:
+                        a_t = self.ensemble.get_action(self.episode_step)
+                        if a_t is None:
+                            a_t = np.zeros(self.action_dim)
+                    else:
+                        a_t = self.current_action_chunk[self.action_chunk_idx]
 
-            dt_s = time.perf_counter() - start_loop_time
-            busy_wait_time = self.dt - dt_s
+                if self.action_logger is not None and self.ensemble is not None:
+                    self.action_logger.log(
+                        self.episode_step,
+                        self.ensemble.get_overlap_count(self.episode_step),
+                    )
 
-            # Busy wait to maintain control frequency
-            if busy_wait_time > 0:
-                time.sleep(busy_wait_time)
-            loop_s = time.perf_counter() - start_loop_time
-            logger.info(f"time: {loop_s * 1e3:.2f}ms ({1 / loop_s:.0f} Hz)")
+                if is_first_step:
+                    logger.info("Moving to start position to avoid large jumps...")
+                    self.move_to_start_position(a_t, duration=5.0)
+                    is_first_step = False
+                else:
+                    self.execute_action(a_t)
+
+                self.action_chunk_idx += 1
+                self.episode_step += 1
+
+                dt_s = time.perf_counter() - start_loop_time
+                if self.dt - dt_s > 0:
+                    time.sleep(self.dt - dt_s)
+                loop_s = time.perf_counter() - start_loop_time
+                logger.info(f"time: {loop_s * 1e3:.2f}ms ({1 / loop_s:.0f} Hz)")
+
+        finally:
+            if self.async_inference:
+                self._policy_worker.stop()
+            if self.action_logger is not None:
+                self.action_logger.save(tag=f"episode_{self.episode_step}steps")
 
         self.is_running = False
         logger.info(f"Episode completed after {self.episode_step} steps")
-
-    def _get_weights(self, num_preds: int) -> np.ndarray:
-        weights = np.exp(-self.temporal_ensemble_coefficient * np.arange(num_preds))
-        return weights / weights.sum()
 
     def autonomous_mode(self, task_prompt: str = "look down"):
         """Run in autonomous mode where the arm executes policy predictions."""
@@ -246,7 +276,7 @@ class TrossenOpenPIBridge:
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Trossen AI Stationary Kit <-> OpenPI Policy Server Bridge")
-    parser.add_argument("--policy_host", default="192.168.195.166", help="Policy server host")
+    parser.add_argument("--policy_host", default="192.168.50.174", help="Policy server host")
     parser.add_argument("--policy_port", type=int, default=8800, help="Policy server port")
     parser.add_argument("--control_freq", type=int, default=25, help="Control frequency in Hz")
     parser.add_argument(
@@ -263,7 +293,32 @@ if __name__ == "__main__":
     parser.add_argument(
         "--rate_of_inference", type=int, default=20, help="Control steps between policy inference calls"
     )
-    parser.add_argument("--no_temporal_ensemble", action="store_true", help="Disable temporal ensembling of actions")
+    parser.add_argument(
+        "--ensemble_type",
+        choices=["exp", "cogact", "none"],
+        default="exp",
+        help="Action ensemble strategy: 'exp' (exponential decay), 'cogact' (cosine-similarity AAE), 'none' (disabled)",
+    )
+    parser.add_argument(
+        "--log_dir",
+        default=None,
+        help="Directory to save per-episode overlap count JSON. Omit to disable.",
+    )
+    parser.add_argument(
+        "--async_inference",
+        action="store_true",
+        help="Run inference in a background thread — control loop never blocks. "
+        "Requires an ensemble (not 'none'). Recommended with --ensemble_type cogact.",
+    )
+    parser.add_argument(
+        "--starvla", action="store_true", help="Use StarVLA image resizing (224x224 via PIL) instead of default"
+    )
+    parser.add_argument(
+        "--use_left_arm_only", action="store_true", help="Only move the left arm; right arm stays at current pose"
+    )
+    parser.add_argument(
+        "--use_right_arm_only", action="store_true", help="Only move the right arm; left arm stays at current pose"
+    )
     args = parser.parse_args()
 
     bridge = TrossenOpenPIBridge(
@@ -274,7 +329,12 @@ if __name__ == "__main__":
         max_steps=args.max_steps,
         action_chunk_size=args.action_chunk_size,
         rate_of_inference=args.rate_of_inference,
-        temporal_ensemble=not args.no_temporal_ensemble,
+        ensemble_type=args.ensemble_type,
+        async_inference=args.async_inference,
+        log_dir=args.log_dir,
+        use_left_arm_only=args.use_left_arm_only,
+        use_right_arm_only=args.use_right_arm_only,
+        starvla=args.starvla,
     )
 
     bridge.autonomous_mode(task_prompt=args.task_prompt)
