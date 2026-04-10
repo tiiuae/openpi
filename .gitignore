@@ -4,13 +4,15 @@ checkpoints/
 data/
 wandb/
 
+examples/trossen_ai/action_logs
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]
 *$py.class
 
 # C extensions
-*.so
+# *.so
 
 # Distribution / packaging
 .Python
