@@ -20,6 +20,7 @@ import argparse
 from collections import defaultdict
 import logging
 import time
+from pprint import pprint
 
 import cv2
 from lerobot.cameras.opencv.configuration_opencv import OpenCVCameraConfig
@@ -43,11 +44,11 @@ class TrossenOpenPIBridge:
         self,
         policy_server_host: str = "localhost",
         policy_server_port: int = 8080,
-        control_frequency: int = 30,
+        control_frequency: int = 10,
         test_mode: str = "autonomous",  # "autonomous" or "test"
         max_steps: int = 1000,
-        action_chunk_size: int = 25,
-        rate_of_inference: int = 20,
+        action_chunk_size: int = 10,
+        rate_of_inference: int = 10,
         temporal_ensemble: bool = True,
     ):
         self.control_frequency = control_frequency
@@ -86,7 +87,9 @@ class TrossenOpenPIBridge:
         self.is_running = False
 
         self.rate_of_inference = rate_of_inference  # Number of control steps per policy inference
-        self.temporal_ensemble_coefficient = True if temporal_ensemble else None  # Temporal ensembling weight (can be set to None for no ensembling)
+        self.temporal_ensemble_coefficient = (
+            True if temporal_ensemble else None
+        )  # Temporal ensembling weight (can be set to None for no ensembling)
 
         # FIFO Buffer for actions
         self.action_buffer = defaultdict(list)
@@ -106,7 +109,12 @@ class TrossenOpenPIBridge:
         if self.test_mode == "autonomous":
             joint_features = list(self.robot._joint_ft.keys())
             action_dict = {k: full_action[i] for i, k in enumerate(joint_features)}
+
+            print("*" * 10)
+            print("Action sent to the Arms:")
+            pprint(action_dict)
             self.robot.send_action(action_dict)
+            print("*" * 10)
         else:
             logger.error(f"Unknown mode: {self.test_mode}. No action executed.")
 
@@ -164,33 +172,7 @@ class TrossenOpenPIBridge:
                     image_hwc = observation_dict[cam]
                     # convert BGR to RGB
 
-                    def center_crop_resize(image, target_h, target_w):
-                        h, w = image.shape[:2]
-
-                        # Find the largest centered crop matching target aspect ratio
-                        target_aspect = target_w / target_h
-                        src_aspect = w / h
-
-                        if src_aspect > target_aspect:
-                            # Image is wider than target — crop width
-                            crop_h = h
-                            crop_w = round(h * target_aspect)
-                        else:
-                            # Image is taller than target — crop height
-                            crop_w = w
-                            crop_h = round(w / target_aspect)
-
-                        # Center the crop
-                        top = (h - crop_h) // 2
-                        left = (w - crop_w) // 2
-                        image = image[top : top + crop_h, left : left + crop_w]
-
-                        # Resize to target
-                        image = cv2.resize(image, (target_w, target_h), interpolation=cv2.INTER_LANCZOS4)
-
-                        return image
-
-                    image_resized = center_crop_resize(image_hwc, *DEFAULT_TRAINING_SIZE)
+                    image_resized = cv2.resize(image_hwc, DEFAULT_TRAINING_SIZE, interpolation=cv2.INTER_LANCZOS4)
                     image_rgb = cv2.cvtColor(image_resized, cv2.COLOR_BGR2RGB)
                     image_chw = np.transpose(image_rgb, (2, 0, 1))
                     observation_dict[cam] = image_chw
@@ -275,8 +257,12 @@ if __name__ == "__main__":
     )
     parser.add_argument("--task_prompt", default="move the arm to the left", help="Task description for the policy")
     parser.add_argument("--max_steps", type=int, default=1000, help="Maximum steps per episode")
-    parser.add_argument("--action_chunk_size", type=int, default=25, help="Number of actions predicted per inference call")
-    parser.add_argument("--rate_of_inference", type=int, default=20, help="Control steps between policy inference calls")
+    parser.add_argument(
+        "--action_chunk_size", type=int, default=25, help="Number of actions predicted per inference call"
+    )
+    parser.add_argument(
+        "--rate_of_inference", type=int, default=20, help="Control steps between policy inference calls"
+    )
     parser.add_argument("--no_temporal_ensemble", action="store_true", help="Disable temporal ensembling of actions")
     args = parser.parse_args()
 
