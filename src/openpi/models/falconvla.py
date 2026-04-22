@@ -14,8 +14,24 @@ import os
 
 
 
+def _resolve_model_path(model_name: str) -> str:
+    """If model_name doesn't contain processor files but has a single subdirectory that does, use that instead."""
+    import os
+    processor_files = {"processor_config.json", "preprocessor_config.json", "tokenizer_config.json"}
+    dir_files = set(os.listdir(model_name)) if os.path.isdir(model_name) else set()
+    if not processor_files.intersection(dir_files):
+        subdirs = [d for d in dir_files if os.path.isdir(os.path.join(model_name, d))]
+        if len(subdirs) == 1:
+            candidate = os.path.join(model_name, subdirs[0])
+            candidate_files = set(os.listdir(candidate))
+            if processor_files.intersection(candidate_files):
+                return candidate
+    return model_name
+
+
 def load_falcon_model(model_name: str, device: str, hf_token: Optional[str]) -> Tuple[AutoProcessor, AutoModelForVision2Seq]:
-    processor = AutoProcessor.from_pretrained(model_name, trust_remote_code=True, token=hf_token)
+    model_name = _resolve_model_path(model_name)
+    processor = AutoProcessor.from_pretrained(model_name, trust_remote_code=True)
     model = AutoModelForVision2Seq.from_pretrained(
         model_name,
         trust_remote_code=True,
