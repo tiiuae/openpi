@@ -22,6 +22,8 @@ from typing import Optional
 import numpy as np
 import websockets.sync.client
 
+from pprint import pprint
+
 from openpi_client import msgpack_numpy
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
@@ -43,6 +45,7 @@ def replay(
         observation["prompt"] = task_prompt
         logger.info(f"Overriding prompt to: {task_prompt!r}")
 
+    pprint(observation.keys)
     logger.info("Loaded observation:")
     logger.info(f"  state shape : {observation['state'].shape}")
     logger.info(f"  cameras     : {list(observation['images'].keys())}")
@@ -100,11 +103,11 @@ if __name__ == "__main__":
     parser.add_argument("--input", default="captured_request.msgpack", help="Captured msgpack file")
     parser.add_argument(
         "--policy_host",
-        default="wss://vla-openpi.apps.dhabi.aidrc.tii.ae",
+        default="192.168.50.174",
         help="Policy server host (ws:// or wss:// URI, or plain hostname)",
     )
-    parser.add_argument("--policy_port", type=int, default=None, help="Policy server port (omit for default)")
-    parser.add_argument("--task_prompt", default=None, help="Override the prompt stored in the file")
+    parser.add_argument("--policy_port", type=int, default=8800, help="Policy server port (omit for default)")
+    parser.add_argument("--task_prompt", default="None", help="Override the prompt stored in the file")
     parser.add_argument("--api_key", default=None, help="API key for Authorization header")
     args = parser.parse_args()
 
