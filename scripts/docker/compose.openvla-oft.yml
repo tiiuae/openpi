@@ -10,7 +10,7 @@ services:
       - "8777:8777"
     command:
       - --pretrained_checkpoint
-      - /models/openvla-oft-aidrc_cups_manipulation
+      - /models/april_2026_batch2/OpenVLA-OFT-FiLm-3V
       - --unnorm_key
       - aidrc_cups_manipulation_14
       - --host
@@ -22,7 +22,7 @@ services:
       - --use_diffusion
       - "False"
       - --use_film
-      - "False"
+      - "True"
       - --num_images_in_input
       - "3"
       - --use_proprio
