@@ -10,6 +10,7 @@ from openpi.policies import policy as _policy
 from openpi.policies import policy_config as _policy_config
 from openpi.policies import openvla_policy as _openvla_policy
 from openpi.policies import openvlaoft_policy as _openvlaoft_policy
+from openpi.policies import cogact_policy as _cogact_policy
 from openpi.serving import websocket_policy_server
 from openpi.training import config as _config
 
@@ -22,8 +23,9 @@ class EnvMode(enum.Enum):
     DROID = "droid"
     LIBERO = "libero"
     FALCONVLA_ALOHA = "falconvla_aloha"
-    OPENVLA = "openvla" 
+    OPENVLA = "openvla"
     OPENVLA_OFT = "openvla-oft"
+    COGACT = "cogact"
 
 
 @dataclasses.dataclass
@@ -88,7 +90,11 @@ DEFAULT_CHECKPOINT: dict[EnvMode, Checkpoint] = {
     EnvMode.OPENVLA_OFT: Checkpoint(
         config="openvla-oft",
         dir="",
-    )
+    ),
+    EnvMode.COGACT: Checkpoint(
+        config="cogact",
+        dir="",
+    ),
 }
 
 def create_default_policy(env: EnvMode, *, default_prompt: str | None = None) -> _policy.Policy:
@@ -121,6 +127,16 @@ def create_policy(args: Args) -> _policy.Policy:
         logging.info("Using OpenVLA-OFTClientPolicy (REST backend)")
         return _openvlaoft_policy.OpenVLAOFTClientPolicy(
             server_url="http://localhost:8777/act",
+            timeout=10.0,
+            unnorm_key="aidrc_cups_manipulation_14",
+            default_prompt=args.default_prompt,
+        )
+
+    # 4. Route to CogACT
+    if args.env == EnvMode.COGACT:
+        logging.info("Using CogACTClientPolicy (REST backend)")
+        return _cogact_policy.CogACTClientPolicy(
+            server_url="http://localhost:8777/api/inference",
             timeout=10.0,
             unnorm_key="aidrc_cups_manipulation_14",
             default_prompt=args.default_prompt,
