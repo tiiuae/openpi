@@ -109,8 +109,7 @@ class OpenVLAOFTClientPolicy(BasePolicy):
             # _save_debug_image(cam_high,        step_dir / "openvlaoft_policy__cam_high__after.png")
             # _save_debug_image(cam_left_wrist,  step_dir / "openvlaoft_policy__cam_left_wrist__after.png")
             # _save_debug_image(cam_right_wrist, step_dir / "openvlaoft_policy__cam_right_wrist__after.png")
-            _debug_step += 1
-            
+            # _debug_step += 1
 
         ##### Build payload for openVLA-OFT server 
         observation = {
