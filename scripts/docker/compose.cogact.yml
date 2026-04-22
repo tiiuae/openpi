@@ -1,0 +1,69 @@
+# Run with:
+# docker compose -f scripts/docker/compose.cogact.yml up --build
+
+services:
+  cogact-deploy:
+    build:
+      context: ../../CogACT
+    image: cogact-deploy
+    ports:
+      - "8777:8777"
+    command:
+      - --saved_model_path
+      - /models/CogACT-Base
+      - --unnorm_key
+      - aidrc_cups_manipulation_14
+      - --port
+      - "8777"
+      - --action_dim
+      - "14"
+      - --action_model_type
+      - DiT-B
+      - --future_action_window_size
+      - "15"
+      - --action_model_type
+      - DiT-L
+      - --cfg_scale
+      - "1.5"
+      - --use_bf16
+      - --action_ensemble
+      - --action_ensemble_horizon
+      - "2"
+      - --adaptive_ensemble_alpha
+      - "0.1"
+    volumes:
+      - /home/ibrahim/storage/VLA_MODELS:/models
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+
+  openpi_server:
+    image: openpi_server
+    build:
+      context: ../..
+      dockerfile: scripts/docker/serve_policy.Dockerfile
+    init: true
+    tty: true
+    network_mode: host
+    depends_on:
+      cogact-deploy:
+        condition: service_started
+    volumes:
+      - $PWD:/app
+      - ${OPENPI_DATA_HOME:-~/.cache/openpi}:/openpi_assets
+      - /home/ibrahim/storage/VLA_MODELS:/models
+    environment:
+      - SERVER_ARGS=--env COGACT
+      - OPENPI_DATA_HOME=/openpi_assets
+      - IS_DOCKER=true
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              device_ids: ["0"]
+              capabilities: [gpu]
