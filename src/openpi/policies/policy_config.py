@@ -49,6 +49,10 @@ def create_trained_policy(
     weight_path = os.path.join(checkpoint_dir, "model.safetensors")
     is_pytorch = os.path.exists(weight_path)
 
+    # Special handling for FalconVLA models, which are PyTorch-based but require a different loading mechanism
+    if "falconvla" in checkpoint_dir.stem.split("-")[0].lower():
+        is_pytorch = False  # FalconVLA models are handled separately in create_falconvla_policy
+
     logging.info("Loading model...")
     if is_pytorch:
         model = train_config.model.load_pytorch(train_config, weight_path)
