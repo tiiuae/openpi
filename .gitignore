@@ -1,3 +1,6 @@
+# Debugging directories.
+examples/trossen_ai/action_logs*
+
 # Data directories.
 assets/
 checkpoints/
