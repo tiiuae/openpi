@@ -39,6 +39,7 @@ logger = logging.getLogger(__name__)
 # Base class
 # ---------------------------------------------------------------------------
 
+
 class ActionEnsemble(ABC):
     @abstractmethod
     def add_chunk(self, query_step: int, chunk: np.ndarray) -> None:
@@ -73,6 +74,7 @@ class ActionEnsemble(ABC):
 # Exponential-decay ensemble  (ACT / original behaviour)
 # ---------------------------------------------------------------------------
 
+
 class ExponentialEnsemble(ActionEnsemble):
     """Blend overlapping chunk predictions with exponential-decay weights.
 
@@ -99,7 +101,7 @@ class ExponentialEnsemble(ActionEnsemble):
         candidates = self._buffer.get(current_step)
         if not candidates:
             return None
-        mat = np.array(candidates)                         # (N, D)
+        mat = np.array(candidates)  # (N, D)
         weights = np.exp(-self.decay * np.arange(len(mat)))
         weights /= weights.sum()
         return np.average(mat, axis=0, weights=weights)
@@ -119,23 +121,18 @@ class ExponentialEnsemble(ActionEnsemble):
 # CogACT / AAE ensemble  (cosine-similarity weighting)
 # ---------------------------------------------------------------------------
 
+
 class CogACTEnsemble(ActionEnsemble):
-    """Action Agreement Ensemble (AAE) from CogACT (arXiv 2411.19650).
-
-    Instead of fixed decay weights, each overlapping prediction is weighted by
-    its *mean cosine similarity* to all other predictions for that timestep.
-    Predictions that agree with the ensemble are trusted more; outliers are
-    suppressed.  If all predictions are nearly zero-norm, uniform weights are
-    used as a fallback.
-
-    Args:
-        max_buffer_size: Maximum number of past chunks to keep.  Older chunks
-                         are dropped when this limit is exceeded.
-    """
-
-    def __init__(self, max_buffer_size: int = 25) -> None:
+    def __init__(
+        self,
+        max_buffer_size: int = 25,
+        mode: str = "cogact",  # "cogact" | "latest" | "hybrid"
+        lambda_mix: float = 0.5,
+    ) -> None:
         self.max_buffer_size = max_buffer_size
-        self._buffer: list[tuple[int, np.ndarray]] = []   # (query_step, chunk)
+        self.mode = mode
+        self.lambda_mix = lambda_mix
+        self._buffer: list[tuple[int, np.ndarray]] = []
 
     def add_chunk(self, query_step: int, chunk: np.ndarray) -> None:
         self._buffer.append((query_step, chunk))
@@ -143,27 +140,47 @@ class CogACTEnsemble(ActionEnsemble):
             self._buffer.pop(0)
 
     def get_action(self, current_step: int) -> np.ndarray | None:
-        candidates = [
-            chunk[current_step - qs]
-            for qs, chunk in self._buffer
-            if 0 <= current_step - qs < len(chunk)
-        ]
+        candidates = [chunk[current_step - qs] for qs, chunk in self._buffer if 0 <= current_step - qs < len(chunk)]
         if not candidates:
             return None
         if len(candidates) == 1:
             return candidates[0].copy()
 
-        mat = np.array(candidates)                         # (N, D)
+        mat = np.array(candidates)  # (N, D)
 
-        # Unit-normalise rows; guard against zero vectors
+        # normalize
         norms = np.linalg.norm(mat, axis=1, keepdims=True).clip(min=1e-8)
-        normed = mat / norms                               # (N, D)
+        normed = mat / norms
 
-        sim = normed @ normed.T                            # (N, N) cosine sim
-        weights = sim.mean(axis=1).clip(min=0)             # (N,) agreement score
+        N = len(mat)
+
+        # --- consensus term ---
+        if self.mode in ("cogact", "hybrid"):
+            sim = normed @ normed.T  # (N, N)
+            consensus = sim.mean(axis=1)  # (N,)
+        else:
+            consensus = np.zeros(N)
+
+        # --- latest-anchor term ---
+        if self.mode in ("latest", "hybrid"):
+            ref = normed[-1]  # latest prediction
+            latest_sim = normed @ ref  # (N,)
+        else:
+            latest_sim = np.zeros(N)
+
+        # --- combine ---
+        if self.mode == "cogact":
+            weights = consensus
+        elif self.mode == "latest":
+            weights = latest_sim
+        else:  # hybrid
+            weights = self.lambda_mix * consensus + (1 - self.lambda_mix) * latest_sim
+
+        weights = weights.clip(min=0)
+
         w_sum = weights.sum()
         if w_sum < 1e-8:
-            weights = np.ones(len(candidates)) / len(candidates)
+            weights = np.ones(N) / N
         else:
             weights /= w_sum
 
@@ -187,6 +204,7 @@ class CogACTEnsemble(ActionEnsemble):
 # Factory
 # ---------------------------------------------------------------------------
 
+
 def make_ensemble(
     ensemble_type: str,
     *,
@@ -205,15 +223,14 @@ def make_ensemble(
     if ensemble_type == "exp":
         return ExponentialEnsemble(decay=decay)
     if ensemble_type == "cogact":
-        return CogACTEnsemble(max_buffer_size=max_buffer_size)
-    raise ValueError(
-        f"Unknown ensemble_type {ensemble_type!r}. Choose from: exp, cogact, none"
-    )
+        return CogACTEnsemble(max_buffer_size=max_buffer_size, mode="latest")
+    raise ValueError(f"Unknown ensemble_type {ensemble_type!r}. Choose from: exp, cogact, none")
 
 
 # ---------------------------------------------------------------------------
 # Action logger
 # ---------------------------------------------------------------------------
+
 
 class ActionLogger:
     """Records the number of overlapping predictions used at each episode step
@@ -274,6 +291,7 @@ class ActionLogger:
 # Async inference worker
 # ---------------------------------------------------------------------------
 
+
 class AsyncPolicyWorker:
     """Runs policy inference in a background thread so the control loop never
     blocks on network / GPU latency.
@@ -307,7 +325,7 @@ class AsyncPolicyWorker:
         self._client = policy_client
         self._ensemble = ensemble
         self._action_dim = action_dim
-        self._pending: tuple | None = None   # (obs_dict, query_step)
+        self._pending: tuple | None = None  # (obs_dict, query_step)
         self._lock = threading.Lock()
         self._first_result = threading.Event()
         self._running = False
@@ -340,7 +358,7 @@ class AsyncPolicyWorker:
             with self._lock:
                 item = self._pending
                 if item is not None:
-                    self._pending = None   # consume
+                    self._pending = None  # consume
             if item is None:
                 time.sleep(0.001)
                 continue
