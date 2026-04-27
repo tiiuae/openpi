@@ -13,26 +13,23 @@ import openpi.shared.array_typing as at
 import os
 
 
-
-def load_falcon_model(model_name: str, device: str, hf_token: Optional[str]) -> Tuple[AutoProcessor, AutoModelForVision2Seq]:
+def load_falcon_model(
+    model_name: str, device: str, hf_token: Optional[str]
+) -> Tuple[AutoProcessor, AutoModelForVision2Seq]:
     processor = AutoProcessor.from_pretrained(model_name, trust_remote_code=True, token=hf_token)
     model = AutoModelForVision2Seq.from_pretrained(
-        model_name,
-        trust_remote_code=True,
-        torch_dtype=torch.bfloat16,
-        token=hf_token,
-        low_cpu_mem_usage=True
+        model_name, trust_remote_code=True, torch_dtype=torch.bfloat16, token=hf_token, low_cpu_mem_usage=True
     ).to(device)
-    
+
     # Patch config to ensure required token IDs are available
     # The HuggingFace model's forward pass expects these attributes to exist
-    
+
     # Try to get image_token_id from processor's tokenizer
     image_token_id = 32000  # Default value
-    if hasattr(processor, 'tokenizer') and processor.tokenizer is not None:
-        if hasattr(processor.tokenizer, 'image_token_id'):
+    if hasattr(processor, "tokenizer") and processor.tokenizer is not None:
+        if hasattr(processor.tokenizer, "image_token_id"):
             image_token_id = processor.tokenizer.image_token_id
-        elif hasattr(processor.tokenizer, 'convert_tokens_to_ids'):
+        elif hasattr(processor.tokenizer, "convert_tokens_to_ids"):
             # Try to find the image token by string
             for token_str in ["|<image>|", "<image>", "[IMG]"]:
                 try:
@@ -42,22 +39,22 @@ def load_falcon_model(model_name: str, device: str, hf_token: Optional[str]) -> 
                         break
                 except:
                     pass
-    
+
     # Set the token IDs on the main config
-    if not hasattr(model.config, 'image_token_id'):
+    if not hasattr(model.config, "image_token_id"):
         model.config.image_token_id = image_token_id
-    
+
     # Set video and vision_start token IDs with reasonable defaults
-    if not hasattr(model.config, 'video_token_id'):
+    if not hasattr(model.config, "video_token_id"):
         model.config.video_token_id = image_token_id + 1
-    if not hasattr(model.config, 'vision_start_token_id'):
+    if not hasattr(model.config, "vision_start_token_id"):
         model.config.vision_start_token_id = image_token_id + 2
-    
+
     # Also ensure vision_config has image_token_id in case the model code accesses it there
-    if hasattr(model.config, 'vision_config'):
-        if not hasattr(model.config.vision_config, 'image_token_id'):
+    if hasattr(model.config, "vision_config"):
+        if not hasattr(model.config.vision_config, "image_token_id"):
             model.config.vision_config.image_token_id = image_token_id
-    
+
     return processor, model
 
 
@@ -76,66 +73,39 @@ class FalconVLA(_model.BaseModel):
     @torch.no_grad()
     def inference(self, observation: _model.Observation, task_label: str = None) -> _model.Actions:
         """Run inference on observation.
-        
+
         Args:
             observation: Model observation containing images, state, and optional prompt
             task_label: Optional task description. If None, will use prompt from observation
-        
+
         Returns:
             Predicted actions
         """
         # Extract task label from observation if not provided
         # TODO: Fix this mess
         if task_label is None:
-            if hasattr(observation, 'tokenized_prompt') and observation.tokenized_prompt is not None:
+            if hasattr(observation, "tokenized_prompt") and observation.tokenized_prompt is not None:
                 # If we have tokenized prompt, we need to decode it (simplified approach)
                 task_label = "complete the task"  # Fallback
             else:
                 task_label = "complete the task"  # Default fallback
 
         # Building the prompt for the model
-        input_builder = ActionPromptBuilder(task_label=observation['prompt'])
+        input_builder = ActionPromptBuilder(task_label=observation["prompt"])
 
         # Getting the images from the observation
         # Observation.images should be a dict with standard keys
         images = observation.get("images", None)
-        
+
         # Map from standard image keys to camera names
         # base_0_rgb -> primary/main image (cam_high)
         # right_wrist_0_rgb -> wrist image (cam_right_wrist)
         # left_wrist_0_rgb -> secondary image (cam_left_wrist)
 
-#! ### Debug - Saving images to disk just before they are consumed by
-        # Create a folder if doensn't exist for storing the images (for debugging)
-        # add timestamp to the folder name to avoid overwriting
-        import time
-        import cv2
-        import numpy as np
-        
-        timestamp = time.strftime("%Y%m%d-%H%M%S")
-        debug_folder = f"debug/{timestamp}"
-        os.makedirs(debug_folder, exist_ok=True)
-        if images is not None:
-            for key, img in images.items():
-                try:
-                    img_path = f"{debug_folder}/{timestamp}_{key}.png"
-                    img_np = img.cpu().numpy() if isinstance(img, torch.Tensor) else np.array(img)
-
-                    # Convert CHW to HWC and RGB to BGR for cv2
-                    if img_np.shape[0] == 3:
-                        img_np = np.transpose(img_np, (1, 2, 0))
-                        # img_np = cv2.cvtColor(img_np, cv2.COLOR_RGB2BGR)
-
-                    cv2.imwrite(img_path, img_np)
-                    print(f"Saved {key} to {img_path}")
-                except Exception as e:
-                    print(f"Failed to save {key}: {e}")
-#! ####
-
         primary_image = images.get("cam_high", None)
         if primary_image is None:
             raise ValueError("Missing required 'cam_high' image in observation")
-        
+
         # Adding the primary image to the prompt
         input_builder.add_main_image(image=primary_image)
 
@@ -152,7 +122,7 @@ class FalconVLA(_model.BaseModel):
         if self.config.use_proprio:
             # Computing the proprio tokens
             proprio_stats = fetch_proprio_stats(self.model, self.config.unnorm_key)
-            normalized_proprio = normalize_proprio(observation.get("state",None), proprio_stats)
+            normalized_proprio = normalize_proprio(observation.get("state", None), proprio_stats)
             tokenized_proprio = tokenize_proprio(normalized_proprio, self.config.num_bins)
             proprio_tokens = get_proprio_tokens(tokenized_proprio)
 
@@ -163,11 +133,8 @@ class FalconVLA(_model.BaseModel):
         inputs = {k: (v.to(self.config.device) if hasattr(v, "to") else v) for k, v in inputs.items()}
 
         actions = self.model.predict_action(
-            inputs,
-            unnorm_key=self.config.unnorm_key,
-            horizon=self.config.action_horizon,
-            do_sample=False
-            )     
+            inputs, unnorm_key=self.config.unnorm_key, horizon=self.config.action_horizon, do_sample=False
+        )
         return actions
 
     @override
@@ -183,5 +150,5 @@ class FalconVLA(_model.BaseModel):
     @override
     def sample_actions(self, rng: at.KeyArrayLike, observation: _model.Observation, **kwargs) -> _model.Actions:
         # Extract task_label from kwargs if provided
-        task_label = kwargs.get('task_label', None)
-        return self.__call__(observation, task_label=task_label) 
+        task_label = kwargs.get("task_label", None)
+        return self.__call__(observation, task_label=task_label)
