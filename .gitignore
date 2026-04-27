@@ -1,8 +1,13 @@
+# Debugging directories.
+examples/trossen_ai/action_logs*
+
 # Data directories.
 assets/
 checkpoints/
 data/
 wandb/
+
+examples/trossen_ai/action_logs
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
@@ -10,7 +15,7 @@ __pycache__/
 *$py.class
 
 # C extensions
-*.so
+# *.so
 
 # Distribution / packaging
 .Python
