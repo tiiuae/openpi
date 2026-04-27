@@ -1,3 +1,9 @@
+#!/usr/bin/env python3
+"""
+Example script to smoothly move the Bi-WidowX AI Follower to a "sleep" position over a specified duration.
+Useful after doing tests and the arms are in a random pose, to move them back to a safe position before disconnecting.
+"""
+
 import time
 
 from lerobot.robots import make_robot_from_config
