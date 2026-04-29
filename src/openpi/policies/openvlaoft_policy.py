@@ -1,14 +1,20 @@
+from pathlib import Path
 from typing import Any, Dict, Optional, TypeAlias
-import cv2
+from pprint import pprint
 import requests
 import numpy as np
 import json_numpy
-json_numpy.patch()
 import numpy as np
-
-
-
+from PIL import Image
 from openpi_client import base_policy as _base_policy
+
+
+BasePolicy: TypeAlias = _base_policy.BasePolicy
+json_numpy.patch()
+
+# Debug image saving — same folder as openvla_utils.py debug output
+_DEBUG_DIR = Path(__file__).parent.parent.parent.parent / "openvla-oft" / "debug"
+_debug_step = 0
 
 
 def _ensure_hwc_uint8(image: Any) -> np.ndarray:
@@ -27,7 +33,15 @@ def _ensure_hwc_uint8(image: Any) -> np.ndarray:
 
     return img
 
-BasePolicy: TypeAlias = _base_policy.BasePolicy
+
+def _save_debug_image(img: np.ndarray, path: Path) -> None:
+    """Save a raw array (HWC or CHW, any numeric dtype) as a PNG for debugging.
+
+    Assumes channels are in BGR order (OpenCV convention) and converts to RGB for PIL.
+    """
+    hwc = _ensure_hwc_uint8(img)
+    Image.fromarray(hwc[..., ::-1]).save(path)
+
 
 class OpenVLAOFTClientPolicy(BasePolicy):
     def __init__(
@@ -54,13 +68,12 @@ class OpenVLAOFTClientPolicy(BasePolicy):
         self.metadata = metadata or {}
         self.default_prompt = default_prompt
 
-
     def infer(self, obs: Dict[str, Any]) -> Dict[str, Any]:
         """Infer an action from an observation by querying the OpenVLA-OFT REST server."""
         image_data = obs["images"]
-        proprio_data = obs.get("proprio", None)
+        proprio_data = obs.get("state", None)
         state_data = obs.get("state", None)
-        instruction = self.default_prompt
+        instruction = obs.get("prompt") or self.default_prompt or ""
 
         # Extract cam_high from the observation
         if isinstance(image_data, dict):
@@ -73,17 +86,32 @@ class OpenVLAOFTClientPolicy(BasePolicy):
             cam_right_wrist = image_data.get("cam_right_wrist")
             if cam_right_wrist is None:
                 raise ValueError("Expected 'cam_right_wrist' key in image data for OpenVLA-OFT policy.")
-            
-            # Convert to HWC uint8
-            cam_high = _ensure_hwc_uint8(cam_high) 
-            cam_left_wrist = _ensure_hwc_uint8(cam_left_wrist) 
-            cam_right_wrist = _ensure_hwc_uint8(cam_right_wrist) 
-            
 
-    
+            # # Save images before conversion for debugging
+            # global _debug_step
+            # step_dir = _DEBUG_DIR / f"step_{_debug_step:06d}"
+            # step_dir.mkdir(parents=True, exist_ok=True)
+            # _save_debug_image(np.asarray(cam_high),       step_dir / "openvlaoft_policy__cam_high__before.png")
+            # _save_debug_image(np.asarray(cam_left_wrist), step_dir / "openvlaoft_policy__cam_left_wrist__before.png")
+            # _save_debug_image(np.asarray(cam_right_wrist),step_dir / "openvlaoft_policy__cam_right_wrist__before.png")
+
+            # Convert to HWC uint8
+            cam_high = _ensure_hwc_uint8(cam_high)
+            cam_left_wrist = _ensure_hwc_uint8(cam_left_wrist)
+            cam_right_wrist = _ensure_hwc_uint8(cam_right_wrist)
+
+            # Rectify the colors (BGR -> RGB)
+            cam_high = cam_high[..., ::-1]
+            cam_left_wrist = cam_left_wrist[..., ::-1]
+            cam_right_wrist = cam_right_wrist[..., ::-1]
+
+            # # Save images after conversion for debugging
+            # _save_debug_image(cam_high,        step_dir / "openvlaoft_policy__cam_high__after.png")
+            # _save_debug_image(cam_left_wrist,  step_dir / "openvlaoft_policy__cam_left_wrist__after.png")
+            # _save_debug_image(cam_right_wrist, step_dir / "openvlaoft_policy__cam_right_wrist__after.png")
+            # _debug_step += 1
 
         ##### Build payload for openVLA-OFT server 
-
         observation = {
             "full_image": cam_high,  
             "cam_left_wrist": cam_left_wrist,  
@@ -98,29 +126,27 @@ class OpenVLAOFTClientPolicy(BasePolicy):
         # Send the entire observation as the payload
         payload = observation
 
-
-
         ##### Send request to OpenVLA-OFT server
+        import time
+        infer_start = time.monotonic()
         try:
             response = requests.post(
                 self.server_url,
-                data= json_numpy.dumps(payload),
+                data=json_numpy.dumps(payload),
                 headers={"Content-Type": "application/json"},
                 timeout=self.timeout,
-                )
+            )
             response.raise_for_status()
         except requests.RequestException as e:
-        
             raise RuntimeError(f"OpenVLA-OFT server request failed: {e}")
-        
+        infer_ms = (time.monotonic() - infer_start) * 1000
 
-        ##### Parse response 
-        action =json_numpy.loads(response.text)  
-        
-        chunk_size = 25
-        # Action chunking expects multiple timesteps - repeat action for chunk_size
-        action = np.tile(action, (chunk_size, 1))
-
-        out: Dict[str, Any] = {"actions": action}
+        ##### Parse response
+        action = np.array(json_numpy.loads(response.text))
+        out: Dict[str, Any] = {
+            "state": obs.get("state"),
+            "actions": action,
+            "policy_timing": {"infer_ms": infer_ms},
+        }
 
         return out

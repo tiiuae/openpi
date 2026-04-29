@@ -13,10 +13,25 @@ import openpi.shared.array_typing as at
 import os
 
 
-def load_falcon_model(
-    model_name: str, device: str, hf_token: Optional[str]
-) -> Tuple[AutoProcessor, AutoModelForVision2Seq]:
-    processor = AutoProcessor.from_pretrained(model_name, trust_remote_code=True, token=hf_token)
+
+def _resolve_model_path(model_name: str) -> str:
+    """If model_name doesn't contain processor files but has a single subdirectory that does, use that instead."""
+    import os
+    processor_files = {"processor_config.json", "preprocessor_config.json", "tokenizer_config.json"}
+    dir_files = set(os.listdir(model_name)) if os.path.isdir(model_name) else set()
+    if not processor_files.intersection(dir_files):
+        subdirs = [d for d in dir_files if os.path.isdir(os.path.join(model_name, d))]
+        if len(subdirs) == 1:
+            candidate = os.path.join(model_name, subdirs[0])
+            candidate_files = set(os.listdir(candidate))
+            if processor_files.intersection(candidate_files):
+                return candidate
+    return model_name
+
+
+def load_falcon_model(model_name: str, device: str, hf_token: Optional[str]) -> Tuple[AutoProcessor, AutoModelForVision2Seq]:
+    model_name = _resolve_model_path(model_name)
+    processor = AutoProcessor.from_pretrained(model_name, trust_remote_code=True)
     model = AutoModelForVision2Seq.from_pretrained(
         model_name, trust_remote_code=True, torch_dtype=torch.bfloat16, token=hf_token, low_cpu_mem_usage=True
     ).to(device)
@@ -101,6 +116,33 @@ class FalconVLA(_model.BaseModel):
         # base_0_rgb -> primary/main image (cam_high)
         # right_wrist_0_rgb -> wrist image (cam_right_wrist)
         # left_wrist_0_rgb -> secondary image (cam_left_wrist)
+
+#! ### Debug - Saving images to disk just before they are consumed by
+        # # Create a folder if doensn't exist for storing the images (for debugging)
+        # # add timestamp to the folder name to avoid overwriting
+        # import time
+        # import cv2
+        # import numpy as np
+        
+        # timestamp = time.strftime("%Y%m%d-%H%M%S")
+        # debug_folder = f"debug/{timestamp}"
+        # os.makedirs(debug_folder, exist_ok=True)
+        # if images is not None:
+        #     for key, img in images.items():
+        #         try:
+        #             img_path = f"{debug_folder}/{timestamp}_{key}.png"
+        #             img_np = img.cpu().numpy() if isinstance(img, torch.Tensor) else np.array(img)
+
+        #             # Convert CHW to HWC and RGB to BGR for cv2
+        #             if img_np.shape[0] == 3:
+        #                 img_np = np.transpose(img_np, (1, 2, 0))
+        #                 # img_np = cv2.cvtColor(img_np, cv2.COLOR_RGB2BGR)
+
+        #             cv2.imwrite(img_path, img_np)
+        #             print(f"Saved {key} to {img_path}")
+        #         except Exception as e:
+        #             print(f"Failed to save {key}: {e}")
+#! ####
 
         primary_image = images.get("cam_high", None)
         if primary_image is None:

@@ -70,7 +70,8 @@ class FalconVLAPolicy(BasePolicy):
         if actions.ndim == 1:
             model_config = self._model.config
 
-            actions = actions.reshape(model_config.action_horizon, model_config.action_dim)  # reshape to (14, 25)
+            print(f"Model output shape: {actions.shape}, reshape {(model_config.action_horizon * model_config.action_dim,)}")
+            actions = actions.reshape(model_config.action_horizon, model_config.action_dim)
 
         outputs = {
             "actions": actions,
@@ -85,8 +86,6 @@ class FalconVLAPolicy(BasePolicy):
     @property
     def metadata(self) -> dict[str, Any]:
         return self._metadata
-
-
 
 
 @dataclasses.dataclass(frozen=True)

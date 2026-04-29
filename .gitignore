@@ -7,7 +7,10 @@ checkpoints/
 data/
 wandb/
 
-examples/trossen_ai/action_logs
+.venv/
+starVLA-internal/deployment/model_server/debug
+
+profiling/
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
@@ -175,3 +178,6 @@ cython_debug/
 
 # VSCode
 .vscode/
+
+# Debug
+debug/

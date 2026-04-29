@@ -1231,13 +1231,123 @@ _CONFIGS = [
             unnorm_key="aidrc_cups_manipulation_14",
             action_dim=14,
             action_horizon=25,
-            
+            use_proprio=True,
         ),
         data=LeRobotFalconVLADataConfig(
             assets=AssetsConfig(asset_id="trossen"),
         ),
         policy_metadata={"reset_pose": [0, -1.5, 1.5, 0, 0, 0]},
     ),
+    TrainConfig(
+        name="FalconVLA-AD14-H25-NP",
+        model=falconvla_config.FalconVLAConfig(
+            unnorm_key="aidrc_cups_manipulation_14",
+            action_dim=14,
+            action_horizon=25,
+            use_proprio=False,
+        ),
+        data=LeRobotFalconVLADataConfig(
+            assets=AssetsConfig(asset_id="trossen"),
+        ),
+        policy_metadata={"reset_pose": [0, -1.5, 1.5, 0, 0, 0]},
+    ),
+    TrainConfig(
+    name="FalconVLA-AD16-H25-NP",
+    model=falconvla_config.FalconVLAConfig(
+        unnorm_key="aidrc_cups_manipulation",
+        action_dim=16,
+        action_horizon=25,
+        use_proprio=False,
+    ),
+    data=LeRobotFalconVLADataConfig(
+        assets=AssetsConfig(asset_id="trossen"),
+    ),
+    policy_metadata={"reset_pose": [0, -1.5, 1.5, 0, 0, 0]},
+    ),
+    TrainConfig(
+    name="FalconVLA-AD16-H25",
+    model=falconvla_config.FalconVLAConfig(
+        unnorm_key="aidrc_cups_manipulation",
+        action_dim=16,
+        action_horizon=25,
+        use_proprio=True,
+    ),
+    data=LeRobotFalconVLADataConfig(
+        assets=AssetsConfig(asset_id="trossen"),
+    ),
+    policy_metadata={"reset_pose": [0, -1.5, 1.5, 0, 0, 0]},
+    ),
+    TrainConfig(
+    name="FalconVLA-AD14-H50-NP",
+    model=falconvla_config.FalconVLAConfig(
+        unnorm_key="aidrc_cups_manipulation",
+        action_dim=14,
+        action_horizon=50,
+        use_proprio=False,
+    ),
+    data=LeRobotFalconVLADataConfig(
+        assets=AssetsConfig(asset_id="trossen"),
+    ),
+    policy_metadata={"reset_pose": [0, -1.5, 1.5, 0, 0, 0]},
+    ),
+    TrainConfig(
+        name="FalconVLA-AD14-H10-NP",
+        model=falconvla_config.FalconVLAConfig(
+            unnorm_key="aidrc_cups_manipulation_14",
+            action_dim=14,
+            action_horizon=10,
+            use_proprio=False
+        ),
+        data=LeRobotFalconVLADataConfig(
+            assets=AssetsConfig(asset_id="trossen"),
+        ),
+        policy_metadata={"reset_pose": [0, -1.5, 1.5, 0, 0, 0]},
+    ),
+    TrainConfig(
+        name="Pi0.5-P",
+        model=pi0_config.Pi0Config(
+            pi05=True,
+            action_dim=25
+            ),
+        data=LeRobotAlohaDataConfig(
+            repo_id="aidrc_cups_manipulation",
+            assets=AssetsConfig(
+                asset_id="trossen",
+            ),
+            base_config=DataConfig(
+                prompt_from_task=True,
+            ),
+            repack_transforms=_transforms.Group(
+                inputs=[
+                    _transforms.RepackTransform(
+                        {
+                            "images": {
+                                "cam_high": "observation.images.primary",
+                                "cam_left_wrist": "observation.images.secondary",
+                                "cam_right_wrist": "observation.images.wrist",
+                            },
+                            "state": "observation.state",
+                            "actions": "action",
+                            "prompt": "prompt",
+                        }
+                    )
+                ]
+            ),
+        ),
+        # weight_loader=weight_loaders.CheckpointWeightLoader("gs://openpi-assets/checkpoints/pi05_base/params"),
+    ),
+    TrainConfig(
+        # This config is for fine-tuning pi05-DROID on a custom (smaller) DROID dataset.
+        # Here, we use LeRobot data format (like for all other fine-tuning examples)
+        # To convert your custom DROID dataset (<10s of hours) to LeRobot format, see examples/droid/convert_droid_data_to_lerobot.py
+        name="pi05_test",
+        model=pi0_config.Pi0Config(
+            pi05=True,
+            action_horizon=50,
+            action_dim=32,
+        ),
+    ),
+    
     #
     # RoboArena configs.
     #

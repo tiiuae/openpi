@@ -73,9 +73,8 @@ class OpenVLAClientPolicy(BasePolicy):
         try:
             response = requests.post(
                 self.server_url,
-                data=json_numpy.dumps(payload),  # Use json.dumps to serialize the payload as JSON
-                headers={"Content-Type": "application/json"},  # Set content type to JSON
-                json=payload,
+                data=json_numpy.dumps(payload),
+                headers={"Content-Type": "application/json"},
                 timeout=self.timeout,
             )
             response.raise_for_status()
