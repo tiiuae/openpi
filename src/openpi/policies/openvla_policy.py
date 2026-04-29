@@ -1,4 +1,4 @@
-from typing import Any, TypeAlias, dict
+from typing import Any, Dict, Optional, TypeAlias
 
 import json_numpy
 import numpy as np
@@ -18,8 +18,8 @@ class OpenVLAClientPolicy(BasePolicy):
         self,
         server_url: str = "http://localhost:8000/act",
         timeout: float = 5.0,
-        unnorm_key: str | None = None,
-        metadata: dict[str, Any] | None = None,
+        unnorm_key: Optional[str] = None,
+        metadata: Dict[str, Any] | None = None,
         default_prompt: str = "",
     ) -> None:
         """OpenVLA HTTP client policy.
@@ -37,7 +37,7 @@ class OpenVLAClientPolicy(BasePolicy):
         self.metadata = metadata or {}
         self.default_prompt = default_prompt
 
-    def infer(self, obs: dict[str, Any]) -> dict[str, Any]:
+    def infer(self, obs: Dict[str, Any]) -> Dict[str, Any]:
         """Infer actions from observations via the OpenVLA REST server."""
         # --- Extract image and instruction ---
         image_data = obs["images"]
@@ -60,7 +60,7 @@ class OpenVLAClientPolicy(BasePolicy):
         instruction = self.default_prompt
 
         # --- Build payload for OpenVLA server ---
-        payload: dict[str, Any] = {
+        payload: Dict[str, Any] = {
             "image": image_array,
             "instruction": instruction,  # str
         }
@@ -88,6 +88,6 @@ class OpenVLAClientPolicy(BasePolicy):
         chunk_size = 25
         action = np.tile(action, (chunk_size, 1))
 
-        out: dict[str, Any] = {"actions": action}
+        out: Dict[str, Any] = {"actions": action}
 
         return out
