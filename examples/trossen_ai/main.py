@@ -19,6 +19,7 @@ Usage:
 import argparse
 import logging
 import time
+from pathlib import Path
 
 from action_ensemble import ActionLogger
 from action_ensemble import AsyncPolicyWorker
@@ -75,12 +76,16 @@ class TrossenOpenPIBridge:
             min_time_to_move_multiplier=3.0,
             loop_rate=30,
             cameras={
-                "cam_high": OpenCVCameraConfig(index_or_path=18, width=640, height=480, fps=30),
+                "cam_high": OpenCVCameraConfig(index_or_path=Path("/dev/cam_high"), width=640, height=480, fps=30),
                 # "cam_low": RealSenseCameraConfig(
                 #     serial_number_or_name="130322272628", width=640, height=480, fps=30, use_depth=False
                 # ),
-                "cam_right_wrist": OpenCVCameraConfig(index_or_path=12, width=640, height=480, fps=30),
-                "cam_left_wrist": OpenCVCameraConfig(index_or_path=6, width=640, height=480, fps=30),
+                "cam_right_wrist": OpenCVCameraConfig(
+                    index_or_path=Path("/dev/cam_wrist_right"), width=640, height=480, fps=30
+                ),
+                "cam_left_wrist": OpenCVCameraConfig(
+                    index_or_path=Path("/dev/cam_wrist_left"), width=640, height=480, fps=30
+                ),
             },
         )
         self.robot = make_robot_from_config(robot_config)
