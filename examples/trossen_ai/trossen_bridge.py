@@ -1,5 +1,4 @@
 import logging
-from pathlib import Path
 import time
 
 from action_fallback import HoldLastAction
@@ -7,15 +6,13 @@ from action_logger import ActionLogger
 from async_worker import AsyncPolicyWorker
 from ensemble import make_ensemble
 import cv2
-from lerobot.cameras.opencv.configuration_opencv import OpenCVCameraConfig
-from lerobot.robots import make_robot_from_config
-from lerobot_robot_trossen.config_bi_widowxai_follower import BiWidowXAIFollowerRobotConfig
 import numpy as np
 from openpi_client import websocket_client_policy
 from PIL import Image
 from scipy.interpolate import PchipInterpolator
 
 from adapters import ActionSpaceAdapter, JointAdapter, extract_joints
+from robot_control import build_stationary_robot
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
@@ -78,25 +75,7 @@ class TrossenOpenPIBridge:
             host=policy_server_host, port=policy_server_port
         )
 
-        robot_config = BiWidowXAIFollowerRobotConfig(
-            id="bimanual_follower",
-            left_arm_ip_address="192.168.1.5",
-            right_arm_ip_address="192.168.1.4",
-            min_time_to_move_multiplier=3.0,
-            loop_rate=30,
-            cameras={
-                "cam_high": OpenCVCameraConfig(index_or_path=Path("/dev/video16"), width=640, height=480, fps=30),
-                # "cam_low": RealSenseCameraConfig(
-                #     serial_number_or_name="130322272628", width=640, height=480, fps=30, use_depth=False
-                # ),
-                "cam_right_wrist": OpenCVCameraConfig(
-                    index_or_path=Path("/dev/video10"), width=640, height=480, fps=30
-                ),
-                "cam_left_wrist": OpenCVCameraConfig(index_or_path=Path("/dev/video4"), width=640, height=480, fps=30),
-            },
-        )
-        self.robot = make_robot_from_config(robot_config)
-        self.robot.connect()
+        self.robot = build_stationary_robot()
 
         self.current_action_chunk = None
         self.action_chunk_idx = 0

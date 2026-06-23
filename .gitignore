@@ -3,6 +3,9 @@ examples/trossen_ai/action_logs*
 
 # Data directories.
 assets/
+
+# Local replay datasets (large; copied in by hand).
+converted_to_EE/
 checkpoints/
 data/
 wandb/
