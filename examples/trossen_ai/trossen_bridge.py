@@ -2,9 +2,9 @@ import logging
 from pathlib import Path
 import time
 
-from action_ensemble import ActionLogger
-from action_ensemble import AsyncPolicyWorker
-from action_ensemble import make_ensemble
+from action_logger import ActionLogger
+from async_worker import AsyncPolicyWorker
+from ensemble import make_ensemble
 import cv2
 from lerobot.cameras.opencv.configuration_opencv import OpenCVCameraConfig
 from lerobot.robots import make_robot_from_config
