@@ -2,6 +2,7 @@ import logging
 from pathlib import Path
 import time
 
+from action_fallback import HoldLastAction
 from action_logger import ActionLogger
 from async_worker import AsyncPolicyWorker
 from ensemble import make_ensemble
@@ -286,6 +287,7 @@ class TrossenOpenPIBridge:
         self.action_chunk_idx = 0
         self.current_action_chunk = None
         self.is_running = True
+        fallback = HoldLastAction()
         if self.async_inference and not isinstance(self.adapter, JointAdapter):
             raise NotImplementedError("Async inference with EE decoding is not supported yet.")
         if self.ensemble is not None:
@@ -315,9 +317,11 @@ class TrossenOpenPIBridge:
                         if not self._policy_worker.wait_for_first(timeout=30.0):
                             logger.error("Timed out waiting for first inference — aborting")
                             break
-                    a_t = self.ensemble.get_action(self.episode_step)
+                    a_t = fallback.resolve(self.ensemble.get_action(self.episode_step))
                     if a_t is None:
-                        a_t = np.zeros(self.action_dim)
+                        # no prediction yet and no prior action — skip this step
+                        self.episode_step += 1
+                        continue
 
                 else:
                     # Synchronous: request new chunk every rate_of_inference steps
@@ -334,9 +338,10 @@ class TrossenOpenPIBridge:
                         logger.info(f"Received action chunk: {self.current_action_chunk.shape}")
 
                     if self.ensemble is not None:
-                        a_t = self.ensemble.get_action(self.episode_step)
+                        a_t = fallback.resolve(self.ensemble.get_action(self.episode_step))
                         if a_t is None:
-                            a_t = np.zeros(self.action_dim)
+                            self.episode_step += 1
+                            continue
                     else:
                         a_t = self.current_action_chunk[self.action_chunk_idx]
 
