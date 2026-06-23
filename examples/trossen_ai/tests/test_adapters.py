@@ -32,3 +32,35 @@ def test_joint_adapter_decode_chunk_is_identity_slice():
     out = adapter.decode_chunk(raw, current_joints14=np.zeros(14))
     assert out.shape == (3, 14)
     assert np.allclose(out, raw[:, :14])
+
+
+import pytest
+
+
+@pytest.mark.integration
+def test_ee_adapter_state_is_16_and_decodes_to_joints():
+    from external.joint_to_ee import constants as C
+    from external.joint_to_ee.kinematics import make_kinematics
+    from external.joint_to_ee.ee_to_joints import EEToJointsConverter
+    from adapters import EEAdapter
+
+    q14 = np.zeros(14)
+    q14[C.OBS_LEFT_JOINTS] = [0.1, 0.3, 0.4, 0.0, 0.2, 0.0]
+    q14[C.OBS_RIGHT_JOINTS] = [-0.1, 0.3, 0.4, 0.0, 0.2, 0.0]
+
+    converter = EEToJointsConverter(make_kinematics())
+    adapter = EEAdapter(converter)
+    assert adapter.state_dim == 16
+
+    # build a fake obs dict from q14 so build_state can extract+FK it
+    names = [f"left_joint_{i}.pos" for i in range(6)] + ["left_gripper.pos"] \
+            + [f"right_joint_{i}.pos" for i in range(6)] + ["right_gripper.pos"]
+    obs = {n: float(q14[i]) for i, n in enumerate(names)}
+
+    state = adapter.build_state(obs)
+    assert state.shape == (16,)
+
+    # round-trip: decode the FK'd state back to joints
+    out = adapter.decode_chunk(state[None, :], q14)
+    assert out.shape == (1, 14)
+    assert np.allclose(out[0, C.OBS_LEFT_JOINTS], q14[C.OBS_LEFT_JOINTS], atol=2e-2)

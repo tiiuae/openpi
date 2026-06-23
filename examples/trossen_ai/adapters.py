@@ -41,3 +41,20 @@ class JointAdapter(ActionSpaceAdapter):
 
     def decode_chunk(self, raw_chunk: np.ndarray, current_joints14: np.ndarray) -> np.ndarray:
         return np.asarray(raw_chunk)[:, :JOINT_DIM]
+
+
+class EEAdapter(ActionSpaceAdapter):
+    """EE-space policy: FK observation into EE, IK-decode EE actions into joints."""
+
+    state_dim = 16
+
+    def __init__(self, converter):
+        # converter: external.joint_to_ee.ee_to_joints.EEToJointsConverter
+        self._converter = converter
+
+    def build_state(self, obs_dict: dict) -> np.ndarray:
+        joints14 = extract_joints(obs_dict)
+        return self._converter.joints14_to_ee16(joints14)
+
+    def decode_chunk(self, raw_chunk: np.ndarray, current_joints14: np.ndarray) -> np.ndarray:
+        return self._converter.decode_chunk(raw_chunk, current_joints14)
