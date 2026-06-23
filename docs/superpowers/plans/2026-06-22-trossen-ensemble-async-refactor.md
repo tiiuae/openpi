@@ -615,12 +615,18 @@ In `main.py:build_parser`, add (so `main_ee.py` inherits it):
 ```
 In `main.py:main` and `main_ee.py:main`, pass `cogact_mode=args.cogact_mode` into the `TrossenOpenPIBridge(...)` call.
 
-Smoke:
+Smoke. `main.py`/`main_ee.py` import `lerobot_robot_trossen`, which only installs on
+the robot machine — `--help` therefore runs **only in the robot runtime env**:
 ```bash
-$PYBIN main.py --help | grep cogact_mode
-$PYBIN main_ee.py --help | grep cogact_mode
+<robot-env-python> main.py --help | grep cogact_mode
+<robot-env-python> main_ee.py --help | grep cogact_mode
 ```
-Expected: the flag appears in both.
+Off-robot (in `$PYBIN`, no `lerobot_robot_trossen`), validate the parser by stubbing
+the robot import:
+```bash
+$PYBIN -c "import sys, types; s=types.ModuleType('trossen_bridge'); s.TrossenOpenPIBridge=object; sys.modules['trossen_bridge']=s; import main, main_ee; print(main.build_parser().parse_args([]).cogact_mode, main_ee.build_parser().parse_args(['--cogact_mode','hybrid']).cogact_mode)"
+```
+Expected: `cogact hybrid` (default is `cogact`, both parsers accept the flag).
 
 - [ ] **Step 6: Commit**
 ```bash
@@ -786,11 +792,12 @@ grep -rn "get_latest_raw\|np.zeros(self.action_dim)\|action_ensemble" examples/t
 ```
 Expected: no matches.
 
-- [ ] Entrypoint smoke (both inherit `--cogact_mode`):
+- [ ] Entrypoint smoke (both inherit `--cogact_mode`). On the robot runtime env:
 ```bash
-$PYBIN main.py --help | grep cogact_mode
-$PYBIN main_ee.py --help | grep cogact_mode
+<robot-env-python> main.py --help | grep cogact_mode
+<robot-env-python> main_ee.py --help | grep cogact_mode
 ```
+Off-robot, use the stub one-liner from Task 4 Step 5.
 
 - [ ] **On the rig (manual):** run a short async episode and confirm: no
   zero-jump at startup, no crash under concurrent inference, and stable memory over

@@ -106,5 +106,4 @@ class CogACTEnsemble(ActionEnsemble):
 
 @register_ensemble("cogact")
 def _build_cogact(cfg: EnsembleConfig) -> CogACTEnsemble:
-    # FIXME(Task 4): honor cfg.cogact_mode instead of forcing "latest".
-    return CogACTEnsemble(max_buffer_size=cfg.max_buffer_size, mode="latest")
+    return CogACTEnsemble(max_buffer_size=cfg.max_buffer_size, mode=cfg.cogact_mode)

@@ -57,6 +57,7 @@ class TrossenOpenPIBridge:
         action_chunk_size: int = 10,
         rate_of_inference: int = 10,
         ensemble_type: str = "exp",
+        cogact_mode: str = "cogact",
         async_inference: bool = False,  # noqa
         log_dir: str | None = None,
         use_left_arm_only: bool = False,  # noqa
@@ -106,7 +107,7 @@ class TrossenOpenPIBridge:
         self.rate_of_inference = rate_of_inference  # Number of control steps per policy inference
         self.action_dim = len(self.robot._joint_ft)  # 7 joints per arm * 2 arms # noqa
         self.state_dim = self.adapter.state_dim
-        self.ensemble = make_ensemble(ensemble_type)
+        self.ensemble = make_ensemble(ensemble_type, cogact_mode=cogact_mode)
 
         if async_inference and self.ensemble is None:
             raise ValueError("--async_inference requires an ensemble (ensemble_type cannot be 'none')")

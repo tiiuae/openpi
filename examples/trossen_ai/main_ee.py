@@ -47,6 +47,7 @@ def main() -> None:
         action_chunk_size=args.action_chunk_size,
         rate_of_inference=args.rate_of_inference,
         ensemble_type=args.ensemble_type,
+        cogact_mode=args.cogact_mode,
         async_inference=False,
         log_dir=args.log_dir,
         use_left_arm_only=args.use_left_arm_only,
