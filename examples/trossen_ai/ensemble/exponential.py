@@ -1,6 +1,7 @@
 """Exponential-decay ensemble (ACT / original behaviour)."""
 from __future__ import annotations
 
+import threading
 from collections import defaultdict
 
 import numpy as np
@@ -27,13 +28,19 @@ class ExponentialEnsemble(ActionEnsemble):
     def __init__(self, decay: float = 1.0) -> None:
         self.decay = decay
         self._buffer: dict[int, list[np.ndarray]] = defaultdict(list)
+        self._lock = threading.Lock()
 
     def add_chunk(self, query_step: int, chunk: np.ndarray) -> None:
-        for k, action in enumerate(chunk):
-            self._buffer[query_step + k].append(action)
+        with self._lock:
+            for k, action in enumerate(chunk):
+                self._buffer[query_step + k].append(action)
 
     def get_action(self, current_step: int) -> np.ndarray | None:
-        candidates = self._buffer.get(current_step)
+        with self._lock:
+            candidates = self._buffer.pop(current_step, None)  # consume + evict
+            # drop any stragglers strictly older than the step we just consumed
+            for stale in [k for k in self._buffer if k < current_step]:
+                del self._buffer[stale]
         if not candidates:
             return None
         mat = np.array(candidates)  # (N, D)
@@ -42,10 +49,12 @@ class ExponentialEnsemble(ActionEnsemble):
         return np.average(mat, axis=0, weights=weights)
 
     def get_overlap_count(self, current_step: int) -> int:
-        return len(self._buffer.get(current_step, []))
+        with self._lock:
+            return len(self._buffer.get(current_step, []))
 
     def reset(self) -> None:
-        self._buffer.clear()
+        with self._lock:
+            self._buffer.clear()
 
 
 @register_ensemble("exp")
