@@ -6,11 +6,16 @@ higher weight, suppressing outliers.
 """
 from __future__ import annotations
 
+import logging
+import threading
+
 import numpy as np
 
 from .base import ActionEnsemble
 from .config import EnsembleConfig
 from .factory import register_ensemble
+
+logger = logging.getLogger(__name__)
 
 
 class CogACTEnsemble(ActionEnsemble):
@@ -24,14 +29,26 @@ class CogACTEnsemble(ActionEnsemble):
         self.mode = mode
         self.lambda_mix = lambda_mix
         self._buffer: list[tuple[int, np.ndarray]] = []
+        self._lock = threading.Lock()
+        self._warned_depth = False
 
     def add_chunk(self, query_step: int, chunk: np.ndarray) -> None:
-        self._buffer.append((query_step, chunk))
-        if len(self._buffer) > self.max_buffer_size:
-            self._buffer.pop(0)
+        if not self._warned_depth and len(chunk) > self.max_buffer_size:
+            logger.warning(
+                "CogACTEnsemble: chunk length %d > max_buffer_size %d; older "
+                "overlaps for a step may be evicted before they are consumed.",
+                len(chunk), self.max_buffer_size,
+            )
+            self._warned_depth = True
+        with self._lock:
+            self._buffer.append((query_step, chunk))
+            if len(self._buffer) > self.max_buffer_size:
+                self._buffer.pop(0)
 
     def get_action(self, current_step: int) -> np.ndarray | None:
-        candidates = [chunk[current_step - qs] for qs, chunk in self._buffer if 0 <= current_step - qs < len(chunk)]
+        with self._lock:
+            buf = list(self._buffer)  # snapshot under lock
+        candidates = [chunk[current_step - qs] for qs, chunk in buf if 0 <= current_step - qs < len(chunk)]
         if not candidates:
             return None
         if len(candidates) == 1:
@@ -78,10 +95,13 @@ class CogACTEnsemble(ActionEnsemble):
         return np.average(mat, axis=0, weights=weights)
 
     def get_overlap_count(self, current_step: int) -> int:
-        return sum(1 for qs, chunk in self._buffer if 0 <= current_step - qs < len(chunk))
+        with self._lock:
+            buf = list(self._buffer)
+        return sum(1 for qs, chunk in buf if 0 <= current_step - qs < len(chunk))
 
     def reset(self) -> None:
-        self._buffer.clear()
+        with self._lock:
+            self._buffer.clear()
 
 
 @register_ensemble("cogact")
