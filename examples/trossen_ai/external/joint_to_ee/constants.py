@@ -4,7 +4,7 @@ from pathlib import Path
 import numpy as np
 
 # ROS workspace so placo can resolve package:// mesh paths in the URDF.
-TROSSEN_WORKSPACE = Path("/home/edgeai/trossen_arm_ros")
+TROSSEN_WORKSPACE = Path(__file__).parent
 
 WXAI_FOLLOWER_URDF = (
     TROSSEN_WORKSPACE / "trossen_arm_description/urdf/generated/wxai/wxai_follower.urdf"
