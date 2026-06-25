@@ -103,6 +103,10 @@ class CogACTEnsemble(ActionEnsemble):
         with self._lock:
             self._buffer.clear()
 
+    def buffer_size(self) -> int:
+        with self._lock:
+            return len(self._buffer)
+
 
 @register_ensemble("cogact")
 def _build_cogact(cfg: EnsembleConfig) -> CogACTEnsemble:

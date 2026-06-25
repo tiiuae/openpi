@@ -13,6 +13,8 @@ from scipy.interpolate import PchipInterpolator
 
 from adapters import ActionSpaceAdapter, JointAdapter, extract_joints
 from robot_control import build_stationary_robot
+from webapp.log_bridge import SinkLogHandler
+from webapp.telemetry import NullSink, TelemetrySink
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
@@ -62,8 +64,10 @@ class TrossenOpenPIBridge:
         use_right_arm_only: bool = False,  # noqa
         starvla: bool = False,  # noqa
         adapter: "ActionSpaceAdapter | None" = None,
+        sink: TelemetrySink = NullSink(),
     ):
         self.adapter = adapter if adapter is not None else JointAdapter()
+        self.sink = sink
         self.starvla = starvla
         self.control_frequency = control_frequency
         self.max_steps = max_steps
@@ -93,7 +97,8 @@ class TrossenOpenPIBridge:
             raise ValueError("--async_inference requires an ensemble (ensemble_type cannot be 'none')")
         self.async_inference = async_inference
         self._policy_worker = (
-            AsyncPolicyWorker(self.policy_client, self.ensemble, self.action_dim) if async_inference else None
+            AsyncPolicyWorker(self.policy_client, self.ensemble, self.action_dim, sink=self.sink)
+            if async_inference else None
         )
 
         self.action_logger = ActionLogger(log_dir) if log_dir else None
@@ -211,6 +216,7 @@ class TrossenOpenPIBridge:
                 image_resized = cv2.resize(image_hwc, DEFAULT_TRAINING_SIZE, interpolation=cv2.INTER_LANCZOS4)
                 image_rgb = cv2.cvtColor(image_resized, cv2.COLOR_BGR2RGB)
             images[cam] = np.transpose(image_rgb, (2, 0, 1))
+        self.sink.on_images({cam: cv2.imencode(".jpg", observation_dict[cam])[1].tobytes() for cam in cameras}, time.time())
         return {"state": state, "images": images, "prompt": task_prompt}
 
     def move_to_start_position(self, goal_position: np.ndarray, duration: float = 5.0):
@@ -267,6 +273,8 @@ class TrossenOpenPIBridge:
         self.current_action_chunk = None
         self.is_running = True
         fallback = HoldLastAction()
+        log_handler = SinkLogHandler(self.sink)
+        logging.getLogger().addHandler(log_handler)
         if self.async_inference and not isinstance(self.adapter, JointAdapter):
             raise NotImplementedError("Async inference with EE decoding is not supported yet.")
         if self.ensemble is not None:
@@ -308,11 +316,14 @@ class TrossenOpenPIBridge:
                         obs_raw = self.robot.get_observation()
                         observation = self._build_observation(obs_raw, task_prompt)
                         logger.info(f"Step {self.episode_step}: Requesting new action chunk")
+                        _t0 = time.perf_counter()
                         response = self.policy_client.infer(observation)
+                        self.sink.on_inference((time.perf_counter() - _t0) * 1e3, time.time())
                         current_joints14 = extract_joints(obs_raw)
                         self.current_action_chunk = self.adapter.decode_chunk(response["actions"], current_joints14)
                         if self.ensemble is not None:
                             self.ensemble.add_chunk(self.episode_step, self.current_action_chunk)
+                            self.sink.on_chunk(self.episode_step, self.current_action_chunk, time.time())
                         self.action_chunk_idx = 0
                         logger.info(f"Received action chunk: {self.current_action_chunk.shape}")
 
@@ -329,6 +340,11 @@ class TrossenOpenPIBridge:
                         self.episode_step,
                         self.ensemble.get_overlap_count(self.episode_step),
                     )
+
+                if self.ensemble is not None:
+                    self.sink.on_overlap(self.episode_step, self.ensemble.get_overlap_count(self.episode_step))
+                    self.sink.on_status("buffer", {"size": self.ensemble.buffer_size()})
+                self.sink.on_action(self.episode_step, np.asarray(a_t), time.time())
 
                 # FIXME: temporary adaptation for the case of the model with 7 dof
                 """
@@ -368,6 +384,7 @@ class TrossenOpenPIBridge:
                 logger.info(f"time: {loop_s * 1e3:.2f}ms ({1 / loop_s:.0f} Hz)")
 
         finally:
+            logging.getLogger().removeHandler(log_handler)
             if self.async_inference:
                 self._policy_worker.stop()
             if self.action_logger is not None:

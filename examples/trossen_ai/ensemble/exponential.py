@@ -56,6 +56,10 @@ class ExponentialEnsemble(ActionEnsemble):
         with self._lock:
             self._buffer.clear()
 
+    def buffer_size(self) -> int:
+        with self._lock:
+            return sum(len(v) for v in self._buffer.values())
+
 
 @register_ensemble("exp")
 def _build_exp(cfg: EnsembleConfig) -> ExponentialEnsemble:

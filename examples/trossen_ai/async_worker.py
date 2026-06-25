@@ -12,6 +12,7 @@ import time
 import numpy as np
 
 from ensemble import ActionEnsemble
+from webapp.telemetry import NullSink, TelemetrySink
 
 logger = logging.getLogger(__name__)
 
@@ -45,10 +46,12 @@ class AsyncPolicyWorker:
         worker.stop()
     """
 
-    def __init__(self, policy_client, ensemble: ActionEnsemble, action_dim: int) -> None:
+    def __init__(self, policy_client, ensemble: ActionEnsemble, action_dim: int,
+                 sink: TelemetrySink = NullSink()) -> None:
         self._client = policy_client
         self._ensemble = ensemble
         self._action_dim = action_dim
+        self._sink = sink
         self._pending: tuple | None = None  # (obs_dict, query_step)
         self._lock = threading.Lock()
         self._first_result = threading.Event()
@@ -88,9 +91,13 @@ class AsyncPolicyWorker:
                 continue
             obs, query_step = item
             try:
+                t0 = time.perf_counter()
                 response = self._client.infer(obs)
+                rtt_ms = (time.perf_counter() - t0) * 1e3
+                self._sink.on_inference(rtt_ms, time.time())
                 chunk = np.asarray(response["actions"])[:, : self._action_dim]
                 self._ensemble.add_chunk(query_step, chunk)
+                self._sink.on_chunk(query_step, chunk, time.time())
                 if first:
                     self._first_result.set()
                     first = False

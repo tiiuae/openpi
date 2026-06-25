@@ -35,3 +35,7 @@ class ActionEnsemble(ABC):
     @abstractmethod
     def reset(self) -> None:
         """Clear internal state. Call at the beginning of each episode."""
+
+    @abstractmethod
+    def buffer_size(self) -> int:
+        """Number of buffered items (for telemetry / memory-bound checks)."""
