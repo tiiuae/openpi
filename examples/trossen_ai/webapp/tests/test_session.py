@@ -71,3 +71,66 @@ def test_estop_calls_runner_estop():
     sm.estop()
     assert created[0].estopped
     assert not sm.is_running()
+
+
+import threading
+
+
+def test_start_returns_immediately_when_construction_blocks():
+    """Runner construction must not block the caller (the WS event loop)."""
+    def slow_factory(kind, config, sink):
+        time.sleep(0.5)  # simulate a blocking policy-server connect
+        return FakeRunner(kind, config, sink)
+
+    sm = SessionManager(slow_factory)
+    t0 = time.perf_counter()
+    sm.start("live", {}, sink=_NoopSink())
+    elapsed = time.perf_counter() - t0
+    assert elapsed < 0.1, f"start() blocked for {elapsed:.3f}s"
+    sm.stop()
+
+
+def test_stop_during_construction_skips_run():
+    """If stop is requested before construction finishes, run() is never entered."""
+    gate = threading.Event()
+    ran = []
+
+    class GatedRunner:
+        def __init__(self, kind, config, sink):
+            gate.wait(2.0)
+
+        def run(self):
+            ran.append(True)
+
+        def stop(self):
+            ...
+
+        def estop(self):
+            ...
+
+    sm = SessionManager(lambda k, c, s: GatedRunner(k, c, s))
+    sm.start("live", {}, sink=_NoopSink())
+    time.sleep(0.05)  # thread now blocked inside __init__
+    stopper = threading.Thread(target=sm.stop)
+    stopper.start()
+    time.sleep(0.05)
+    gate.set()  # let construction finish; _run should see stop flag
+    stopper.join(2.0)
+    assert ran == []
+
+
+def test_construction_error_emits_error_status():
+    statuses = []
+
+    class RecordingSink:
+        def on_status(self, kind, payload):
+            statuses.append((kind, payload))
+
+    def boom_factory(kind, config, sink):
+        raise RuntimeError("connect failed")
+
+    sm = SessionManager(boom_factory)
+    sm.start("live", {}, sink=RecordingSink())
+    time.sleep(0.1)
+    assert any(k == "error" for k, _ in statuses)
+    assert not sm.is_running()

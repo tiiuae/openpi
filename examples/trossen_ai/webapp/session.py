@@ -25,6 +25,7 @@ class SessionManager:
         self._runner: Runner | None = None
         self._thread: threading.Thread | None = None
         self._lock = threading.Lock()
+        self._stop_requested = False
 
     def is_running(self) -> bool:
         return self._thread is not None and self._thread.is_alive()
@@ -33,11 +34,30 @@ class SessionManager:
         with self._lock:
             if self.is_running():
                 raise RuntimeError("A session is already running")
-            self._runner = self._factory(kind, config, sink)
-            self._thread = threading.Thread(target=self._runner.run, daemon=True, name=f"session-{kind}")
+            self._stop_requested = False
+            self._runner = None
+            self._thread = threading.Thread(
+                target=self._run, args=(kind, config, sink),
+                daemon=True, name=f"session-{kind}",
+            )
             self._thread.start()
 
+    def _run(self, kind: str, config: dict, sink) -> None:
+        try:
+            runner = self._factory(kind, config, sink)
+            self._runner = runner
+            if self._stop_requested:
+                runner.stop()
+                return
+            runner.run()
+        except Exception as exc:  # noqa: BLE001 — surface to UI, never crash the thread
+            try:
+                sink.on_status("error", {"message": str(exc)})
+            except Exception:
+                pass
+
     def stop(self, timeout: float = 15.0) -> None:
+        self._stop_requested = True
         runner, thread = self._runner, self._thread
         if runner is not None:
             runner.stop()
@@ -46,6 +66,7 @@ class SessionManager:
         self._runner, self._thread = None, None
 
     def estop(self, timeout: float = 15.0) -> None:
+        self._stop_requested = True
         runner, thread = self._runner, self._thread
         if runner is not None:
             runner.estop()
