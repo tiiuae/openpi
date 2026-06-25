@@ -59,6 +59,10 @@ def create_app(presets_dir: str | Path | None = None, runner_factory=None,
     def index():
         return FileResponse(STATIC_DIR / "index.html")
 
+    @app.get("/replay")
+    def replay():
+        return FileResponse(STATIC_DIR / "replay.html")
+
     @app.get("/api/health")
     def health():
         return {"session_running": session.is_running()}

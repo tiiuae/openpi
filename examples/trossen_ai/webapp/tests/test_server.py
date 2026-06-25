@@ -51,3 +51,10 @@ def test_shutdown_hook_runs_clean():
         pass
     # Exiting the context ran the shutdown hook (session.stop()) without raising.
     assert True
+
+
+def test_replay_page_served():
+    client = TestClient(create_app())
+    r = client.get("/replay")
+    assert r.status_code == 200
+    assert "text/html" in r.headers["content-type"]

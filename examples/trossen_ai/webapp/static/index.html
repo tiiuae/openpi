@@ -3,94 +3,39 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Trossen Control</title>
-  <link rel="stylesheet" href="/static/styles.css">
+  <title>Trossen Control — Live</title>
+  <link rel="stylesheet" href="/static/theme.css">
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-zoom@2.0.1/dist/chartjs-plugin-zoom.min.js"></script>
 </head>
 <body>
-  <header>
-    <h1>Trossen Control</h1>
-    <div id="health">
+  <header class="app-header">
+    <div class="app-nav">
+      <strong style="color:var(--text);margin-right:16px">Trossen Control</strong>
+      <a href="/" class="active">Live</a><a href="/replay">Replay</a>
+    </div>
+    <div class="header-actions">
       <span class="badge" id="badge-rtt">rtt</span>
       <span class="badge" id="badge-session">idle</span>
+      <button class="btn-outline" id="btn-home">Home</button>
+      <button class="btn-outline" id="btn-sleep">Sleep</button>
     </div>
   </header>
 
-  <main>
-    <section id="config-panel">
-      <h2>Configuration</h2>
-      <div class="row">
-        <label>Preset <select id="preset-select"></select></label>
-        <button id="preset-load">Load</button>
-        <input id="preset-name" placeholder="preset name">
-        <button id="preset-save">Save</button>
-        <button id="preset-delete">Delete</button>
-      </div>
-      <form id="config-form">
-        <label>Policy host <input name="policy_host" value="192.168.50.174"></label>
-        <label>Policy port <input name="policy_port" type="number" value="8800"></label>
-        <label>Control Hz <input name="control_freq" type="number" value="25"></label>
-        <label>Max steps <input name="max_steps" type="number" value="1000"></label>
-        <label>Adapter
-          <select name="adapter"><option value="joint">joint</option><option value="ee">ee</option></select>
-        </label>
-        <label>Ensemble
-          <select name="ensemble_type"><option>exp</option><option>cogact</option><option>none</option></select>
-        </label>
-        <label>CogACT mode
-          <select name="cogact_mode"><option>cogact</option><option>latest</option><option>hybrid</option></select>
-        </label>
-        <label>Async <input name="async_inference" type="checkbox"></label>
-        <label>Left arm only <input name="use_left_arm_only" type="checkbox"></label>
-        <label>Right arm only <input name="use_right_arm_only" type="checkbox"></label>
-        <label>StarVLA <input name="starvla" type="checkbox"></label>
-        <label>Task prompt <input name="task_prompt" value="move the arm to the left"></label>
-        <label>IK orient w <input name="ik_orientation_weight" type="number" step="0.01" value="0.01"></label>
-        <label>IK pos tol (m) <input name="ik_pos_tol_m" type="number" step="0.001" value="0.001"></label>
-        <fieldset>
-          <legend>Replay</legend>
-          <label>Dataset dir <input name="dataset_dir" value="../../dataset/converted_to_EE"></label>
-          <label>Episode <input name="episode_index" type="number" value="0"></label>
-        </fieldset>
-      </form>
-      <div class="row">
-        <label>Mode
-          <select id="mode-select"><option value="test">test (no movement)</option><option value="autonomous">autonomous</option></select>
-        </label>
-        <button id="btn-start">Start Live</button>
-        <button id="btn-replay">Replay Episode</button>
-        <button id="btn-stop">Stop</button>
-        <button id="btn-estop" class="estop">E-STOP</button>
-      </div>
-    </section>
+  <div class="live-grid">
+    <aside id="config-col"><!-- config cards injected by config.js --></aside>
+    <main class="live-main">
+      <section class="card"><h2>Cameras</h2><div class="cameras-strip" id="images-box"></div></section>
+      <section class="card"><h2>Actions</h2><div class="charts-grid" id="charts-box"></div>
+        <div class="section-label">Metrics</div><div id="metrics-box"></div></section>
+      <section class="card">
+        <div class="log-header"><h2>Logs</h2><button class="btn-sm" id="btn-clear-log">Clear</button></div>
+        <div class="log-panel" id="log-box"></div>
+      </section>
+      <section class="card" id="feedback-card"><!-- feedback form injected by feedback.js --></section>
+    </main>
+  </div>
 
-    <section id="log-panel">
-      <h2>Logs</h2>
-      <div id="log-box"></div>
-    </section>
-
-    <section id="charts-panel">
-      <h2>Actions</h2>
-      <label>Joint <input id="joint-index" type="number" value="0" min="0" max="13"></label>
-      <canvas id="chart-actions"></canvas>
-      <h2>Raw vs Smoothed (selected joint)</h2>
-      <canvas id="chart-rawvs"></canvas>
-      <h2>Overlap timeline</h2>
-      <canvas id="chart-overlap"></canvas>
-      <h2>Blend weights (latest step)</h2>
-      <canvas id="chart-weights"></canvas>
-      <h2>Buffer size</h2>
-      <canvas id="chart-buffer"></canvas>
-      <h2>Metrics</h2>
-      <div id="metrics-box"></div>
-    </section>
-
-    <section id="images-panel">
-      <h2>Cameras</h2>
-      <div id="images-box"></div>
-    </section>
-  </main>
-
-  <script src="/static/app.js"></script>
+  <script type="module" src="/static/js/live.js"></script>
 </body>
 </html>
