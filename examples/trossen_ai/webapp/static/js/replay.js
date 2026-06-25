@@ -15,11 +15,16 @@ document.addEventListener("DOMContentLoaded", () => {
   setupControls();
   renderFeedback($("feedback-card"));
 
-  $("charts-box").innerHTML =
-    `<div class="chart-wrap"><div class="chart-title">Replayed action (joint 0)</div>
-      <div class="chart-cj-container"><canvas id="chart-actions"></canvas></div></div>`;
-  chart = new LiveChart($("chart-actions"), ["joint 0"]);
-  setInterval(() => chart.update(), 200);
+  try {
+    $("charts-box").innerHTML =
+      `<div class="chart-wrap"><div class="chart-title">Replayed action (joint 0)</div>
+        <div class="chart-cj-container"><canvas id="chart-actions"></canvas></div></div>`;
+    chart = new LiveChart($("chart-actions"), ["joint 0"]);
+    setInterval(() => chart.update(), 200);
+  } catch (err) {
+    console.error("Chart init failed (charts disabled, telemetry still runs):", err);
+    $("charts-box").innerHTML = '<div class="browser-msg err">Charts unavailable (chart library failed to load).</div>';
+  }
 
   $("btn-browse-dataset").addEventListener("click", () => openFileBrowser($("dataset_dir")));
   $("dataset_dir").addEventListener("change", loadEpisodes);
@@ -30,7 +35,7 @@ document.addEventListener("DOMContentLoaded", () => {
     send({ action: "start_replay", config: cfg });
   });
 
-  onMessage("action", (e) => { if (e.action?.length) chart.push(0, e.step, e.action[0]); });
+  onMessage("action", (e) => { if (chart && e.action?.length) chart.push(0, e.step, e.action[0]); });
   onOpen(() => {});
   connect();
 });

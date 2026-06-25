@@ -16,13 +16,18 @@ document.addEventListener("DOMContentLoaded", () => {
   setupControls();
   renderFeedback($("feedback-card"));
 
-  $("charts-box").innerHTML =
-    `<div class="chart-wrap"><div class="chart-title">Action (joint 0)</div>
-      <div class="chart-cj-container"><canvas id="chart-actions"></canvas></div></div>`;
-  actionChart = new LiveChart($("chart-actions"), ["joint 0"]);
-  setInterval(() => actionChart.update(), 200);
+  try {
+    $("charts-box").innerHTML =
+      `<div class="chart-wrap"><div class="chart-title">Action (joint 0)</div>
+        <div class="chart-cj-container"><canvas id="chart-actions"></canvas></div></div>`;
+    actionChart = new LiveChart($("chart-actions"), ["joint 0"]);
+    setInterval(() => actionChart.update(), 200);
+  } catch (err) {
+    console.error("Chart init failed (charts disabled, telemetry still runs):", err);
+    $("charts-box").innerHTML = '<div class="browser-msg err">Charts unavailable (chart library failed to load).</div>';
+  }
 
-  onMessage("action", (e) => { if (e.action?.length) actionChart.push(0, e.step, e.action[0]); });
+  onMessage("action", (e) => { if (actionChart && e.action?.length) actionChart.push(0, e.step, e.action[0]); });
   onMessage("images", (e) => {
     const ib = $("images-box"); ib.innerHTML = "";
     for (const [name, b64] of Object.entries(e.images)) {
