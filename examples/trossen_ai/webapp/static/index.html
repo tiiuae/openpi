@@ -1,3 +1,94 @@
 <!doctype html>
-<html><head><meta charset="utf-8"><title>Trossen Control</title></head>
-<body><h1>Trossen Control</h1></body></html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Trossen Control</title>
+  <link rel="stylesheet" href="/static/styles.css">
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+</head>
+<body>
+  <header>
+    <h1>Trossen Control</h1>
+    <div id="health">
+      <span class="badge" id="badge-rtt">rtt</span>
+      <span class="badge" id="badge-session">idle</span>
+    </div>
+  </header>
+
+  <main>
+    <section id="config-panel">
+      <h2>Configuration</h2>
+      <div class="row">
+        <label>Preset <select id="preset-select"></select></label>
+        <button id="preset-load">Load</button>
+        <input id="preset-name" placeholder="preset name">
+        <button id="preset-save">Save</button>
+        <button id="preset-delete">Delete</button>
+      </div>
+      <form id="config-form">
+        <label>Policy host <input name="policy_host" value="192.168.50.174"></label>
+        <label>Policy port <input name="policy_port" type="number" value="8800"></label>
+        <label>Control Hz <input name="control_freq" type="number" value="25"></label>
+        <label>Max steps <input name="max_steps" type="number" value="1000"></label>
+        <label>Adapter
+          <select name="adapter"><option value="joint">joint</option><option value="ee">ee</option></select>
+        </label>
+        <label>Ensemble
+          <select name="ensemble_type"><option>exp</option><option>cogact</option><option>none</option></select>
+        </label>
+        <label>CogACT mode
+          <select name="cogact_mode"><option>cogact</option><option>latest</option><option>hybrid</option></select>
+        </label>
+        <label>Async <input name="async_inference" type="checkbox"></label>
+        <label>Left arm only <input name="use_left_arm_only" type="checkbox"></label>
+        <label>Right arm only <input name="use_right_arm_only" type="checkbox"></label>
+        <label>StarVLA <input name="starvla" type="checkbox"></label>
+        <label>Task prompt <input name="task_prompt" value="move the arm to the left"></label>
+        <label>IK orient w <input name="ik_orientation_weight" type="number" step="0.01" value="0.01"></label>
+        <label>IK pos tol (m) <input name="ik_pos_tol_m" type="number" step="0.001" value="0.001"></label>
+        <fieldset>
+          <legend>Replay</legend>
+          <label>Dataset dir <input name="dataset_dir" value="../../converted_to_EE"></label>
+          <label>Episode <input name="episode_index" type="number" value="0"></label>
+        </fieldset>
+      </form>
+      <div class="row">
+        <label>Mode
+          <select id="mode-select"><option value="test">test (no movement)</option><option value="autonomous">autonomous</option></select>
+        </label>
+        <button id="btn-start">Start Live</button>
+        <button id="btn-replay">Replay Episode</button>
+        <button id="btn-stop">Stop</button>
+        <button id="btn-estop" class="estop">E-STOP</button>
+      </div>
+    </section>
+
+    <section id="log-panel">
+      <h2>Logs</h2>
+      <div id="log-box"></div>
+    </section>
+
+    <section id="charts-panel">
+      <h2>Actions</h2>
+      <label>Joint <input id="joint-index" type="number" value="0" min="0" max="13"></label>
+      <canvas id="chart-actions"></canvas>
+      <h2>Raw vs Smoothed (selected joint)</h2>
+      <canvas id="chart-rawvs"></canvas>
+      <h2>Overlap timeline</h2>
+      <canvas id="chart-overlap"></canvas>
+      <h2>Buffer size</h2>
+      <canvas id="chart-buffer"></canvas>
+      <h2>Metrics</h2>
+      <div id="metrics-box"></div>
+    </section>
+
+    <section id="images-panel">
+      <h2>Cameras</h2>
+      <div id="images-box"></div>
+    </section>
+  </main>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>
