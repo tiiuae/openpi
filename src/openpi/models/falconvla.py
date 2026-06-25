@@ -11,6 +11,7 @@ from openpi.models.utils.prompt_builder import ActionPromptBuilder
 from openpi.models.utils.proprio import *
 import openpi.shared.array_typing as at
 import os
+import numpy as np
 
 
 
@@ -161,23 +162,83 @@ class FalconVLA(_model.BaseModel):
             if secondary_image is not None:
                 input_builder.add_secondary_image(secondary_image)
 
-        if self.config.use_proprio:
-            # Computing the proprio tokens
-            proprio_stats = fetch_proprio_stats(self.model, self.config.unnorm_key)
-            normalized_proprio = normalize_proprio(observation.get("state", None), proprio_stats)
-            tokenized_proprio = tokenize_proprio(normalized_proprio, self.config.num_bins)
-            proprio_tokens = get_proprio_tokens(tokenized_proprio)
+        # if self.config.use_proprio:
+        #     # Computing the proprio tokens
+        #     proprio_stats = fetch_proprio_stats(self.model, self.config.unnorm_key)
+        #     normalized_proprio = normalize_proprio(observation.get("state", None), proprio_stats)
+        #     tokenized_proprio = tokenize_proprio(normalized_proprio, self.config.num_bins)
+        #     proprio_tokens = get_proprio_tokens(tokenized_proprio)
 
-            input_builder.add_proprio(proprio_tokens=proprio_tokens)
+        #     input_builder.add_proprio(proprio_tokens=proprio_tokens)
+
+        # inputs, _ = input_builder.build_inputs(processor=self.processor)
+        # inputs.pop("token_type_ids", None)
+        # inputs = {k: (v.to(self.config.device) if hasattr(v, "to") else v) for k, v in inputs.items()}
+
+        # actions = self.model.predict_action(
+        #     inputs, unnorm_key=self.config.unnorm_key, horizon=self.config.action_horizon, do_sample=False
+        # )
+        # return actions
+        proprio_inputs = None
+        if self.config.use_proprio:
+            
+
+            # FiLM proprio path: normalize the raw state and pass it straight into the
+            # action head as `proprio_inputs`. Do NOT tokenize it into the prompt — the
+            # FiLM checkpoint (proprio_mode="film") was not trained on <prop*> tokens.
+            proprio_stats = fetch_proprio_stats(self.model, self.config.unnorm_key)
+
+            raw_state = np.asarray(observation.get("state", None), dtype=np.float64).ravel()
+            _mn   = np.asarray(proprio_stats["min"], dtype=np.float64)
+            _mx   = np.asarray(proprio_stats["max"], dtype=np.float64)
+            _mean = np.asarray(proprio_stats["mean"], dtype=np.float64)
+            _span = _mx - _mn
+
+            # Pin "frozen" proprio channels (those with ~zero training span — e.g. the
+            # static arm in a single-arm dataset) to the training mean before normalizing.
+            # At deploy the physical arm sits at an arbitrary pose; normalizing that live
+            # value on a near-degenerate [min,max] range saturates it to ±1 — a value the
+            # FiLM head never saw in training, which corrupts the conditioning and makes
+            # the policy emit a near-constant/jittery trajectory. Replacing those channels
+            # with the training mean keeps the FiLM input in-distribution.
+            FROZEN_SPAN_THRESH = 1e-3
+            n = min(raw_state.shape[0], _span.shape[0])
+            frozen_mask = np.zeros(raw_state.shape[0], dtype=bool)
+            frozen_mask[:n] = _span[:n] < FROZEN_SPAN_THRESH
+            pinned_state = raw_state.copy()
+            pinned_state[:n][frozen_mask[:n]] = _mean[:n][frozen_mask[:n]]
+
+            normalized_proprio = normalize_proprio(pinned_state, proprio_stats)
+
+            # Debug: per-channel flags — PIN = frozen channel pinned to mean,
+            # OOD = live value outside training bounds.
+            print(f"{'i':>2} {'raw':>12} {'pinned':>12} {'min':>12} {'max':>12} {'span':>10}  flag")
+            for i in range(len(raw_state)):
+                ood = i < n and ((raw_state[i] < _mn[i] - 1e-6) or (raw_state[i] > _mx[i] + 1e-6))
+                flag = "PIN" if frozen_mask[i] else ("OOD" if ood else "")
+                _mn_i, _mx_i, _span_i = (_mn[i], _mx[i], _span[i]) if i < n else (float("nan"),) * 3
+                print(f"{i:>2} {raw_state[i]:>12.5f} {pinned_state[i]:>12.5f} {_mn_i:>12.5f} {_mx_i:>12.5f} {_span_i:>10.5f}  {flag}")
+
+            proprio_inputs = torch.as_tensor(normalized_proprio, device=self.config.device).float()
+            # -> (B, T, proprio_dim); single-frame history => T=1
+            if proprio_inputs.dim() == 1:
+                proprio_inputs = proprio_inputs.unsqueeze(0).unsqueeze(0)
+            elif proprio_inputs.dim() == 2:
+                proprio_inputs = proprio_inputs.unsqueeze(1)
 
         inputs, _ = input_builder.build_inputs(processor=self.processor)
         inputs.pop("token_type_ids", None)
         inputs = {k: (v.to(self.config.device) if hasattr(v, "to") else v) for k, v in inputs.items()}
 
         actions = self.model.predict_action(
-            inputs, unnorm_key=self.config.unnorm_key, horizon=self.config.action_horizon, do_sample=False
+            inputs,
+            unnorm_key=self.config.unnorm_key,
+            horizon=self.config.action_horizon,
+            do_sample=False,
+            proprio_inputs=proprio_inputs,
         )
         return actions
+
 
     @override
     def compute_loss(

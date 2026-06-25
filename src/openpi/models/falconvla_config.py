@@ -37,6 +37,11 @@ class FalconVLAConfig(_model.BaseModelConfig):
     use_proprio: bool = True
     unnorm_key: str = "libero"
     num_bins: int = 256
+    use_proprio_projector: bool = True
+    proprio_dim: int=14
+    proprio_history_window: int=1
+
+
 
     @property
     @override
