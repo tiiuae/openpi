@@ -22,9 +22,12 @@ from webapp.telemetry import QueueSink
 STATIC_DIR = Path(__file__).parent / "static"
 
 
-def create_app(presets_dir: str | Path | None = None, runner_factory=None) -> FastAPI:
+def create_app(presets_dir: str | Path | None = None, runner_factory=None,
+               feedback_dir: str | Path | None = None) -> FastAPI:
     if presets_dir is None:
         presets_dir = Path(__file__).parent / "presets"
+    if feedback_dir is None:
+        feedback_dir = Path(__file__).parent / "feedback"
     if runner_factory is None:
         # Defer the robot-only import until a session actually starts, so the
         # REST/WebSocket layer (and the tests) work off-robot where
@@ -63,6 +66,17 @@ def create_app(presets_dir: str | Path | None = None, runner_factory=None) -> Fa
     def delete_preset(name: str):
         store.delete(name)
         return {"ok": True}
+
+    @app.post("/api/feedback")
+    def submit_feedback(body: dict):
+        from webapp.feedback_store import save_feedback
+        path = save_feedback(
+            feedback_dir,
+            name=body.get("name", ""),
+            email=body.get("email", ""),
+            feedback=body.get("feedback", ""),
+        )
+        return {"ok": True, "path": path}
 
     @app.get("/api/episodes")
     def episodes(dataset_dir: str):
