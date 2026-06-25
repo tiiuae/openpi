@@ -128,6 +128,39 @@ All fields map 1:1 to the CLI flags.
 
 ---
 
+## 5.1 Motion tuning (Advanced) & Sleep/Home
+
+These knobs fix jerky/brutal arm motion and replace the old hardcoded joint-limit
+table with a firmware-fault guard.
+
+| Field | Meaning | Default |
+|---|---|---|
+| Smooth streaming | Send feed-forward joint velocities (`goal_feedforward_velocities`) so the arm carries momentum through waypoints instead of planning to stop at each one. Turn ON to fix stutter. | off |
+| Goal-time multiplier (`min_time_to_move_multiplier`) | Driver `goal_time = multiplier / loop_rate`. Larger = smoother but laggier; smaller = snappier but jerkier. | 3.0 |
+| Driver loop rate (`loop_rate`) | Driver control loop Hz. Match this to **Control Hz** to avoid mid-motion re-planning. | 25 |
+| Connect timeout (`connect_timeout`) | Give up waiting for the policy server after this many seconds (bounded, stop-aware — Stop is honored while still connecting). | 15 |
+
+**Tuning order:** start with Smooth streaming **on** and `loop_rate` == Control Hz.
+If still laggy, lower the multiplier toward ~2.0; if jerky, raise it toward ~4.0.
+
+**Firmware guard (replaces joint limits).** There is no longer a software
+joint-limit table. If the firmware faults on an action (e.g. velocity exceeded),
+the loop catches it, emits a `firmware_error` status to the UI, moves the arm to
+the **sleep** pose, and stops the session. This is strictly safer than the old
+table (which could pass an out-of-spec action the table didn't cover).
+
+**Sleep / Home buttons** (header, top-right). Each sends the arm(s) to a fixed
+pose via PCHIP-interpolated smooth motion, then disconnects:
+
+- **Sleep** → `RobotController.SLEEP_POSITION` (parked/rest).
+- **Home** → `HOME_POSITION` (stage pose: arms up & open, ready for task start).
+
+They run through the same single-session guard, so they cannot race a live/replay
+session — stop the session first. In `autonomous` mode the browser asks for a
+confirm before moving the real robot.
+
+---
+
 ## 6. Troubleshooting
 
 | Symptom | Likely cause / fix |
