@@ -1,1 +1,53 @@
-<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Replay</title></head><body></body></html>
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Trossen Control — Replay</title>
+  <link rel="stylesheet" href="/static/theme.css">
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-zoom@2.0.1/dist/chartjs-plugin-zoom.min.js"></script>
+</head>
+<body>
+  <header class="app-header">
+    <div class="app-nav"><strong style="color:var(--text);margin-right:16px">Trossen Control</strong>
+      <a href="/">Live</a><a href="/replay" class="active">Replay</a></div>
+    <div class="header-actions">
+      <span class="badge" id="badge-session">idle</span>
+      <button class="btn-outline" id="btn-home">Home</button>
+      <button class="btn-outline" id="btn-sleep">Sleep</button>
+    </div>
+  </header>
+
+  <div class="live-grid">
+    <aside id="config-col">
+      <section class="card"><h2>Dataset</h2>
+        <div class="input-browse"><input id="dataset_dir" type="text" placeholder="dataset directory">
+          <button class="btn-icon" id="btn-browse-dataset">📁</button></div>
+        <div class="field-inline"><label>Episode</label><select id="episode-select"></select></div>
+        <div class="field-inline"><label>Mode</label>
+          <select id="mode-select"><option value="test">test (no movement)</option><option value="autonomous">autonomous</option></select></div>
+        <div class="run-controls">
+          <button class="btn-primary" id="btn-replay">Replay Episode</button>
+          <button class="btn-outline" id="btn-stop">Stop</button>
+          <button class="btn-danger" id="btn-estop">E-STOP</button></div>
+      </section>
+    </aside>
+    <main class="live-main">
+      <section class="card"><h2>Episode actions</h2><div class="charts-grid" id="charts-box"></div></section>
+      <section class="card"><div class="log-header"><h2>Logs</h2><button class="btn-sm" id="btn-clear-log">Clear</button></div>
+        <div class="log-panel" id="log-box"></div></section>
+      <section class="card" id="feedback-card"></section>
+    </main>
+  </div>
+
+  <div class="modal-overlay" id="modal-filebrowser" style="display:none">
+    <div class="modal-box">
+      <div class="modal-titlebar">Select dataset folder <button class="btn-close" id="btn-cancel-browser">×</button></div>
+      <div class="browser-path-bar"><span class="browser-path-text" id="browser-current-path"></span></div>
+      <div class="browser-entries" id="browser-entries"></div>
+      <div class="modal-footer"><button class="btn-primary" id="btn-select-dir">Select this folder</button></div>
+    </div>
+  </div>
+  <script type="module" src="/static/js/replay.js"></script>
+</body>
+</html>
