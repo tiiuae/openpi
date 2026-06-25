@@ -35,3 +35,11 @@ def test_feedback_endpoint_writes_file(tmp_path):
     files = list((tmp_path / "fb").glob("*.md"))
     assert len(files) == 1
     assert "Ada" in files[0].read_text()
+
+
+def test_files_endpoint_lists_dirs(tmp_path):
+    (tmp_path / "sub").mkdir()
+    client = TestClient(create_app())
+    r = client.get("/api/files", params={"path": str(tmp_path)})
+    assert r.status_code == 200
+    assert [e["name"] for e in r.json()["entries"]] == ["sub"]

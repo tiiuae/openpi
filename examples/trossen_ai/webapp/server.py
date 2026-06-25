@@ -78,6 +78,11 @@ def create_app(presets_dir: str | Path | None = None, runner_factory=None,
         )
         return {"ok": True, "path": path}
 
+    @app.get("/api/files")
+    def files(path: str | None = None):
+        from webapp.files_api import list_directory
+        return list_directory(path or str(Path.home()))
+
     @app.get("/api/episodes")
     def episodes(dataset_dir: str):
         from dataset_replay import EpisodeReader  # lazy
