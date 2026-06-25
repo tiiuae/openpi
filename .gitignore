@@ -6,6 +6,9 @@ assets/
 
 # Local replay datasets (large; copied in by hand).
 converted_to_EE/
+
+# Web app saved config presets.
+examples/trossen_ai/webapp/presets/
 checkpoints/
 data/
 wandb/
