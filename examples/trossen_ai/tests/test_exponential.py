@@ -13,6 +13,22 @@ def test_exp_blend_weights_oldest_highest():
     assert 10.0 < a[0] < 15.0
 
 
+def test_exp_last_weights_none_before_any_action():
+    e = ExponentialEnsemble(decay=1.0)
+    assert e.last_weights() is None
+
+
+def test_exp_last_weights_match_blend():
+    e = ExponentialEnsemble(decay=1.0)
+    e.add_chunk(0, np.array([[0.0], [10.0]]))  # step1 <- older (k=0)
+    e.add_chunk(1, np.array([[20.0]]))         # step1 <- newer (k=1)
+    e.get_action(1)
+    w = e.last_weights()
+    assert w is not None and len(w) == 2
+    assert np.isclose(w.sum(), 1.0)
+    assert w[0] > w[1]  # oldest weighted highest
+
+
 def test_exp_buffer_evicts_consumed_steps():
     e = ExponentialEnsemble(decay=1.0)
     for s in range(100):

@@ -31,6 +31,7 @@ class CogACTEnsemble(ActionEnsemble):
         self._buffer: list[tuple[int, np.ndarray]] = []
         self._lock = threading.Lock()
         self._warned_depth = False
+        self._last_weights: np.ndarray | None = None
 
     def add_chunk(self, query_step: int, chunk: np.ndarray) -> None:
         if not self._warned_depth and len(chunk) > self.max_buffer_size:
@@ -52,6 +53,7 @@ class CogACTEnsemble(ActionEnsemble):
         if not candidates:
             return None
         if len(candidates) == 1:
+            self._last_weights = np.array([1.0])
             return candidates[0].copy()
 
         mat = np.array(candidates)  # (N, D)
@@ -92,6 +94,7 @@ class CogACTEnsemble(ActionEnsemble):
         else:
             weights /= w_sum
 
+        self._last_weights = weights
         return np.average(mat, axis=0, weights=weights)
 
     def get_overlap_count(self, current_step: int) -> int:
@@ -106,6 +109,9 @@ class CogACTEnsemble(ActionEnsemble):
     def buffer_size(self) -> int:
         with self._lock:
             return len(self._buffer)
+
+    def last_weights(self) -> np.ndarray | None:
+        return self._last_weights
 
 
 @register_ensemble("cogact")

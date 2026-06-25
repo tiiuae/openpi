@@ -19,6 +19,7 @@ def test_null_sink_accepts_all_calls():
     s.on_inference(12.3, 1.0)
     s.on_chunk(0, np.ones((5, 14)), 1.0)
     s.on_overlap(0, 3)
+    s.on_weights(0, np.array([0.6, 0.4]), 1.0)
     s.on_images({"cam": b"x"}, 1.0)
     s.on_status("started", {})  # no exception = pass
 
@@ -53,6 +54,16 @@ def test_queue_sink_action_raw_none_when_out_of_range():
     s.on_action(9, np.array([1.0]), 1.1)
     action_evt = next(e for e in _drain(q) if e["type"] == "action")
     assert action_evt["raw"] is None
+
+
+def test_queue_sink_emits_weights_as_list():
+    q = queue.Queue()
+    s = QueueSink(q)
+    s.on_weights(7, np.array([0.6, 0.3, 0.1]), 3.0)
+    evt = next(e for e in _drain(q) if e["type"] == "weights")
+    assert evt["step"] == 7
+    assert evt["weights"] == [0.6, 0.3, 0.1]
+    assert evt["ts"] == 3.0
 
 
 def test_queue_sink_throttles_images():

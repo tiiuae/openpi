@@ -19,6 +19,15 @@ const charts = {
   buffer: mkChart("chart-buffer", [ds("buffer size", "#c7f")]),
 };
 
+// Per-prediction blend weights for the latest step (bar chart, oldest->newest).
+const weightsChart = new Chart($("chart-weights"), {
+  type: "bar",
+  data: { labels: [], datasets: [{ label: "weight", data: [], backgroundColor: "#fa4" }] },
+  options: { animation: false, responsive: true,
+    scales: { x: { ticks: { color: "#9fb3c8" } }, y: { min: 0, max: 1, ticks: { color: "#9fb3c8" } } },
+    plugins: { legend: { labels: { color: "#9fb3c8" } } } },
+});
+
 function push(chart, dsIndex, x, y) {
   const d = chart.data.datasets[dsIndex].data;
   d.push({ x, y });
@@ -60,6 +69,13 @@ function handle(evt) {
       break;
     }
     case "overlap": push(charts.overlap, 0, evt.step, evt.count); break;
+    case "weights": {
+      const w = evt.weights || [];
+      weightsChart.data.labels = w.map((_, i) => i);  // 0 = oldest prediction
+      weightsChart.data.datasets[0].data = w;
+      weightsChart.update("none");
+      break;
+    }
     case "status":
       if (evt.kind === "buffer") { push(charts.buffer, 0, Date.now() / 1000, evt.payload.size); }
       else {

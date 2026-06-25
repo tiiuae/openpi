@@ -39,3 +39,9 @@ class ActionEnsemble(ABC):
     @abstractmethod
     def buffer_size(self) -> int:
         """Number of buffered items (for telemetry / memory-bound checks)."""
+
+    @abstractmethod
+    def last_weights(self) -> np.ndarray | None:
+        """Blend weights used by the most recent ``get_action`` that returned an
+        action, oldest-first; ``None`` before any action has been produced. For
+        telemetry only — never read by the control loop."""

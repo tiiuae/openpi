@@ -29,6 +29,7 @@ class ExponentialEnsemble(ActionEnsemble):
         self.decay = decay
         self._buffer: dict[int, list[np.ndarray]] = defaultdict(list)
         self._lock = threading.Lock()
+        self._last_weights: np.ndarray | None = None
 
     def add_chunk(self, query_step: int, chunk: np.ndarray) -> None:
         with self._lock:
@@ -46,6 +47,7 @@ class ExponentialEnsemble(ActionEnsemble):
         mat = np.array(candidates)  # (N, D)
         weights = np.exp(-self.decay * np.arange(len(mat)))
         weights /= weights.sum()
+        self._last_weights = weights
         return np.average(mat, axis=0, weights=weights)
 
     def get_overlap_count(self, current_step: int) -> int:
@@ -59,6 +61,9 @@ class ExponentialEnsemble(ActionEnsemble):
     def buffer_size(self) -> int:
         with self._lock:
             return sum(len(v) for v in self._buffer.values())
+
+    def last_weights(self) -> np.ndarray | None:
+        return self._last_weights
 
 
 @register_ensemble("exp")

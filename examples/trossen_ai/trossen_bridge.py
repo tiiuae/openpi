@@ -344,6 +344,9 @@ class TrossenOpenPIBridge:
                 if self.ensemble is not None:
                     self.sink.on_overlap(self.episode_step, self.ensemble.get_overlap_count(self.episode_step))
                     self.sink.on_status("buffer", {"size": self.ensemble.buffer_size()})
+                    _w = self.ensemble.last_weights()
+                    if _w is not None:
+                        self.sink.on_weights(self.episode_step, _w, time.time())
                 self.sink.on_action(self.episode_step, np.asarray(a_t), time.time())
 
                 # FIXME: temporary adaptation for the case of the model with 7 dof
