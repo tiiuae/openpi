@@ -25,26 +25,6 @@ DEFAULT_TRAINING_SIZE = (224, 224)
 class TrossenOpenPIBridge:
     """Bridge between a Trossen AI Stationary Kit and OpenPI policy server."""
 
-    ######## JOINT LIMIT VALUES ##########
-    JOINT_LIMIT = np.array(
-        [
-            [-6.283185, 6.283185],
-            [-6.283185, 6.283185],
-            [-6.283185, 6.283185],
-            [-9.424778, 9.424778],
-            [-9.424778, 9.424778],
-            [-9.424778, 9.424778],
-            [-9.424778, 9.424778],
-            [-6.283185, 6.283185],
-            [-6.283185, 6.283185],
-            [-6.283185, 6.283185],
-            [-9.424778, 9.424778],
-            [-9.424778, 9.424778],
-            [-9.424778, 9.424778],
-            [-9.424778, 9.424778],
-        ]
-    )
-
     SLEEP_POSITION = np.array([0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0])
 
     def __init__(
@@ -65,6 +45,9 @@ class TrossenOpenPIBridge:
         starvla: bool = False,  # noqa
         adapter: "ActionSpaceAdapter | None" = None,
         sink: TelemetrySink = NullSink(),
+        smooth_streaming: bool = False,
+        min_time_to_move_multiplier: float = 3.0,
+        loop_rate: int = 30,
     ):
         self.adapter = adapter if adapter is not None else JointAdapter()
         self.sink = sink
@@ -79,7 +62,11 @@ class TrossenOpenPIBridge:
             host=policy_server_host, port=policy_server_port
         )
 
-        self.robot = build_stationary_robot()
+        self.robot = build_stationary_robot(
+            min_time_to_move_multiplier=min_time_to_move_multiplier,
+            loop_rate=loop_rate,
+        )
+        self.smooth_streaming = smooth_streaming
 
         self.current_action_chunk = None
         self.action_chunk_idx = 0
@@ -105,40 +92,6 @@ class TrossenOpenPIBridge:
 
         self.use_left_arm_only = use_left_arm_only
         self.use_right_arm_only = use_right_arm_only
-
-    ##################################################
-    ###### When Joint limits are exceeded, robot is sent to sleep position
-    def is_action_within_limits(self, target_pose: np.ndarray) -> bool:
-
-        target_pose = np.asarray(target_pose).flatten()
-
-        if target_pose.shape[0] != 14:
-            logger.error(f"Expected 14D action, got {target_pose.shape}")
-            return False
-
-        try:
-            obs = self.robot.get_observation()
-        except Exception as e:
-            logger.error(f"Failed to get observation: {e}")
-            return False
-
-        joint_pos_keys = [k for k in obs if k.endswith(".pos")]
-
-        current_pose = np.array([obs[k] for k in joint_pos_keys])
-
-        commanded_velocity = (target_pose - current_pose) / self.dt
-
-        for i, vel in enumerate(commanded_velocity):
-            min_vel, max_vel = self.JOINT_LIMIT[i]
-
-            if vel < min_vel or vel > max_vel:
-                logger.warning(f"Joint {i} velocity exceeded: {vel:.4f} not in [{min_vel:.4f}, {max_vel:.4f}]")
-
-                return False
-
-        return True
-
-        #######################################
 
     def expand_action_to_full(self, action: np.ndarray) -> np.ndarray:
         """
@@ -189,20 +142,23 @@ class TrossenOpenPIBridge:
             joint_features = list(self.robot._joint_ft.keys())  # noqa
             action_dict = {k: full_action[i] for i, k in enumerate(joint_features)}
 
-            self.robot.send_action(action_dict)
+            try:
+                if self.smooth_streaming:
+                    from robot_control import send_action_smooth
+                    send_action_smooth(self.robot, full_action, self.dt)
+                else:
+                    self.robot.send_action(action_dict)
+            except Exception as exc:  # noqa: BLE001 — firmware fault halts the arm
+                logger.error(f"Firmware error executing action: {exc}. Moving to sleep position.")
+                if getattr(self, "sink", None):
+                    self.sink.on_status("firmware_error", {"message": str(exc)})
+                try:
+                    self.move_to_sleep_position(duration=10.0)
+                finally:
+                    self.is_running = False
+                return
         else:
             logger.error(f"Unknown mode: {self.test_mode}. No action executed.")
-
-        ####################################
-        ### Check action value before sending to robot
-        ## FIXME: double check the limit
-        if not self.is_action_within_limits(full_action):
-            logger.warning("Action exceeds limits. Moving to sleep position.")
-            self.move_to_sleep_position(duration=10.0)
-            self.is_running = False
-            return
-
-        ##################################
 
     def _build_observation(self, observation_dict: dict, task_prompt: str) -> dict:
         state = self.adapter.build_state(observation_dict)
@@ -248,7 +204,7 @@ class TrossenOpenPIBridge:
         timepoints = np.array([0, duration])
         interpolator = PchipInterpolator(timepoints, waypoints, axis=0)
 
-        print(f"Moving to sleep position over {duration}s...")
+        logger.info(f"Moving to sleep position over {duration}s...")
         dt = 1.0 / self.control_frequency
         start_time = time.time()
         end_time = start_time + duration
@@ -263,7 +219,7 @@ class TrossenOpenPIBridge:
             if dt - elapsed > 0:
                 time.sleep(dt - elapsed)
 
-        print("Reached sleep position.")
+        logger.info("Reached sleep position.")
 
     def run_episode(self, task_prompt: str = "look down"):
         """Run a single episode of policy execution."""
