@@ -6,8 +6,8 @@ import pytest
 
 from dataset_replay import EpisodeReader
 
-# repo-root/converted_to_EE  (this file: repo/examples/trossen_ai/tests/)
-DATASET_DIR = Path(__file__).resolve().parents[3] / "converted_to_EE"
+# repo-root/dataset/converted_to_EE  (this file: repo/examples/trossen_ai/tests/)
+DATASET_DIR = Path(__file__).resolve().parents[3] / "dataset" / "converted_to_EE"
 
 pytestmark = pytest.mark.skipif(
     not (DATASET_DIR / "meta" / "info.json").is_file(),

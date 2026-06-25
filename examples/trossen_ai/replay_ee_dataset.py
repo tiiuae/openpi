@@ -28,8 +28,8 @@ from robot_control import RobotController, build_stationary_robot
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
 
-# repo-root/converted_to_EE  (this file: repo/examples/trossen_ai/)
-DEFAULT_DATASET_DIR = Path(__file__).resolve().parents[2] / "converted_to_EE"
+# repo-root/dataset/converted_to_EE  (this file: repo/examples/trossen_ai/)
+DEFAULT_DATASET_DIR = Path(__file__).resolve().parents[2] / "dataset" / "converted_to_EE"
 
 
 def build_parser() -> argparse.ArgumentParser:
