@@ -6,8 +6,11 @@ stop(), and estop().
 """
 from __future__ import annotations
 
+import logging
 import threading
 from typing import Callable, Protocol
+
+logger = logging.getLogger(__name__)
 
 
 class Runner(Protocol):
@@ -45,7 +48,8 @@ class SessionManager:
     def _run(self, kind: str, config: dict, sink) -> None:
         try:
             runner = self._factory(kind, config, sink)
-            self._runner = runner
+            with self._lock:
+                self._runner = runner
             if self._stop_requested:
                 runner.stop()
                 return
@@ -58,18 +62,32 @@ class SessionManager:
 
     def stop(self, timeout: float = 15.0) -> None:
         self._stop_requested = True
-        runner, thread = self._runner, self._thread
+        with self._lock:
+            runner, thread = self._runner, self._thread
         if runner is not None:
             runner.stop()
         if thread is not None:
             thread.join(timeout=timeout)
-        self._runner, self._thread = None, None
+            if thread.is_alive():
+                logger.warning(
+                    "Session thread did not stop within %ss; it may still be running",
+                    timeout,
+                )
+        with self._lock:
+            self._runner, self._thread = None, None
 
     def estop(self, timeout: float = 15.0) -> None:
         self._stop_requested = True
-        runner, thread = self._runner, self._thread
+        with self._lock:
+            runner, thread = self._runner, self._thread
         if runner is not None:
             runner.estop()
         if thread is not None:
             thread.join(timeout=timeout)
-        self._runner, self._thread = None, None
+            if thread.is_alive():
+                logger.warning(
+                    "Session thread did not stop within %ss; it may still be running",
+                    timeout,
+                )
+        with self._lock:
+            self._runner, self._thread = None, None
