@@ -48,6 +48,31 @@ def send_action_smooth(robot, action14: np.ndarray, dt: float) -> None:
     )
 
 
+# Conservative per-joint speed cap (rad/s) for replayed/streamed joint targets.
+# Well under the arm's firmware velocity limit (~3*pi ≈ 9.42 rad/s) and ~10x the
+# speed of normal recorded motion, so it only bites on a spurious IK branch-flip
+# (which would otherwise command a one-step velocity spike and fault the firmware).
+MAX_JOINT_SPEED = 3.0
+
+
+def limit_joint_velocity(prev14: np.ndarray, target14: np.ndarray, dt: float,
+                         max_speed: float = MAX_JOINT_SPEED) -> np.ndarray:
+    """Clamp a 14-D joint target so no joint moves faster than ``max_speed`` rad/s.
+
+    Bounds ``|target - prev|`` per joint to ``max_speed * dt``. A joint-space
+    discontinuity (e.g. the IK solver jumping to an alternate configuration for
+    nearly the same end-effector pose) is then spread across several control
+    steps instead of commanding an over-limit velocity. Returns the clamped
+    target; the caller should feed it back as ``prev`` on the next step so the
+    arm keeps migrating toward the true target.
+    """
+    prev = np.asarray(prev14, dtype=float).flatten()
+    target = np.asarray(target14, dtype=float).flatten()
+    max_step = float(max_speed) * float(dt)
+    delta = np.clip(target - prev, -max_step, max_step)
+    return prev + delta
+
+
 def build_stationary_robot(*, connect: bool = True, with_cameras: bool = True,
                            min_time_to_move_multiplier: float = 3.0,
                            loop_rate: int = 30):

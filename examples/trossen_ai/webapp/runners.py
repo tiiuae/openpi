@@ -118,12 +118,13 @@ class ReplayRunner:
         from dataset_replay import EpisodeReader
         from external.joint_to_ee.ee_to_joints import EEToJointsConverter
         from external.joint_to_ee.kinematics import make_kinematics
-        from robot_control import RobotController, build_stationary_robot
+        from robot_control import RobotController, build_stationary_robot, limit_joint_velocity
 
         cfg = self._config
         reader = EpisodeReader(cfg["dataset_dir"])
         episode = reader.read_episode(int(cfg.get("episode_index", 0)))
         control_freq = int(cfg.get("control_freq") or episode.fps)
+        max_joint_speed = float(cfg.get("max_joint_speed", 3.0))
         converter = EEToJointsConverter(
             make_kinematics(),
             orientation_weight=float(cfg.get("ik_orientation_weight", 0.01)),
@@ -135,7 +136,7 @@ class ReplayRunner:
         robot = build_stationary_robot(
             with_cameras=False,
             min_time_to_move_multiplier=float(cfg.get("min_time_to_move_multiplier", 3.0)),
-            loop_rate=int(cfg.get("loop_rate", control_freq)),
+            loop_rate=int(cfg.get("loop_rate", 30)),
         )
         self._controller = RobotController(
             robot, control_frequency=control_freq, test_mode=cfg.get("mode", "test"),
@@ -146,12 +147,19 @@ class ReplayRunner:
             joints = converter.decode_chunk(episode.ee_chunk16, cur)
             self._controller.move_to_start_position(joints[0], duration=5.0)
             dt = 1.0 / control_freq
+            last = np.asarray(joints[0], dtype=float).flatten()
             for step, a_t in enumerate(joints[1:], start=1):
                 if self._stopped:
                     break
+                # Cap per-step joint velocity so a spurious IK branch-flip in the
+                # decoded trajectory can't command an over-limit jump (firmware
+                # "joint velocity limit exceeded"). Feed the clamped target back
+                # as `last` so the arm keeps migrating toward the true target.
+                a_cmd = limit_joint_velocity(last, a_t, dt, max_joint_speed)
+                last = a_cmd
                 t0 = time.perf_counter()
-                ok = self._controller.execute_action(a_t)
-                self._sink.on_action(step, np.asarray(a_t), time.time())
+                ok = self._controller.execute_action(a_cmd)
+                self._sink.on_action(step, np.asarray(a_cmd), time.time())
                 if not ok:
                     self._sink.on_status("firmware_error", {"step": step})
                     break

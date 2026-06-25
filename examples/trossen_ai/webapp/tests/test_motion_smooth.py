@@ -7,7 +7,7 @@ import numpy as np
 import pytest
 
 import robot_control
-from robot_control import RobotController, send_action_smooth
+from robot_control import RobotController, limit_joint_velocity, send_action_smooth
 
 
 class FakeArm:
@@ -80,3 +80,31 @@ def test_execute_action_firmware_error_triggers_sleep(monkeypatch):
 def test_home_position_constant_shape():
     assert robot_control.HOME_POSITION.shape == (14,)
     assert robot_control.HOME_POSITION[1] == pytest.approx(np.pi / 3)
+
+
+def test_limit_joint_velocity_clamps_branch_flip():
+    # An IK branch-flip: right joint-3 (index 10) jumps 0.42 rad in one 20ms step
+    # (~21 rad/s), well over the firmware limit. It must be clamped to max_speed*dt.
+    prev = np.zeros(14)
+    target = np.zeros(14)
+    target[10] = 0.42
+    out = limit_joint_velocity(prev, target, dt=0.02, max_speed=3.0)
+    assert out[10] == pytest.approx(0.06)  # 3.0 rad/s * 0.02 s
+    assert abs(out[10] - prev[10]) <= 3.0 * 0.02 + 1e-9
+
+
+def test_limit_joint_velocity_passes_small_step():
+    # Normal recorded motion (well under the cap) is unchanged.
+    prev = np.zeros(14)
+    target = np.full(14, 0.01)
+    out = limit_joint_velocity(prev, target, dt=0.02, max_speed=3.0)
+    assert np.allclose(out, target)
+
+
+def test_limit_joint_velocity_caps_every_joint_velocity():
+    rng = np.random.default_rng(0)
+    prev = rng.standard_normal(14)
+    target = prev + rng.standard_normal(14)  # arbitrary, some over-limit deltas
+    dt = 0.02
+    out = limit_joint_velocity(prev, target, dt, max_speed=3.0)
+    assert np.all(np.abs(out - prev) <= 3.0 * dt + 1e-9)
