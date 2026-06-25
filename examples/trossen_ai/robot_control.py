@@ -2,9 +2,9 @@
 
 `build_stationary_robot` is the single source for the Trossen bimanual follower
 config (IPs, cameras), so the bridge and the dataset-replay tool stay in sync.
-`RobotController` wraps a connected robot with the joint-velocity safety check and
-PCHIP-smoothed motion used by the autonomous control loop, operating on full 14-D
-joint vectors (left arm 0:7, right arm 7:14).
+`RobotController` wraps a connected robot with firmware-fault detection and
+smooth-streaming motion used by the autonomous control loop, operating on full
+14-D joint vectors (left arm 0:7, right arm 7:14).
 """
 from __future__ import annotations
 
@@ -13,22 +13,59 @@ import time
 from pathlib import Path
 
 import numpy as np
-from lerobot.cameras.opencv.configuration_opencv import OpenCVCameraConfig
-from lerobot.robots import make_robot_from_config
-from lerobot_robot_trossen.config_bi_widowxai_follower import BiWidowXAIFollowerRobotConfig
 from scipy.interpolate import PchipInterpolator
 
 logger = logging.getLogger(__name__)
 
+# Home/"stage" pose: arms up & open, ready for task start (left arm only; right at 0).
+# Mirrors the commented stage_pose in main.py on the trossen-ai branch.
+HOME_POSITION = np.array([0, np.pi / 3, np.pi / 6, np.pi / 5, 0, 0, 0,
+                          0, 0, 0, 0, 0, 0, 0], dtype=float)
 
-def build_stationary_robot(*, connect: bool = True, with_cameras: bool = True):
+
+def send_action_smooth(robot, action14: np.ndarray, dt: float) -> None:
+    """Stream a 14-D joint target with feed-forward velocity for natural motion.
+
+    Bypasses robot.send_action (which sends zero feed-forward velocity, planning
+    to arrive at rest at every waypoint -> stutter). We compute ff = (goal-cur)/dt
+    so the arm carries velocity through each waypoint, and set goal_time = dt so
+    the firmware does not over/under-shoot the control period.
+    """
+    action14 = np.asarray(action14, dtype=float).flatten()
+    obs = robot.get_observation()
+    joint_pos_keys = [k for k in obs if k.endswith(".pos")]
+    current = np.array([obs[k] for k in joint_pos_keys], dtype=float)
+    ff = (action14 - current) / dt
+    ff = np.nan_to_num(ff, nan=0.0, posinf=0.0, neginf=0.0)
+    n = len(robot.left_arm.config.joint_names)
+    robot.left_arm.driver.set_all_positions(
+        list(action14[:n]), goal_time=dt, blocking=False,
+        goal_feedforward_velocities=list(ff[:n]),
+    )
+    robot.right_arm.driver.set_all_positions(
+        list(action14[n:n * 2]), goal_time=dt, blocking=False,
+        goal_feedforward_velocities=list(ff[n:n * 2]),
+    )
+
+
+def build_stationary_robot(*, connect: bool = True, with_cameras: bool = True,
+                           min_time_to_move_multiplier: float = 3.0,
+                           loop_rate: int = 30):
     """Build (and optionally connect) the Trossen bimanual follower robot.
 
     Args:
-        connect:      Call ``robot.connect()`` before returning.
-        with_cameras: Include the three OpenCV cameras. Replay needs no images,
-                      so it can skip them; the autonomous loop keeps them.
+        connect:                     Call ``robot.connect()`` before returning.
+        with_cameras:                Include the three OpenCV cameras. Replay
+                                     needs no images, so it can skip them; the
+                                     autonomous loop keeps them.
+        min_time_to_move_multiplier: Passed to BiWidowXAIFollowerRobotConfig.
+        loop_rate:                   Passed to BiWidowXAIFollowerRobotConfig.
     """
+    # Lazy imports: these hardware packages are not installed in the test env.
+    from lerobot.cameras.opencv.configuration_opencv import OpenCVCameraConfig
+    from lerobot.robots import make_robot_from_config
+    from lerobot_robot_trossen.config_bi_widowxai_follower import BiWidowXAIFollowerRobotConfig
+
     cameras = {}
     if with_cameras:
         cameras = {
@@ -40,8 +77,8 @@ def build_stationary_robot(*, connect: bool = True, with_cameras: bool = True):
         id="bimanual_follower",
         left_arm_ip_address="192.168.1.5",
         right_arm_ip_address="192.168.1.4",
-        min_time_to_move_multiplier=3.0,
-        loop_rate=30,
+        min_time_to_move_multiplier=min_time_to_move_multiplier,
+        loop_rate=loop_rate,
         cameras=cameras,
     )
     robot = make_robot_from_config(robot_config)
@@ -53,32 +90,15 @@ def build_stationary_robot(*, connect: bool = True, with_cameras: bool = True):
 class RobotController:
     """Joint-space motion + safety for the bimanual follower (14-D actions)."""
 
-    # Per-joint commanded-velocity bounds (rad/s), left arm then right arm.
-    JOINT_LIMIT = np.array(
-        [
-            [-6.283185, 6.283185],
-            [-6.283185, 6.283185],
-            [-6.283185, 6.283185],
-            [-9.424778, 9.424778],
-            [-9.424778, 9.424778],
-            [-9.424778, 9.424778],
-            [-9.424778, 9.424778],
-            [-6.283185, 6.283185],
-            [-6.283185, 6.283185],
-            [-6.283185, 6.283185],
-            [-9.424778, 9.424778],
-            [-9.424778, 9.424778],
-            [-9.424778, 9.424778],
-            [-9.424778, 9.424778],
-        ]
-    )
     SLEEP_POSITION = np.zeros(14)
 
-    def __init__(self, robot, control_frequency: int = 50, test_mode: str = "autonomous") -> None:
+    def __init__(self, robot, control_frequency: int = 50, test_mode: str = "autonomous",
+                 smooth_streaming: bool = False) -> None:
         self.robot = robot
         self.control_frequency = control_frequency
         self.dt = 1.0 / control_frequency
         self.test_mode = test_mode
+        self.smooth_streaming = smooth_streaming
 
     # ---- state ----
     def current_joints14(self) -> np.ndarray:
@@ -86,43 +106,29 @@ class RobotController:
         joint_pos_keys = [k for k in obs if k.endswith(".pos")]
         return np.array([obs[k] for k in joint_pos_keys])
 
-    # ---- safety ----
-    def is_action_within_limits(self, target_pose: np.ndarray) -> bool:
-        target_pose = np.asarray(target_pose).flatten()
-        if target_pose.shape[0] != 14:
-            logger.error(f"Expected 14D action, got {target_pose.shape}")
-            return False
-        try:
-            current_pose = self.current_joints14()
-        except Exception as e:  # noqa: BLE001
-            logger.error(f"Failed to get observation: {e}")
-            return False
-
-        commanded_velocity = (target_pose - current_pose) / self.dt
-        for i, vel in enumerate(commanded_velocity):
-            min_vel, max_vel = self.JOINT_LIMIT[i]
-            if vel < min_vel or vel > max_vel:
-                logger.warning(f"Joint {i} velocity exceeded: {vel:.4f} not in [{min_vel:.4f}, {max_vel:.4f}]")
-                return False
-        return True
-
     # ---- motion ----
     def execute_action(self, action: np.ndarray) -> bool:
-        """Send a 14-D joint action. Returns False if it violated limits (and
-        moved the arm to sleep), True otherwise."""
+        """Send a 14-D joint action. Returns True on success, False if the
+        firmware faulted (in which case the arm is moved to sleep)."""
         full_action = np.asarray(action).flatten()
 
         if self.test_mode == "test":
             logger.info(f"TEST MODE: Would execute action: {full_action}")
             return True
 
-        joint_features = list(self.robot._joint_ft.keys())  # noqa: SLF001
-        action_dict = {k: full_action[i] for i, k in enumerate(joint_features)}
-        self.robot.send_action(action_dict)
-
-        if not self.is_action_within_limits(full_action):
-            logger.warning("Action exceeds limits. Moving to sleep position.")
-            self.move_to_sleep_position(duration=10.0)
+        try:
+            if self.smooth_streaming:
+                send_action_smooth(self.robot, full_action, self.dt)
+            else:
+                joint_features = list(self.robot._joint_ft.keys())  # noqa: SLF001
+                action_dict = {k: full_action[i] for i, k in enumerate(joint_features)}
+                self.robot.send_action(action_dict)
+        except Exception as exc:  # noqa: BLE001 — firmware fault halts the arm
+            logger.error(f"Firmware error executing action: {exc}. Moving to sleep position.")
+            try:
+                self.move_to_sleep_position(duration=10.0)
+            except Exception as sleep_exc:  # noqa: BLE001
+                logger.error(f"Failed to reach sleep position: {sleep_exc}")
             return False
         return True
 
