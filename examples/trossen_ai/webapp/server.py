@@ -45,6 +45,14 @@ def create_app(presets_dir: str | Path | None = None, runner_factory=None,
     app = FastAPI(title="Trossen Control")
     store = ConfigStore(presets_dir)
     session = SessionManager(runner_factory)
+
+    @app.on_event("shutdown")
+    def _cleanup_on_shutdown():
+        try:
+            session.stop()
+        except Exception:  # noqa: BLE001
+            pass
+
     app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
     @app.get("/")

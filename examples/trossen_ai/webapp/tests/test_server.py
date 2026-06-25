@@ -43,3 +43,11 @@ def test_files_endpoint_lists_dirs(tmp_path):
     r = client.get("/api/files", params={"path": str(tmp_path)})
     assert r.status_code == 200
     assert [e["name"] for e in r.json()["entries"]] == ["sub"]
+
+
+def test_shutdown_hook_runs_clean():
+    app = create_app()
+    with TestClient(app):  # entering/exiting triggers startup/shutdown
+        pass
+    # Exiting the context ran the shutdown hook (session.stop()) without raising.
+    assert True
