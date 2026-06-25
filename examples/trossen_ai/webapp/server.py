@@ -33,6 +33,12 @@ def create_app(presets_dir: str | Path | None = None, runner_factory=None,
         # REST/WebSocket layer (and the tests) work off-robot where
         # lerobot_robot_trossen is absent.
         def runner_factory(kind, config, sink):
+            if kind == "sleep":
+                from webapp.movers import SleepRunner
+                return SleepRunner(kind, config, sink)
+            if kind == "home":
+                from webapp.movers import HomeRunner
+                return HomeRunner(kind, config, sink)
             from webapp.runners import make_runner
             return make_runner(kind, config, sink)
 
@@ -123,6 +129,10 @@ def create_app(presets_dir: str | Path | None = None, runner_factory=None,
                     session.start("live", cmd["config"], QueueSink(q))
                 elif action == "start_replay":
                     session.start("replay", cmd["config"], QueueSink(q))
+                elif action == "go_sleep":
+                    session.start("sleep", cmd.get("config", {}), QueueSink(q))
+                elif action == "go_home":
+                    session.start("home", cmd.get("config", {}), QueueSink(q))
                 elif action == "stop":
                     await loop.run_in_executor(None, session.stop)
                 elif action == "estop":
