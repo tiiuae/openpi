@@ -58,6 +58,7 @@ class LiveRunner:
             smooth_streaming=bool(config.get("smooth_streaming", False)),
             min_time_to_move_multiplier=float(config.get("min_time_to_move_multiplier", 3.0)),
             loop_rate=int(config.get("loop_rate", config.get("control_freq", 25))),
+            max_joint_speed=float(config.get("max_joint_speed", 3.0)),
             adapter=adapter,
             sink=self._sink,
         )

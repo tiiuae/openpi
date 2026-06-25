@@ -12,7 +12,7 @@ from PIL import Image
 from scipy.interpolate import PchipInterpolator
 
 from adapters import ActionSpaceAdapter, JointAdapter, extract_joints
-from robot_control import build_stationary_robot
+from robot_control import build_stationary_robot, limit_joint_velocity
 from webapp.log_bridge import SinkLogHandler
 from webapp.telemetry import NullSink, TelemetrySink
 
@@ -48,6 +48,7 @@ class TrossenOpenPIBridge:
         smooth_streaming: bool = False,
         min_time_to_move_multiplier: float = 3.0,
         loop_rate: int = 30,
+        max_joint_speed: float = 3.0,
     ):
         self.adapter = adapter if adapter is not None else JointAdapter()
         self.sink = sink
@@ -67,6 +68,10 @@ class TrossenOpenPIBridge:
             loop_rate=loop_rate,
         )
         self.smooth_streaming = smooth_streaming
+        # Per-joint velocity cap (rad/s) applied to every commanded action so a
+        # policy/IK discontinuity can't trip the firmware velocity limit. <=0 disables.
+        self.max_joint_speed = max_joint_speed
+        self._last_commanded = None
 
         self.current_action_chunk = None
         self.action_chunk_idx = 0
@@ -139,6 +144,15 @@ class TrossenOpenPIBridge:
             logger.info(f"TEST MODE: Would execute action: {full_action}")
             return
         if self.test_mode == "autonomous":
+            # Velocity-limit the commanded action: cap per-joint delta vs the last
+            # command so a policy/IK jump is spread over several control steps
+            # instead of faulting the firmware ("joint velocity limit exceeded").
+            if self.max_joint_speed > 0 and self._last_commanded is not None:
+                full_action = limit_joint_velocity(
+                    self._last_commanded, full_action, self.dt, self.max_joint_speed
+                )
+            self._last_commanded = np.asarray(full_action, dtype=float).flatten()
+
             joint_features = list(self.robot._joint_ft.keys())  # noqa
             action_dict = {k: full_action[i] for i, k in enumerate(joint_features)}
 

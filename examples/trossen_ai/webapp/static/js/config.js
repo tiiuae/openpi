@@ -53,6 +53,8 @@ const GROUPS = [
       help:"Driver goal_time = multiplier / loop rate. Larger = smoother but laggier; smaller = snappier but jerkier." },
     { key:"loop_rate", label:"Driver loop rate (Hz)", type:"number", def:25,
       help:"Match this to Control rate to avoid mid-motion re-planning." },
+    { key:"max_joint_speed", label:"Max joint speed (rad/s)", type:"number", step:0.5, def:3.0,
+      help:"Safety cap on per-joint velocity. A policy/IK jump is spread over several control steps instead of tripping the firmware velocity limit (~9.4 rad/s). Lower = gentler; 0 disables." },
   ]},
 ];
 
