@@ -19,7 +19,6 @@ from lerobot.cameras.opencv.configuration_opencv import OpenCVCameraConfig
 from lerobot.robots import make_robot_from_config
 from lerobot_robot_trossen.config_bi_widowxai_follower import BiWidowXAIFollowerRobotConfig
 import numpy as np
-
 from openpi_client import msgpack_numpy
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
@@ -53,11 +52,12 @@ def capture(task_prompt: str, output_path: str) -> None:
         joint_positions = np.array([observation_dict[k] for k in joint_pos_keys])
 
         # Resize and convert camera images (BGR -> RGB, HWC -> CHW)
-        import os
+        import os  # noqa
+
         debug_dir = "debug"
         os.makedirs(debug_dir, exist_ok=True)
 
-        cameras = list(robot._cameras_ft.keys())
+        cameras = list(robot._cameras_ft.keys())  # noqa
         images = {}
         for cam in cameras:
             image_hwc = observation_dict[cam]
@@ -70,7 +70,10 @@ def capture(task_prompt: str, output_path: str) -> None:
             cv2.imwrite(os.path.join(debug_dir, f"{cam}_03_resized_rgb.png"), image_resized)
 
             image_chw = np.transpose(image_rgb, (2, 0, 1))
-            cv2.imwrite(os.path.join(debug_dir, f"{cam}_04_final_chw_as_hwc.png"), np.transpose(image_chw, (1, 2, 0))[:, :, ::-1])
+            cv2.imwrite(
+                os.path.join(debug_dir, f"{cam}_04_final_chw_as_hwc.png"),
+                np.transpose(image_chw, (1, 2, 0))[:, :, ::-1],
+            )
 
             images[cam] = image_chw
 

@@ -3,17 +3,20 @@ import time
 
 from action_fallback import HoldLastAction
 from action_logger import ActionLogger
+from adapters import ActionSpaceAdapter
+from adapters import JointAdapter
+from adapters import extract_joints
 from async_worker import AsyncPolicyWorker
-from ensemble import make_ensemble
 import cv2
+from ensemble import make_ensemble
 import numpy as np
 from openpi_client import websocket_client_policy
 from PIL import Image
+from robot_control import build_stationary_robot
+from robot_control import limit_joint_velocity
 from scipy.interpolate import PchipInterpolator
-
-from adapters import ActionSpaceAdapter, JointAdapter, extract_joints
-from robot_control import build_stationary_robot, limit_joint_velocity
-from webapp.telemetry import NullSink, TelemetrySink
+from webapp.telemetry import NullSink
+from webapp.telemetry import TelemetrySink
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
@@ -43,8 +46,8 @@ class TrossenOpenPIBridge:
         use_right_arm_only: bool = False,  # noqa
         starvla: bool = False,  # noqa
         adapter: "ActionSpaceAdapter | None" = None,
-        sink: TelemetrySink = NullSink(),
-        smooth_streaming: bool = False,
+        sink: TelemetrySink = NullSink(),  # noqa
+        smooth_streaming: bool = False,  # noqa
         min_time_to_move_multiplier: float = 3.0,
         loop_rate: int = 30,
         max_joint_speed: float = 3.0,
@@ -89,7 +92,8 @@ class TrossenOpenPIBridge:
         self.async_inference = async_inference
         self._policy_worker = (
             AsyncPolicyWorker(self.policy_client, self.ensemble, self.action_dim, sink=self.sink)
-            if async_inference else None
+            if async_inference
+            else None
         )
 
         self.action_logger = ActionLogger(log_dir) if log_dir else None
@@ -147,9 +151,7 @@ class TrossenOpenPIBridge:
             # command so a policy/IK jump is spread over several control steps
             # instead of faulting the firmware ("joint velocity limit exceeded").
             if self.max_joint_speed > 0 and self._last_commanded is not None:
-                full_action = limit_joint_velocity(
-                    self._last_commanded, full_action, self.dt, self.max_joint_speed
-                )
+                full_action = limit_joint_velocity(self._last_commanded, full_action, self.dt, self.max_joint_speed)
             self._last_commanded = np.asarray(full_action, dtype=float).flatten()
 
             joint_features = list(self.robot._joint_ft.keys())  # noqa
@@ -157,11 +159,12 @@ class TrossenOpenPIBridge:
 
             try:
                 if self.smooth_streaming:
-                    from robot_control import send_action_smooth
+                    from robot_control import send_action_smooth  # noqa
+
                     send_action_smooth(self.robot, full_action, self.dt)
                 else:
                     self.robot.send_action(action_dict)
-            except Exception as exc:  # noqa: BLE001 — firmware fault halts the arm
+            except Exception as exc:
                 logger.error(f"Firmware error executing action: {exc}. Moving to sleep position.")
                 if getattr(self, "sink", None):
                     self.sink.on_status("firmware_error", {"message": str(exc)})
@@ -185,7 +188,9 @@ class TrossenOpenPIBridge:
                 image_resized = cv2.resize(image_hwc, DEFAULT_TRAINING_SIZE, interpolation=cv2.INTER_LANCZOS4)
                 image_rgb = cv2.cvtColor(image_resized, cv2.COLOR_BGR2RGB)
             images[cam] = np.transpose(image_rgb, (2, 0, 1))
-        self.sink.on_images({cam: cv2.imencode(".jpg", observation_dict[cam])[1].tobytes() for cam in cameras}, time.time())
+        self.sink.on_images(
+            {cam: cv2.imencode(".jpg", observation_dict[cam])[1].tobytes() for cam in cameras}, time.time()
+        )
         return {"state": state, "images": images, "prompt": task_prompt}
 
     def move_to_start_position(self, goal_position: np.ndarray, duration: float = 5.0):

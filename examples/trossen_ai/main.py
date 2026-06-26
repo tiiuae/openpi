@@ -4,6 +4,7 @@
 See main_ee.py for the end-effector variant. Shared control loop lives in
 trossen_bridge.py.
 """
+
 import argparse
 
 from adapters import JointAdapter
@@ -15,16 +16,25 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--policy_host", default="192.168.50.174", help="Policy server host")
     parser.add_argument("--policy_port", type=int, default=8800, help="Policy server port")
     parser.add_argument("--control_freq", type=int, default=25, help="Control frequency in Hz")
-    parser.add_argument("--mode", choices=["autonomous", "test"], default="autonomous",
-                        help="autonomous (execute) or test (no movement)")
+    parser.add_argument(
+        "--mode",
+        choices=["autonomous", "test"],
+        default="autonomous",
+        help="autonomous (execute) or test (no movement)",
+    )
     parser.add_argument("--task_prompt", default="move the arm to the left", help="Task description")
     parser.add_argument("--max_steps", type=int, default=1000, help="Maximum steps per episode")
     parser.add_argument("--action_chunk_size", type=int, default=25, help="Actions predicted per inference")
     parser.add_argument("--rate_of_inference", type=int, default=20, help="Control steps between inferences")
-    parser.add_argument("--ensemble_type", choices=["exp", "cogact", "none"], default="exp",
-                        help="Action ensemble strategy")
-    parser.add_argument("--cogact_mode", choices=["cogact", "latest", "hybrid"], default="cogact",
-                        help="CogACT weighting mode (only used with --ensemble_type cogact)")
+    parser.add_argument(
+        "--ensemble_type", choices=["exp", "cogact", "none"], default="exp", help="Action ensemble strategy"
+    )
+    parser.add_argument(
+        "--cogact_mode",
+        choices=["cogact", "latest", "hybrid"],
+        default="cogact",
+        help="CogACT weighting mode (only used with --ensemble_type cogact)",
+    )
     parser.add_argument("--log_dir", default=None, help="Directory for per-episode overlap JSON")
     parser.add_argument("--async_inference", action="store_true", help="Background-thread inference (needs ensemble)")
     parser.add_argument("--starvla", action="store_true", help="StarVLA 224x224 PIL resizing")

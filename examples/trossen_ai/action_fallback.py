@@ -4,6 +4,7 @@ Commanding zeros on a missing prediction is unsafe (zero is a specific pose, not
 "stay put"). This repeats the last real action instead; before any real action
 exists it returns None so the caller can skip the step.
 """
+
 from __future__ import annotations
 
 import numpy as np

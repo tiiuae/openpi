@@ -5,23 +5,24 @@ The openpi WebsocketClientPolicy connects in its constructor and loops forever
 endpoint here with a deadline and a stop callback so a session can be cancelled
 while still connecting, and so a missing server fails cleanly instead of hanging.
 """
+
 from __future__ import annotations
 
+from collections.abc import Callable
 import logging
 import socket
 import time
-from typing import Callable
 
 logger = logging.getLogger(__name__)
 
 
-class ConnectTimeout(RuntimeError):
+class ConnectTimeout(RuntimeError):  # noqa
     def __init__(self, host: str, port: int, timeout: float) -> None:
         super().__init__(f"Policy server {host}:{port} not reachable within {timeout:.0f}s")
         self.host, self.port, self.timeout = host, port, timeout
 
 
-class ConnectStopped(RuntimeError):
+class ConnectStopped(RuntimeError):  # noqa
     """Raised when should_stop() became true while waiting to connect."""
 
 
@@ -47,6 +48,6 @@ def wait_for_policy_server(
                 return
         except OSError:
             if time.monotonic() >= deadline:
-                raise ConnectTimeout(host, port, timeout)
+                raise ConnectTimeout(host, port, timeout)  # noqa
             remaining = deadline - time.monotonic()
             time.sleep(min(interval, max(0.0, remaining)))

@@ -4,6 +4,7 @@ The bridge is action-space agnostic. A JointAdapter keeps today's behavior. An
 EEAdapter (Task 4) FKs the observation into EE space and IK-decodes EE action
 chunks back into joints, so everything downstream of the adapter is unchanged.
 """
+
 from __future__ import annotations
 
 import numpy as np

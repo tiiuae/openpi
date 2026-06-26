@@ -6,11 +6,12 @@ config (IPs, cameras), so the bridge and the dataset-replay tool stay in sync.
 smooth-streaming motion used by the autonomous control loop, operating on full
 14-D joint vectors (left arm 0:7, right arm 7:14).
 """
+
 from __future__ import annotations
 
 import logging
-import time
 from pathlib import Path
+import time
 
 import numpy as np
 from scipy.interpolate import PchipInterpolator
@@ -19,8 +20,7 @@ logger = logging.getLogger(__name__)
 
 # Home/"stage" pose: arms up & open, ready for task start (left arm only; right at 0).
 # Mirrors the commented stage_pose in main.py on the trossen-ai branch.
-HOME_POSITION = np.array([0, np.pi / 3, np.pi / 6, np.pi / 5, 0, 0, 0,
-                          0, 0, 0, 0, 0, 0, 0], dtype=float)
+HOME_POSITION = np.array([0, np.pi / 3, np.pi / 6, np.pi / 5, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0], dtype=float)
 
 
 def send_action_smooth(robot, action14: np.ndarray, dt: float) -> None:
@@ -39,12 +39,16 @@ def send_action_smooth(robot, action14: np.ndarray, dt: float) -> None:
     ff = np.nan_to_num(ff, nan=0.0, posinf=0.0, neginf=0.0)
     n = len(robot.left_arm.config.joint_names)
     robot.left_arm.driver.set_all_positions(
-        list(action14[:n]), goal_time=dt, blocking=False,
+        list(action14[:n]),
+        goal_time=dt,
+        blocking=False,
         goal_feedforward_velocities=list(ff[:n]),
     )
     robot.right_arm.driver.set_all_positions(
-        list(action14[n:n * 2]), goal_time=dt, blocking=False,
-        goal_feedforward_velocities=list(ff[n:n * 2]),
+        list(action14[n : n * 2]),
+        goal_time=dt,
+        blocking=False,
+        goal_feedforward_velocities=list(ff[n : n * 2]),
     )
 
 
@@ -55,8 +59,9 @@ def send_action_smooth(robot, action14: np.ndarray, dt: float) -> None:
 MAX_JOINT_SPEED = 3.0
 
 
-def limit_joint_velocity(prev14: np.ndarray, target14: np.ndarray, dt: float,
-                         max_speed: float = MAX_JOINT_SPEED) -> np.ndarray:
+def limit_joint_velocity(
+    prev14: np.ndarray, target14: np.ndarray, dt: float, max_speed: float = MAX_JOINT_SPEED
+) -> np.ndarray:
     """Clamp a 14-D joint target so no joint moves faster than ``max_speed`` rad/s.
 
     Bounds ``|target - prev|`` per joint to ``max_speed * dt``. A joint-space
@@ -73,9 +78,9 @@ def limit_joint_velocity(prev14: np.ndarray, target14: np.ndarray, dt: float,
     return prev + delta
 
 
-def build_stationary_robot(*, connect: bool = True, with_cameras: bool = True,
-                           min_time_to_move_multiplier: float = 3.0,
-                           loop_rate: int = 30):
+def build_stationary_robot(
+    *, connect: bool = True, with_cameras: bool = True, min_time_to_move_multiplier: float = 3.0, loop_rate: int = 30
+):
     """Build (and optionally connect) the Trossen bimanual follower robot.
 
     Args:
@@ -87,9 +92,9 @@ def build_stationary_robot(*, connect: bool = True, with_cameras: bool = True,
         loop_rate:                   Passed to BiWidowXAIFollowerRobotConfig.
     """
     # Lazy imports: these hardware packages are not installed in the test env.
-    from lerobot.cameras.opencv.configuration_opencv import OpenCVCameraConfig
-    from lerobot.robots import make_robot_from_config
-    from lerobot_robot_trossen.config_bi_widowxai_follower import BiWidowXAIFollowerRobotConfig
+    from lerobot.cameras.opencv.configuration_opencv import OpenCVCameraConfig  # noqa
+    from lerobot.robots import make_robot_from_config  # noqa
+    from lerobot_robot_trossen.config_bi_widowxai_follower import BiWidowXAIFollowerRobotConfig  # noqa
 
     cameras = {}
     if with_cameras:
@@ -117,8 +122,13 @@ class RobotController:
 
     SLEEP_POSITION = np.zeros(14)
 
-    def __init__(self, robot, control_frequency: int = 50, test_mode: str = "autonomous",
-                 smooth_streaming: bool = False) -> None:
+    def __init__(
+        self,
+        robot,
+        control_frequency: int = 50,
+        test_mode: str = "autonomous",
+        smooth_streaming: bool = False,  # noqa
+    ) -> None:
         self.robot = robot
         self.control_frequency = control_frequency
         self.dt = 1.0 / control_frequency
@@ -148,11 +158,11 @@ class RobotController:
                 joint_features = list(self.robot._joint_ft.keys())  # noqa: SLF001
                 action_dict = {k: full_action[i] for i, k in enumerate(joint_features)}
                 self.robot.send_action(action_dict)
-        except Exception as exc:  # noqa: BLE001 — firmware fault halts the arm
+        except Exception as exc:  # firmware fault halts the arm
             logger.error(f"Firmware error executing action: {exc}. Moving to sleep position.")
             try:
                 self.move_to_sleep_position(duration=10.0)
-            except Exception as sleep_exc:  # noqa: BLE001
+            except Exception as sleep_exc:
                 logger.error(f"Failed to reach sleep position: {sleep_exc}")
             return False
         return True

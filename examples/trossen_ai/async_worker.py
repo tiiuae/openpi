@@ -3,16 +3,17 @@
 Runs policy inference off the control-loop thread so the loop never blocks on
 network / GPU latency. Depends only on the :class:`ActionEnsemble` abstraction.
 """
+
 from __future__ import annotations
 
 import logging
 import threading
 import time
 
-import numpy as np
-
 from ensemble import ActionEnsemble
-from webapp.telemetry import NullSink, TelemetrySink
+import numpy as np
+from webapp.telemetry import NullSink
+from webapp.telemetry import TelemetrySink
 
 logger = logging.getLogger(__name__)
 
@@ -46,8 +47,13 @@ class AsyncPolicyWorker:
         worker.stop()
     """
 
-    def __init__(self, policy_client, ensemble: ActionEnsemble, action_dim: int,
-                 sink: TelemetrySink = NullSink()) -> None:
+    def __init__(
+        self,
+        policy_client,
+        ensemble: ActionEnsemble,
+        action_dim: int,
+        sink: TelemetrySink = NullSink(),  # noqa
+    ) -> None:
         self._client = policy_client
         self._ensemble = ensemble
         self._action_dim = action_dim

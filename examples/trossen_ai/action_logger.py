@@ -4,11 +4,13 @@ Records how many overlapping predictions the ensemble used at each step and dump
 a JSON file at episode end (or on manual stop / Ctrl+C). Independent of any
 ensemble strategy.
 """
+
 from __future__ import annotations
 
+from datetime import UTC
+from datetime import datetime
 import json
 import logging
-from datetime import datetime, timezone
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
@@ -57,7 +59,7 @@ class ActionLogger:
             return
 
         self._save_dir.mkdir(parents=True, exist_ok=True)
-        timestamp = datetime.now(tz=timezone.utc).strftime("%Y%m%d_%H%M%S")
+        timestamp = datetime.now(tz=UTC).strftime("%Y%m%d_%H%M%S")
         path = self._save_dir / f"{tag}_{timestamp}.json"
 
         payload = {

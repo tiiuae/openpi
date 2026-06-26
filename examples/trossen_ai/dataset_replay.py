@@ -4,10 +4,11 @@ Pure data layer — no robot, no IK — so it is unit-testable off-hardware. The
 replay entrypoint (``replay_ee_dataset.py``) feeds the returned ``(N, 16)``
 absolute-EE chunk into the same IK decoder used by ``main_ee.py``.
 """
+
 from __future__ import annotations
 
-import json
 from dataclasses import dataclass
+import json
 from pathlib import Path
 
 import numpy as np

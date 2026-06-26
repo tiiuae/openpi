@@ -6,6 +6,7 @@ The policy outputs absolute 8-D EE poses per arm ([x,y,z,qw,qx,qy,qz,grip], robo
 actions back into joints (see end_effector_support.md, Option 1). Synchronous
 inference only (async EE decoding is not yet supported).
 """
+
 import argparse
 
 from adapters import EEAdapter
@@ -18,10 +19,18 @@ from trossen_bridge import TrossenOpenPIBridge
 def build_parser() -> argparse.ArgumentParser:
     parser = build_joint_parser()
     parser.description = "Trossen AI <-> OpenPI Policy Server Bridge (end-effector space)"
-    parser.add_argument("--ik_orientation_weight", type=float, default=0.01,
-                        help="placo IK orientation weight (raise for tighter rotation tracking)")
-    parser.add_argument("--ik_pos_tol_m", type=float, default=1e-3,
-                        help="IK convergence + failure tolerance (m): loop refines until FK error <= this; above it after ik_max_iters -> hold last")
+    parser.add_argument(
+        "--ik_orientation_weight",
+        type=float,
+        default=0.01,
+        help="placo IK orientation weight (raise for tighter rotation tracking)",
+    )
+    parser.add_argument(
+        "--ik_pos_tol_m",
+        type=float,
+        default=1e-3,
+        help="IK convergence + failure tolerance (m): loop refines until FK error <= this; above it after ik_max_iters -> hold last",
+    )
     return parser
 
 
