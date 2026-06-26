@@ -58,3 +58,26 @@ def test_replay_page_served():
     r = client.get("/replay")
     assert r.status_code == 200
     assert "text/html" in r.headers["content-type"]
+
+
+def test_episode_trajectory_route(monkeypatch):
+    from webapp import episode_preview as ep
+
+    captured = {}
+
+    def fake_build(dataset_dir, episode_index, control_freq, max_joint_speed,
+                   seed_joints=None, **kw):
+        captured.update(dataset_dir=dataset_dir, episode_index=episode_index,
+                        control_freq=control_freq, max_joint_speed=max_joint_speed)
+        return {"n_frames": 2, "spikes": [1]}
+
+    monkeypatch.setattr(ep, "build_trajectory", fake_build)
+    client = TestClient(create_app())
+    r = client.get("/api/episode_trajectory", params={
+        "dataset_dir": "/data/ds", "episode_index": 3,
+        "control_freq": 25, "max_joint_speed": 3.0})
+    assert r.status_code == 200
+    assert r.json()["spikes"] == [1]
+    assert captured["dataset_dir"] == "/data/ds"
+    assert captured["episode_index"] == 3
+    assert captured["control_freq"] == 25

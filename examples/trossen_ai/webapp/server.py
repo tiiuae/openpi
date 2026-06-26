@@ -110,6 +110,26 @@ def create_app(presets_dir: str | Path | None = None, runner_factory=None,
         r = EpisodeReader(dataset_dir)
         return {"fps": r.fps, "total_episodes": r.total_episodes}
 
+    @app.get("/api/episode_trajectory")
+    def episode_trajectory(dataset_dir: str, episode_index: int = 0,
+                           control_freq: int = 0, max_joint_speed: float = 3.0):
+        from webapp import episode_preview  # lazy: pulls IK/dataset deps on demand
+        # Best-effort live seed: only when idle and a robot can be read cheaply.
+        seed = None
+        if not session.is_running():
+            try:
+                from robot_control import build_stationary_robot, RobotController
+                robot = build_stationary_robot(with_cameras=False)
+                seed = RobotController(robot).current_joints14().tolist()
+                robot.disconnect()
+            except Exception:  # noqa: BLE001 — no robot / busy: fall back to home seed
+                seed = None
+        return episode_preview.build_trajectory(
+            dataset_dir=dataset_dir, episode_index=int(episode_index),
+            control_freq=int(control_freq), max_joint_speed=float(max_joint_speed),
+            seed_joints=seed,
+        )
+
     @app.websocket("/ws/telemetry")
     async def telemetry_ws(ws: WebSocket):
         await ws.accept()
