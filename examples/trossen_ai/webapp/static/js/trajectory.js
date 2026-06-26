@@ -18,7 +18,7 @@ const cursorPlugin = {
     ctx.restore();
   },
 };
-Chart.register(cursorPlugin);
+if (typeof Chart !== "undefined") Chart.register(cursorPlugin);
 
 const FONT = { size: 9, family: "Consolas,Menlo,Monaco,monospace" };
 function baseOpts(title) {
@@ -65,6 +65,7 @@ function buildChart(canvas, title, series, spikeSeries) {
 // Build the two preview charts from a /api/episode_trajectory payload.
 // Returns { charts:[Chart], setCursor(frameIdx) }.
 export function buildTrajectoryCharts(jointsCanvas, eeCanvas, data) {
+  if (typeof Chart !== "undefined") Chart.register(cursorPlugin);
   const N = data.n_frames;
   // Joints chart: 14 series, raw vs clamped. Spikes plotted on joint 0's clamped y.
   const jointSeries = JOINT_NAMES_14.map((label, j) => ({
@@ -108,10 +109,20 @@ export class Transport {
     this.timer = null;
 
     els.slider.min = 0; els.slider.max = Math.max(0, nFrames - 1); els.slider.value = 0;
-    els.play.addEventListener("click", () => (this.playing ? this.pause() : this.play()));
-    els.stop.addEventListener("click", () => this.stop());
-    els.slider.addEventListener("input", (e) => { this.pause(); this.seek(+e.target.value); });
+    this._onPlay = () => (this.playing ? this.pause() : this.play());
+    this._onStop = () => this.stop();
+    this._onSlider = (e) => { this.pause(); this.seek(+e.target.value); };
+    els.play.addEventListener("click", this._onPlay);
+    els.stop.addEventListener("click", this._onStop);
+    els.slider.addEventListener("input", this._onSlider);
     this.seek(0);
+  }
+
+  destroy() {
+    this.pause();
+    this.els.play.removeEventListener("click", this._onPlay);
+    this.els.stop.removeEventListener("click", this._onStop);
+    this.els.slider.removeEventListener("input", this._onSlider);
   }
 
   _fmt(i) {

@@ -79,7 +79,7 @@ async function buildPreview() {
   $("btn-preview").textContent = "Computing…"; $("btn-preview").disabled = true;
   try {
     if (charts) { charts.charts.forEach((c) => c.destroy()); charts = null; }
-    if (transport) { transport.stop(); transport = null; }
+    if (transport) { transport.destroy(); transport = null; }
     const data = await fetchTrajectory();
     renderSpikeBanner(data);
     charts = buildTrajectoryCharts($("chart-joints"), $("chart-ee"), data);
@@ -117,26 +117,31 @@ function worstVelocity(data) {
 
 // Replay button: ensure spike data exists, gate if spiky, else go.
 async function onReplayClick() {
+  $("btn-replay").disabled = true;
   try {
-    const stale = !traj || traj._dataset !== $("dataset_dir").value ||
-                  String(traj._ep) !== String($("episode-select").value);
-    if (stale) { traj = null; await fetchTrajectory(); }
-  } catch (e) { console.warn("Spike pre-check failed; replay will be blocked:", e); }
+    try {
+      const stale = !traj || traj._dataset !== $("dataset_dir").value ||
+                    String(traj._ep) !== String($("episode-select").value);
+      if (stale) { traj = null; await fetchTrajectory(); }
+    } catch (e) { console.warn("Spike pre-check failed; replay will be blocked:", e); }
 
-  if (!traj) {
-    console.error("Cannot verify trajectory safety; replay blocked.");
-    alert("Could not compute the episode trajectory to check for velocity spikes. Replay is blocked until a preview succeeds.");
-    return;
+    if (!traj) {
+      console.error("Cannot verify trajectory safety; replay blocked.");
+      alert("Could not compute the episode trajectory to check for velocity spikes. Replay is blocked until a preview succeeds.");
+      return;
+    }
+    if (traj.spikes && traj.spikes.length) {
+      $("spike-msg").textContent =
+        `${traj.spikes.length} frame(s) exceed the ${traj.max_joint_speed} rad/s limit ` +
+        `(worst ${worstVelocity(traj).toFixed(1)} rad/s).`;
+      $("spike-ack").checked = false; $("spike-confirm").disabled = true;
+      $("modal-spike").style.display = "flex";
+      return;
+    }
+    startReplay();
+  } finally {
+    $("btn-replay").disabled = false;
   }
-  if (traj.spikes && traj.spikes.length) {
-    $("spike-msg").textContent =
-      `${traj.spikes.length} frame(s) exceed the ${traj.max_joint_speed} rad/s limit ` +
-      `(worst ${worstVelocity(traj).toFixed(1)} rad/s).`;
-    $("spike-ack").checked = false; $("spike-confirm").disabled = true;
-    $("modal-spike").style.display = "flex";
-    return;
-  }
-  startReplay();
 }
 
 function startReplay() {

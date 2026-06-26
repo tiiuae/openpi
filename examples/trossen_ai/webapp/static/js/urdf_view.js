@@ -34,12 +34,12 @@ export class UrdfView {
     this.renderer.setPixelRatio(window.devicePixelRatio);
 
     this.scene = new THREE.Scene();
-    this.scene.background = new THREE.Color('#f0f2f5');
+    this.scene.background = new THREE.Color('#1a1f29');
     this.scene.add(new THREE.AmbientLight(0xffffff, 0.8));
     const sun = new THREE.DirectionalLight(0xffffff, 1.2);
     sun.position.set(3, 2, 5);
     this.scene.add(sun);
-    const grid = new THREE.GridHelper(6, 30, 0x999999, 0xcccccc);
+    const grid = new THREE.GridHelper(6, 30, 0x30363d, 0x21262d);
     grid.rotation.x = Math.PI / 2;
     this.scene.add(grid);
 

@@ -1,6 +1,11 @@
+import pytest
+from pathlib import Path
 from fastapi.testclient import TestClient
 
 from webapp.server import create_app
+
+_URDF = (Path(__file__).resolve().parents[2] / "external" / "joint_to_ee"
+         / "trossen_arm_description" / "urdf" / "generated" / "mobile_ai.urdf")
 
 
 def test_index_served():
@@ -85,6 +90,7 @@ def test_episode_trajectory_route(monkeypatch):
     assert captured["seed_joints"] is None
 
 
+@pytest.mark.skipif(not _URDF.is_file(), reason="URDF tree not checked out")
 def test_robot_urdf_and_mesh_served():
     client = TestClient(create_app())
     r = client.get("/robot.urdf")
