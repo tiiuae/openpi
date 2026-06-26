@@ -68,7 +68,8 @@ def test_episode_trajectory_route(monkeypatch):
     def fake_build(dataset_dir, episode_index, control_freq, max_joint_speed,
                    seed_joints=None, **kw):
         captured.update(dataset_dir=dataset_dir, episode_index=episode_index,
-                        control_freq=control_freq, max_joint_speed=max_joint_speed)
+                        control_freq=control_freq, max_joint_speed=max_joint_speed,
+                        seed_joints=seed_joints)
         return {"n_frames": 2, "spikes": [1]}
 
     monkeypatch.setattr(ep, "build_trajectory", fake_build)
@@ -81,3 +82,4 @@ def test_episode_trajectory_route(monkeypatch):
     assert captured["dataset_dir"] == "/data/ds"
     assert captured["episode_index"] == 3
     assert captured["control_freq"] == 25
+    assert captured["seed_joints"] is None

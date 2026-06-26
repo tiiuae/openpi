@@ -120,8 +120,10 @@ def create_app(presets_dir: str | Path | None = None, runner_factory=None,
             try:
                 from robot_control import build_stationary_robot, RobotController
                 robot = build_stationary_robot(with_cameras=False)
-                seed = RobotController(robot).current_joints14().tolist()
-                robot.disconnect()
+                try:
+                    seed = RobotController(robot).current_joints14().tolist()
+                finally:
+                    robot.disconnect()
             except Exception:  # noqa: BLE001 — no robot / busy: fall back to home seed
                 seed = None
         return episode_preview.build_trajectory(
