@@ -83,3 +83,14 @@ def test_episode_trajectory_route(monkeypatch):
     assert captured["episode_index"] == 3
     assert captured["control_freq"] == 25
     assert captured["seed_joints"] is None
+
+
+def test_robot_urdf_and_mesh_served():
+    client = TestClient(create_app())
+    r = client.get("/robot.urdf")
+    assert r.status_code == 200
+    assert "robot" in r.text[:500].lower()  # URDF root tag
+    # A mesh referenced as package://trossen_arm_description/meshes/... resolves.
+    m = client.get("/pkg/trossen_arm_description/meshes/wxai/base_link.stl")
+    assert m.status_code == 200
+    assert len(m.content) > 0

@@ -21,6 +21,9 @@ from webapp.session import SessionManager
 from webapp.telemetry import QueueSink
 
 STATIC_DIR = Path(__file__).parent / "static"
+URDF_PKG_DIR = (Path(__file__).parent.parent / "external" / "joint_to_ee"
+                / "trossen_arm_description")
+URDF_FILE = URDF_PKG_DIR / "urdf" / "generated" / "mobile_ai.urdf"
 
 logger = logging.getLogger(__name__)
 
@@ -57,6 +60,12 @@ def create_app(presets_dir: str | Path | None = None, runner_factory=None,
             pass
 
     app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
+    app.mount("/pkg/trossen_arm_description",
+              StaticFiles(directory=URDF_PKG_DIR), name="urdf_pkg")
+
+    @app.get("/robot.urdf")
+    def robot_urdf():
+        return FileResponse(URDF_FILE, media_type="application/xml")
 
     @app.get("/")
     def index():
