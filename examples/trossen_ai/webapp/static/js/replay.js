@@ -78,6 +78,8 @@ async function fetchTrajectory() {
 async function buildPreview() {
   $("btn-preview").textContent = "Computing…"; $("btn-preview").disabled = true;
   try {
+    if (charts) { charts.charts.forEach((c) => c.destroy()); charts = null; }
+    if (transport) { transport.stop(); transport = null; }
     const data = await fetchTrajectory();
     renderSpikeBanner(data);
     charts = buildTrajectoryCharts($("chart-joints"), $("chart-ee"), data);
@@ -121,7 +123,12 @@ async function onReplayClick() {
     if (stale) await fetchTrajectory();
   } catch (e) { console.warn("Spike pre-check failed; proceeding to confirm:", e); }
 
-  if (traj && traj.spikes && traj.spikes.length) {
+  if (!traj) {
+    console.error("Cannot verify trajectory safety; replay blocked.");
+    alert("Could not compute the episode trajectory to check for velocity spikes. Replay is blocked until a preview succeeds.");
+    return;
+  }
+  if (traj.spikes && traj.spikes.length) {
     $("spike-msg").textContent =
       `${traj.spikes.length} frame(s) exceed the ${traj.max_joint_speed} rad/s limit ` +
       `(worst ${worstVelocity(traj).toFixed(1)} rad/s).`;
