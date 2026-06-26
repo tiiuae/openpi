@@ -7,6 +7,7 @@ absent) by injecting a fake factory.
 from __future__ import annotations
 
 import asyncio
+import logging
 import queue
 from pathlib import Path
 
@@ -20,6 +21,8 @@ from webapp.session import SessionManager
 from webapp.telemetry import QueueSink
 
 STATIC_DIR = Path(__file__).parent / "static"
+
+logger = logging.getLogger(__name__)
 
 
 def create_app(presets_dir: str | Path | None = None, runner_factory=None,
@@ -131,25 +134,36 @@ def create_app(presets_dir: str | Path | None = None, runner_factory=None,
                 await asyncio.sleep(0.5)
                 await ws.send_json({"type": "metrics", **metrics.snapshot()})
 
+        def start(kind: str, config: dict):
+            # Surface "a session is already running" (and any factory error) to
+            # the UI as a status event instead of killing the WS handler.
+            try:
+                session.start(kind, config, QueueSink(q))
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("Cannot start %s session: %s", kind, exc)
+                q.put({"type": "status", "kind": "error", "payload": {"message": str(exc)}})
+
         pump_task = asyncio.ensure_future(pump())
         metrics_task = asyncio.ensure_future(metrics_tick())
         try:
             while True:
                 cmd = await ws.receive_json()
                 action = cmd.get("action")
+                logger.info("WS command: %s", action)
                 if action == "start_live":
-                    session.start("live", cmd["config"], QueueSink(q))
+                    start("live", cmd["config"])
                 elif action == "start_replay":
-                    session.start("replay", cmd["config"], QueueSink(q))
+                    start("replay", cmd["config"])
                 elif action == "go_sleep":
-                    session.start("sleep", cmd.get("config", {}), QueueSink(q))
+                    start("sleep", cmd.get("config", {}))
                 elif action == "go_home":
-                    session.start("home", cmd.get("config", {}), QueueSink(q))
+                    start("home", cmd.get("config", {}))
                 elif action == "stop":
                     await loop.run_in_executor(None, session.stop)
                 elif action == "estop":
                     await loop.run_in_executor(None, session.estop)
         except WebSocketDisconnect:
+            logger.info("WS disconnected; stopping session")
             await loop.run_in_executor(None, session.stop)
         finally:
             pump_task.cancel()

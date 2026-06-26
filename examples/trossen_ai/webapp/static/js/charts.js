@@ -50,3 +50,36 @@ export function splitArms(names) {
   names.forEach((n,i)=> (n.startsWith('left_') ? left : right).push({ i, name:n.replace(/^(left_|right_)/,'') }));
   return { left, right };
 }
+
+// 14-D joint action ordering: left arm (7) then right arm (7). Matches the
+// bimanual follower's joint feature order used by the bridge.
+const JOINTS_7 = ['waist','shoulder','elbow','forearm_roll','wrist_angle','wrist_rotate','gripper'];
+export const JOINT_NAMES_14 = [
+  ...JOINTS_7.map(j => `left_${j}`),
+  ...JOINTS_7.map(j => `right_${j}`),
+];
+
+// Build per-arm streaming charts from a 14-D action vector. Returns
+// { charts:[LiveChart], pushAction(step, action14), update() }.
+// Each LiveChart owns one arm's 7 series; pushAction routes each global joint
+// index to the right chart + local series index.
+export function makeJointCharts(container, names = JOINT_NAMES_14, maxPts = 300) {
+  const { left, right } = splitArms(names);
+  const groups = [['Left arm', left], ['Right arm', right]].filter(([, g]) => g.length);
+  container.innerHTML = groups.map((_, gi) =>
+    `<div class="chart-wrap"><div class="chart-title">${groups[gi][0]}</div>
+       <div class="chart-cj-container"><canvas id="chart-joints-${gi}"></canvas></div></div>`
+  ).join('');
+  const charts = groups.map(([, g], gi) =>
+    ({ chart: new LiveChart(container.querySelector(`#chart-joints-${gi}`), g.map(s => s.name), maxPts),
+       members: g }));
+  return {
+    charts: charts.map(c => c.chart),
+    pushAction(step, action) {
+      if (!action || !action.length) return;
+      for (const { chart, members } of charts)
+        members.forEach((m, local) => chart.push(local, step, action[m.i]));
+    },
+    update() { for (const { chart } of charts) chart.update(); },
+  };
+}

@@ -13,7 +13,6 @@ from scipy.interpolate import PchipInterpolator
 
 from adapters import ActionSpaceAdapter, JointAdapter, extract_joints
 from robot_control import build_stationary_robot, limit_joint_velocity
-from webapp.log_bridge import SinkLogHandler
 from webapp.telemetry import NullSink, TelemetrySink
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
@@ -243,8 +242,8 @@ class TrossenOpenPIBridge:
         self.current_action_chunk = None
         self.is_running = True
         fallback = HoldLastAction()
-        log_handler = SinkLogHandler(self.sink)
-        logging.getLogger().addHandler(log_handler)
+        # Log forwarding is attached at the session level (webapp.session) for the
+        # whole run; attaching here too would double every line in the UI.
         if self.async_inference and not isinstance(self.adapter, JointAdapter):
             raise NotImplementedError("Async inference with EE decoding is not supported yet.")
         if self.ensemble is not None:
@@ -357,7 +356,6 @@ class TrossenOpenPIBridge:
                 logger.info(f"time: {loop_s * 1e3:.2f}ms ({1 / loop_s:.0f} Hz)")
 
         finally:
-            logging.getLogger().removeHandler(log_handler)
             if self.async_inference:
                 self._policy_worker.stop()
             if self.action_logger is not None:

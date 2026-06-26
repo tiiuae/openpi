@@ -46,19 +46,38 @@ class SessionManager:
             self._thread.start()
 
     def _run(self, kind: str, config: dict, sink) -> None:
+        # Forward all Python logging to the browser for the whole session so the
+        # UI sees arm connections, errors, and lifecycle — not just the inner
+        # episode loop (which is where the handler used to be attached).
+        from webapp.log_bridge import SinkLogHandler
+
+        handler = SinkLogHandler(sink)
+        handler.setLevel(logging.DEBUG)
+        root = logging.getLogger()
+        prev_level = root.level
+        root.addHandler(handler)
+        if prev_level == logging.NOTSET or prev_level > logging.INFO:
+            root.setLevel(logging.INFO)
+        logger.info("Session starting: kind=%s", kind)
         try:
             runner = self._factory(kind, config, sink)
             with self._lock:
                 self._runner = runner
             if self._stop_requested:
+                logger.info("Session %s: stop requested before run; cancelling", kind)
                 runner.stop()
                 return
             runner.run()
+            logger.info("Session %s: finished", kind)
         except Exception as exc:  # noqa: BLE001 — surface to UI, never crash the thread
+            logger.exception("Session %s crashed: %s", kind, exc)
             try:
                 sink.on_status("error", {"message": str(exc)})
             except Exception:
                 pass
+        finally:
+            root.removeHandler(handler)
+            root.setLevel(prev_level)
 
     def stop(self, timeout: float = 15.0) -> None:
         self._stop_requested = True

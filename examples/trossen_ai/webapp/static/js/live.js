@@ -1,12 +1,12 @@
 import { connect, send, onMessage, onOpen } from "./ws.js";
 import { renderConfig, readConfig, setDefaults } from "./config.js";
-import { LiveChart } from "./charts.js";
+import { makeJointCharts } from "./charts.js";
 import { setupLogs } from "./logs.js";
-import { setupControls } from "./controls.js";
+import { setupControls, setSessionActive } from "./controls.js";
 import { renderFeedback } from "./feedback.js";
 
 const $ = (id) => document.getElementById(id);
-let actionChart = null;
+let jointCharts = null;
 const f = (v) => (v == null ? "—" : Number(v).toFixed(1));
 
 document.addEventListener("DOMContentLoaded", () => {
@@ -17,17 +17,14 @@ document.addEventListener("DOMContentLoaded", () => {
   renderFeedback($("feedback-card"));
 
   try {
-    $("charts-box").innerHTML =
-      `<div class="chart-wrap"><div class="chart-title">Action (joint 0)</div>
-        <div class="chart-cj-container"><canvas id="chart-actions"></canvas></div></div>`;
-    actionChart = new LiveChart($("chart-actions"), ["joint 0"]);
-    setInterval(() => actionChart.update(), 200);
+    jointCharts = makeJointCharts($("charts-box"));
+    setInterval(() => jointCharts.update(), 200);
   } catch (err) {
     console.error("Chart init failed (charts disabled, telemetry still runs):", err);
     $("charts-box").innerHTML = '<div class="browser-msg err">Charts unavailable (chart library failed to load).</div>';
   }
 
-  onMessage("action", (e) => { if (actionChart && e.action?.length) actionChart.push(0, e.step, e.action[0]); });
+  onMessage("action", (e) => { if (jointCharts) jointCharts.pushAction(e.step, e.action); });
   onMessage("images", (e) => {
     const ib = $("images-box"); ib.innerHTML = "";
     for (const [name, b64] of Object.entries(e.images)) {
@@ -43,6 +40,7 @@ document.addEventListener("DOMContentLoaded", () => {
   $("btn-start").addEventListener("click", () => {
     const cfg = readConfig();
     if (cfg.mode === "autonomous" && !confirm("Autonomous mode moves the REAL robot. Continue?")) return;
+    setSessionActive(true);  // optimistic; status events keep it in sync
     send({ action: "start_live", config: cfg });
   });
 

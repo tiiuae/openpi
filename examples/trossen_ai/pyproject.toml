@@ -12,6 +12,10 @@ dependencies = [
     "openpi-client",
     "lerobot_trossen",
     "scipy>=1.10.1",
+    "rich>=13.0.0",
+    "placo>=0.6,<0.9",
+    "fastapi>=0.110.0",
+    "uvicorn[standard]>=0.29.0",
 ]
 
 [tool.uv]
