@@ -12,8 +12,10 @@ export function setSessionActive(active) {
   const start = $("btn-start"), stop = $("btn-stop");
   if (start) start.disabled = active;
   if (stop) stop.disabled = !active;
-  // Home/Sleep also occupy the single session slot.
-  ["btn-home", "btn-sleep"].forEach((id) => { const b = $(id); if (b) b.disabled = active; });
+  // Home/Sleep/Replay also occupy the single session slot, so disable them
+  // while a session runs (Stop + E-STOP stay enabled). Preview is off-robot,
+  // so it stays clickable.
+  ["btn-home", "btn-sleep", "btn-replay"].forEach((id) => { const b = $(id); if (b) b.disabled = active; });
 }
 
 export function setupControls() {

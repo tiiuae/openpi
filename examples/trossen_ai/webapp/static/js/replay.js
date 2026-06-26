@@ -6,6 +6,7 @@ import { setupControls } from "./controls.js";
 import { renderFeedback } from "./feedback.js";
 import { UrdfView } from "./urdf_view.js";
 import { buildTrajectoryCharts, Transport } from "./trajectory.js";
+import { JOINT_NAMES_14 } from "./charts.js";
 
 const $ = (id) => document.getElementById(id);
 
@@ -119,18 +120,29 @@ async function buildPreview() {
 function renderSpikeBanner(data) {
   const b = $("spike-banner");
   if (data.spikes && data.spikes.length) {
-    b.textContent = `⚠ ${data.spikes.length} velocity spike(s) — replay may damage the robot`;
+    const p = peakSpike(data);
+    b.textContent =
+      `⚠ ${data.spikes.length} velocity spike(s) — peak ${p.value.toFixed(1)} rad/s` +
+      ` on ${p.joint} at frame ${p.frame} (limit ${data.max_joint_speed} rad/s).` +
+      ` Replay may damage the robot.`;
     b.style.display = "block";
   } else {
     b.style.display = "none";
   }
 }
 
-function worstVelocity(data) {
-  let worst = 0;
-  for (const t of data.spikes) for (const v of data.velocity[t]) if (v > worst) worst = v;
-  return worst;
+// Peak per-joint velocity across all spike frames, with which joint and frame.
+function peakSpike(data) {
+  let value = 0, frame = data.spikes[0] ?? 0, jointIdx = 0;
+  for (const t of data.spikes) {
+    for (let j = 0; j < data.velocity[t].length; j++) {
+      if (data.velocity[t][j] > value) { value = data.velocity[t][j]; frame = t; jointIdx = j; }
+    }
+  }
+  return { value, frame, joint: JOINT_NAMES_14[jointIdx] ?? `joint ${jointIdx}` };
 }
+
+function worstVelocity(data) { return peakSpike(data).value; }
 
 // Replay button: ensure spike data exists, gate if spiky, else go.
 async function onReplayClick() {

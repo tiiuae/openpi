@@ -79,4 +79,14 @@ class EEToJointsConverter:
             full[C.RIGHT_GRIPPER_IDX] = gr
             out[i] = full
             fb_l, fb_r = jl, jr  # next-row fallback = this row's joints
+
+        # Kill residual ±2π/branch wraps on the revolute joints: pick, per joint,
+        # the 2π-equivalent angle nearest the previous frame. This removes the
+        # single-frame "line" jumps (a wrist flipping by ~2π) that look like an
+        # aggressive move while the EE pose is actually unchanged. Grippers
+        # (prismatic, metres) are left alone.
+        rev_idx = list(C.OBS_LEFT_JOINTS) + list(C.OBS_RIGHT_JOINTS)
+        if len(out) > 1:
+            out[:, rev_idx] = np.unwrap(out[:, rev_idx].astype(np.float64),
+                                        axis=0).astype(np.float32)
         return out

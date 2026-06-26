@@ -125,7 +125,9 @@ class ReplayRunner:
         mode = cfg.get("mode", "test")
         reader = EpisodeReader(cfg["dataset_dir"])
         episode = reader.read_episode(int(cfg.get("episode_index", 0)))
-        control_freq = int(cfg.get("control_freq") or episode.fps)
+        # NB: cfg values arrive as strings; "0" is truthy, so coerce to int
+        # *before* falling back to the episode fps (else dt = 1/0).
+        control_freq = int(cfg.get("control_freq") or 0) or int(episode.fps)
         max_joint_speed = float(cfg.get("max_joint_speed", 3.0))
         converter = EEToJointsConverter(
             make_kinematics(),

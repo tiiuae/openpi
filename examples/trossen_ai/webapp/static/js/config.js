@@ -85,7 +85,7 @@ function fieldHtml(f) {
 function modeHtml() {
   return `<section class="card"><h2>Run</h2>
     <div class="field-inline"><label>Mode</label>
-      <select id="mode-select"><option value="test">test (no movement)</option><option value="autonomous">autonomous</option></select></div>
+      <select id="mode-select"><option value="test">Dry run — no robot</option><option value="autonomous">Run on real robot</option></select></div>
     <div class="run-controls">
       <button class="btn-primary" id="btn-start">Start Live</button>
       <button class="btn-outline" id="btn-stop">Stop</button>
