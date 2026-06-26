@@ -1,13 +1,18 @@
 import { api } from "./api.js";
 import { connect, send, onMessage, onOpen } from "./ws.js";
 import { setupFileBrowser, openFileBrowser } from "./filebrowser.js";
-import { LiveChart } from "./charts.js";
 import { setupLogs } from "./logs.js";
 import { setupControls } from "./controls.js";
 import { renderFeedback } from "./feedback.js";
+import { UrdfView } from "./urdf_view.js";
+import { buildTrajectoryCharts, Transport } from "./trajectory.js";
 
 const $ = (id) => document.getElementById(id);
-let chart = null;
+
+let view = null;          // UrdfView
+let traj = null;          // last fetched trajectory payload
+let charts = null;        // { charts, setCursor }
+let transport = null;     // Transport
 
 document.addEventListener("DOMContentLoaded", () => {
   setupFileBrowser();
@@ -16,26 +21,29 @@ document.addEventListener("DOMContentLoaded", () => {
   renderFeedback($("feedback-card"));
 
   try {
-    $("charts-box").innerHTML =
-      `<div class="chart-wrap"><div class="chart-title">Replayed action (joint 0)</div>
-        <div class="chart-cj-container"><canvas id="chart-actions"></canvas></div></div>`;
-    chart = new LiveChart($("chart-actions"), ["joint 0"]);
-    setInterval(() => chart.update(), 200);
-  } catch (err) {
-    console.error("Chart init failed (charts disabled, telemetry still runs):", err);
-    $("charts-box").innerHTML = '<div class="browser-msg err">Charts unavailable (chart library failed to load).</div>';
+    view = new UrdfView($("urdf-canvas"));
+    view.load().catch((e) => console.warn("URDF load failed:", e));
+  } catch (e) {
+    console.warn("3D viewer unavailable:", e);
   }
+
+  $("cam-views").addEventListener("click", (e) => {
+    const v = e.target.dataset.view;
+    if (v && view) view.snapView(v);
+  });
 
   $("btn-browse-dataset").addEventListener("click", () => openFileBrowser($("dataset_dir")));
   $("dataset_dir").addEventListener("change", loadEpisodes);
-  $("btn-replay").addEventListener("click", () => {
-    const cfg = { dataset_dir: $("dataset_dir").value, episode_index: $("episode-select").value,
-                  mode: $("mode-select").value };
-    if (cfg.mode === "autonomous" && !confirm("Replay will move the REAL robot. Continue?")) return;
-    send({ action: "start_replay", config: cfg });
-  });
+  $("btn-preview").addEventListener("click", buildPreview);
+  $("btn-replay").addEventListener("click", onReplayClick);
 
-  onMessage("action", (e) => { if (chart && e.action?.length) chart.push(0, e.step, e.action[0]); });
+  // Spike modal wiring.
+  $("spike-ack").addEventListener("change", (e) => { $("spike-confirm").disabled = !e.target.checked; });
+  $("spike-cancel").addEventListener("click", () => ($("modal-spike").style.display = "none"));
+  $("spike-confirm").addEventListener("click", () => { $("modal-spike").style.display = "none"; startReplay(); });
+
+  // During a real hardware replay, advance the transport cursor from telemetry.
+  onMessage("action", (e) => { if (transport && e.step != null) transport.seek(e.step); });
   onOpen(() => {});
   connect();
 });
@@ -46,5 +54,87 @@ async function loadEpisodes() {
     const info = await api(`/api/episodes?dataset_dir=${encodeURIComponent(dir)}`);
     $("episode-select").innerHTML = Array.from({ length: info.total_episodes }, (_, i) =>
       `<option value="${i}">Episode ${i}</option>`).join("");
-  } catch (e) { /* errors surface via the logs panel / network tab */ }
+  } catch (e) { /* surfaced via logs */ }
+}
+
+function trajUrl() {
+  const p = new URLSearchParams({
+    dataset_dir: $("dataset_dir").value,
+    episode_index: $("episode-select").value || "0",
+    control_freq: "0",      // 0 -> backend uses episode fps
+    max_joint_speed: "3.0",
+  });
+  return `/api/episode_trajectory?${p}`;
+}
+
+async function fetchTrajectory() {
+  const data = await api(trajUrl());
+  data._dataset = $("dataset_dir").value;
+  data._ep = $("episode-select").value;
+  traj = data;
+  return data;
+}
+
+async function buildPreview() {
+  $("btn-preview").textContent = "Computing…"; $("btn-preview").disabled = true;
+  try {
+    const data = await fetchTrajectory();
+    renderSpikeBanner(data);
+    charts = buildTrajectoryCharts($("chart-joints"), $("chart-ee"), data);
+    transport = new Transport({
+      nFrames: data.n_frames, fps: data.fps,
+      els: { play: $("tp-play"), stop: $("tp-stop"), slider: $("tp-slider"),
+             readout: $("tp-readout"), speed: $("tp-speed") },
+      onFrame: (i) => {
+        charts.setCursor(i);
+        if (view) view.setFrameJoints(data.joints_clamped[i]);
+      },
+    });
+  } catch (e) {
+    console.error("Preview failed:", e);
+  } finally {
+    $("btn-preview").textContent = "Preview"; $("btn-preview").disabled = false;
+  }
+}
+
+function renderSpikeBanner(data) {
+  const b = $("spike-banner");
+  if (data.spikes && data.spikes.length) {
+    b.textContent = `⚠ ${data.spikes.length} velocity spike(s) — replay may damage the robot`;
+    b.style.display = "block";
+  } else {
+    b.style.display = "none";
+  }
+}
+
+function worstVelocity(data) {
+  let worst = 0;
+  for (const t of data.spikes) for (const v of data.velocity[t]) if (v > worst) worst = v;
+  return worst;
+}
+
+// Replay button: ensure spike data exists, gate if spiky, else go.
+async function onReplayClick() {
+  try {
+    const stale = !traj || traj._dataset !== $("dataset_dir").value ||
+                  String(traj._ep) !== String($("episode-select").value);
+    if (stale) await fetchTrajectory();
+  } catch (e) { console.warn("Spike pre-check failed; proceeding to confirm:", e); }
+
+  if (traj && traj.spikes && traj.spikes.length) {
+    $("spike-msg").textContent =
+      `${traj.spikes.length} frame(s) exceed the ${traj.max_joint_speed} rad/s limit ` +
+      `(worst ${worstVelocity(traj).toFixed(1)} rad/s).`;
+    $("spike-ack").checked = false; $("spike-confirm").disabled = true;
+    $("modal-spike").style.display = "flex";
+    return;
+  }
+  startReplay();
+}
+
+function startReplay() {
+  const cfg = { dataset_dir: $("dataset_dir").value, episode_index: $("episode-select").value,
+                mode: $("mode-select").value };
+  if (cfg.mode === "autonomous" && !confirm("Replay will move the REAL robot. Continue?")) return;
+  send({ action: "start_replay", config: cfg });
 }
