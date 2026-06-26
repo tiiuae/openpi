@@ -6,6 +6,16 @@
   <link rel="stylesheet" href="/static/theme.css">
   <script src="/static/vendor/chart.umd.min.js"></script>
   <script src="/static/vendor/chartjs-plugin-zoom.min.js"></script>
+  <script type="importmap">
+  {
+    "imports": {
+      "three":               "https://cdn.jsdelivr.net/npm/three@0.169.0/build/three.module.js",
+      "three/addons/":       "https://cdn.jsdelivr.net/npm/three@0.169.0/examples/jsm/",
+      "three/examples/jsm/": "https://cdn.jsdelivr.net/npm/three@0.169.0/examples/jsm/",
+      "urdf-loader":         "/static/vendor/URDFLoader.js"
+    }
+  }
+  </script>
 </head>
 <body>
   <header class="app-header">
@@ -33,7 +43,36 @@
       </section>
     </aside>
     <main class="live-main">
-      <section class="card"><h2>Episode actions</h2><div class="charts-grid" id="charts-box"></div></section>
+      <section class="card">
+        <div class="preview-hdr">
+          <h2>Episode preview</h2>
+          <button class="btn-outline" id="btn-preview">Preview</button>
+        </div>
+        <div class="spike-banner" id="spike-banner" style="display:none"></div>
+        <div class="urdf-wrap"><canvas id="urdf-canvas"></canvas>
+          <div class="cam-views" id="cam-views">
+            <button class="btn-sm" data-view="iso">Iso</button>
+            <button class="btn-sm" data-view="front">Front</button>
+            <button class="btn-sm" data-view="top">Top</button>
+            <button class="btn-sm" data-view="left">L</button>
+            <button class="btn-sm" data-view="right">R</button>
+          </div>
+        </div>
+        <div class="chart-cj-container"><canvas id="chart-joints"></canvas></div>
+        <div class="chart-cj-container"><canvas id="chart-ee"></canvas></div>
+        <div class="transport" id="transport">
+          <button class="btn-sm" id="tp-play">▶ Play</button>
+          <button class="btn-sm" id="tp-stop">⏹ Stop</button>
+          <input type="range" id="tp-slider" min="0" max="0" value="0" style="flex:1">
+          <span id="tp-readout" class="counter">— / —</span>
+          <label>Speed
+            <select id="tp-speed">
+              <option value="0.25">0.25×</option><option value="0.5">0.5×</option>
+              <option value="1" selected>1×</option><option value="2">2×</option>
+            </select>
+          </label>
+        </div>
+      </section>
       <section class="card"><div class="log-header"><h2>Logs</h2><button class="btn-sm" id="btn-clear-log">Clear</button></div>
         <div class="log-panel" id="log-box"></div></section>
       <section class="card" id="feedback-card"></section>
@@ -46,6 +85,22 @@
       <div class="browser-path-bar"><span class="browser-path-text" id="browser-current-path"></span></div>
       <div class="browser-entries" id="browser-entries"></div>
       <div class="modal-footer"><button class="btn-primary" id="btn-select-dir">Select this folder</button></div>
+    </div>
+  </div>
+  <div class="modal-overlay" id="modal-spike" style="display:none">
+    <div class="modal-box">
+      <div class="modal-titlebar" style="background:#5a1111">⚠ Velocity spikes detected</div>
+      <div style="padding:16px">
+        <p id="spike-msg" style="color:#ffb4b4"></p>
+        <p>Replaying this episode may command an aggressive movement and damage the robot.</p>
+        <label style="display:flex;gap:8px;align-items:center;margin-top:12px">
+          <input type="checkbox" id="spike-ack"> I understand the risk, run anyway
+        </label>
+      </div>
+      <div class="modal-footer">
+        <button class="btn-outline" id="spike-cancel">Cancel</button>
+        <button class="btn-danger" id="spike-confirm" disabled>Replay Episode</button>
+      </div>
     </div>
   </div>
   <script type="module" src="/static/js/replay.js"></script>
