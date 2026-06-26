@@ -123,17 +123,25 @@ def create_app(presets_dir: str | Path | None = None, runner_factory=None,
     def episode_trajectory(dataset_dir: str, episode_index: int = 0,
                            control_freq: int = 0, max_joint_speed: float = 3.0,
                            ik_orientation_weight: float = 0.01, ik_pos_tol_m: float = 1e-3):
+        from fastapi import HTTPException
         from webapp import episode_preview  # lazy: pulls IK/dataset deps on demand
         # Pure off-robot preview: the trajectory is computed by IK only. We never
         # connect the arm here (connecting wakes/homes it). Frame-0 IK is seeded
         # from the home pose, exactly like the test-mode runner.
-        return episode_preview.build_trajectory(
-            dataset_dir=dataset_dir, episode_index=int(episode_index),
-            control_freq=int(control_freq), max_joint_speed=float(max_joint_speed),
-            seed_joints=None,
-            ik_orientation_weight=float(ik_orientation_weight),
-            ik_pos_tol_m=float(ik_pos_tol_m),
-        )
+        try:
+            return episode_preview.build_trajectory(
+                dataset_dir=dataset_dir, episode_index=int(episode_index),
+                control_freq=int(control_freq), max_joint_speed=float(max_joint_speed),
+                seed_joints=None,
+                ik_orientation_weight=float(ik_orientation_weight),
+                ik_pos_tol_m=float(ik_pos_tol_m),
+            )
+        except Exception as exc:  # noqa: BLE001 — report the reason to the UI
+            # e.g. a dataset without EE action columns, an unreadable episode, or
+            # an IK/placo failure. Surface it as a 400 with the message so the
+            # Preview page can show why instead of silently dropping the chart.
+            logger.warning("episode_trajectory failed: %s", exc)
+            raise HTTPException(status_code=400, detail=f"{type(exc).__name__}: {exc}")
 
     @app.websocket("/ws/telemetry")
     async def telemetry_ws(ws: WebSocket):

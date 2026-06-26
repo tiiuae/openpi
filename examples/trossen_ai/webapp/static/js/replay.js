@@ -99,7 +99,8 @@ async function buildPreview() {
     if (charts) { charts.charts.forEach((c) => c.destroy()); charts = null; }
     if (transport) { transport.destroy(); transport = null; }
     const data = await fetchTrajectory();
-    renderSpikeBanner(data);
+    // Build the charts/transport FIRST so a later (cosmetic) banner error can
+    // never leave the page chart-less.
     charts = buildTrajectoryCharts($("chart-joints"), $("chart-ee"), data);
     transport = new Transport({
       nFrames: data.n_frames, fps: data.fps,
@@ -110,11 +111,22 @@ async function buildPreview() {
         if (view) view.setFrameJoints(data.joints_clamped[i]);
       },
     });
+    renderSpikeBanner(data);
   } catch (e) {
     console.error("Preview failed:", e);
+    showPreviewError(e);
   } finally {
     $("btn-preview").textContent = "Preview"; $("btn-preview").disabled = false;
   }
+}
+
+// Show a preview failure prominently (reuses the red spike banner) so a 400/500
+// from the trajectory endpoint never just silently drops the chart.
+function showPreviewError(e) {
+  const b = $("spike-banner");
+  if (!b) return;
+  b.textContent = `⚠ Preview failed — ${e?.message || e}`;
+  b.style.display = "block";
 }
 
 function renderSpikeBanner(data) {
