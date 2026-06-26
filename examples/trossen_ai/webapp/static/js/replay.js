@@ -120,8 +120,8 @@ async function onReplayClick() {
   try {
     const stale = !traj || traj._dataset !== $("dataset_dir").value ||
                   String(traj._ep) !== String($("episode-select").value);
-    if (stale) await fetchTrajectory();
-  } catch (e) { console.warn("Spike pre-check failed; proceeding to confirm:", e); }
+    if (stale) { traj = null; await fetchTrajectory(); }
+  } catch (e) { console.warn("Spike pre-check failed; replay will be blocked:", e); }
 
   if (!traj) {
     console.error("Cannot verify trajectory safety; replay blocked.");
