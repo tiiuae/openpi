@@ -18,16 +18,51 @@ const cursorPlugin = {
     ctx.restore();
   },
 };
-if (typeof Chart !== "undefined") Chart.register(cursorPlugin);
+
+// Chart.js plugin: faint vertical lines at every velocity-spike frame in
+// chart.$spikes (a list of x data values). Marks exactly where the decoded
+// joint trajectory exceeds the velocity limit, full chart height.
+const spikePlugin = {
+  id: "spikeMarkers",
+  beforeDatasetsDraw(chart) {
+    const spikes = chart.$spikes;
+    if (!spikes || !spikes.length) return;
+    const { top, bottom } = chart.chartArea;
+    const ctx = chart.ctx;
+    ctx.save();
+    ctx.lineWidth = 1;
+    ctx.strokeStyle = "rgba(255,85,85,0.35)";
+    for (const t of spikes) {
+      const x = chart.scales.x.getPixelForValue(t);
+      ctx.beginPath();
+      ctx.moveTo(x, top); ctx.lineTo(x, bottom);
+      ctx.stroke();
+    }
+    ctx.restore();
+  },
+};
+if (typeof Chart !== "undefined") Chart.register(cursorPlugin, spikePlugin);
 
 const FONT = { size: 9, family: "Consolas,Menlo,Monaco,monospace" };
 function baseOpts(title) {
   return {
     animation: false, maintainAspectRatio: false, responsive: true, parsing: false,
-    interaction: { mode: "index", intersect: false },
+    // Nearest single-point hover: an index tooltip over 14×2 series renders a
+    // giant box that covers the whole chart. Nearest shows just the series
+    // under the cursor, so the readout stays small and out of the way.
+    interaction: { mode: "nearest", axis: "x", intersect: false },
     plugins: {
       legend: { labels: { color: "#8b949e", boxWidth: 10, font: FONT }, position: "bottom" },
       title: { display: true, text: title, color: "#8b949e", font: FONT },
+      tooltip: {
+        backgroundColor: "#161b22", borderColor: "#30363d", borderWidth: 1,
+        titleColor: "#8b949e", bodyColor: "#e6edf3", bodyFont: FONT, caretPadding: 8,
+      },
+      // Wheel-zoom + drag-pan on the time axis (matches the Live charts).
+      zoom: {
+        pan: { enabled: true, mode: "x" },
+        zoom: { wheel: { enabled: true }, pinch: { enabled: true }, mode: "x" },
+      },
     },
     scales: {
       x: { type: "linear", ticks: { color: "#484f58", font: FONT }, grid: { color: "#21262d" } },
@@ -65,7 +100,7 @@ function buildChart(canvas, title, series, spikeSeries) {
 // Build the two preview charts from a /api/episode_trajectory payload.
 // Returns { charts:[Chart], setCursor(frameIdx) }.
 export function buildTrajectoryCharts(jointsCanvas, eeCanvas, data) {
-  if (typeof Chart !== "undefined") Chart.register(cursorPlugin);
+  if (typeof Chart !== "undefined") Chart.register(cursorPlugin, spikePlugin);
   const N = data.n_frames;
   // Joints chart: 14 series, raw vs clamped. Spikes plotted on joint 0's clamped y.
   const jointSeries = JOINT_NAMES_14.map((label, j) => ({
@@ -75,6 +110,7 @@ export function buildTrajectoryCharts(jointsCanvas, eeCanvas, data) {
   }));
   const spikePoints = data.spikes.map((t) => ({ x: t, y: data.joints_clamped[t][0] }));
   const jointsChart = buildChart(jointsCanvas, "Joint angles (rad)", jointSeries, spikePoints);
+  jointsChart.$spikes = data.spikes;  // drives the vertical spike-marker plugin
 
   // EE position chart: 6 series (L/R × x/y/z). Recorded EE, so clamped == raw.
   const axes = ["x", "y", "z"];

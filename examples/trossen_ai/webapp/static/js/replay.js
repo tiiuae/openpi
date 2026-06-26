@@ -57,12 +57,29 @@ async function loadEpisodes() {
   } catch (e) { /* surfaced via logs */ }
 }
 
+// Read the Replay-config card. Numbers come back as strings; the backend casts.
+function readReplayConfig() {
+  const num = (id) => $(id)?.value ?? "";
+  return {
+    control_freq: num("cf_control_freq") || "0",   // 0 -> backend uses episode fps
+    max_joint_speed: num("cf_max_joint_speed") || "3.0",
+    ik_orientation_weight: num("cf_ik_orientation_weight") || "0.01",
+    ik_pos_tol_m: num("cf_ik_pos_tol_m") || "0.001",
+    min_time_to_move_multiplier: num("cf_min_time_to_move_multiplier") || "3.0",
+    loop_rate: num("cf_loop_rate") || "30",
+    smooth_streaming: $("cf_smooth_streaming")?.checked ? "1" : "",
+  };
+}
+
 function trajUrl() {
+  const c = readReplayConfig();
   const p = new URLSearchParams({
     dataset_dir: $("dataset_dir").value,
     episode_index: $("episode-select").value || "0",
-    control_freq: "0",      // 0 -> backend uses episode fps
-    max_joint_speed: "3.0",
+    control_freq: c.control_freq,
+    max_joint_speed: c.max_joint_speed,
+    ik_orientation_weight: c.ik_orientation_weight,
+    ik_pos_tol_m: c.ik_pos_tol_m,
   });
   return `/api/episode_trajectory?${p}`;
 }
@@ -146,7 +163,7 @@ async function onReplayClick() {
 
 function startReplay() {
   const cfg = { dataset_dir: $("dataset_dir").value, episode_index: $("episode-select").value,
-                mode: $("mode-select").value };
+                mode: $("mode-select").value, ...readReplayConfig() };
   if (cfg.mode === "autonomous" && !confirm("Replay will move the REAL robot. Continue?")) return;
   send({ action: "start_replay", config: cfg });
 }

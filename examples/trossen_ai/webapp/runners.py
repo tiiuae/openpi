@@ -122,6 +122,7 @@ class ReplayRunner:
         from robot_control import RobotController, build_stationary_robot, limit_joint_velocity
 
         cfg = self._config
+        mode = cfg.get("mode", "test")
         reader = EpisodeReader(cfg["dataset_dir"])
         episode = reader.read_episode(int(cfg.get("episode_index", 0)))
         control_freq = int(cfg.get("control_freq") or episode.fps)
@@ -134,13 +135,34 @@ class ReplayRunner:
         if self._stopped:
             self._sink.on_status("stopped", {"reason": "cancelled"})
             return
+
+        # Test mode is a pure dry run: NEVER connect the arm (connecting wakes/
+        # homes it). Seed IK from the home pose and stream the decoded+clamped
+        # trajectory to the UI without any hardware. Only autonomous mode builds
+        # and moves the real robot.
+        if mode != "autonomous":
+            cur = np.zeros(14, dtype=float)
+            joints = converter.decode_chunk(episode.ee_chunk16, cur)
+            dt = 1.0 / control_freq
+            last = np.asarray(joints[0], dtype=float).flatten()
+            self._sink.on_action(0, last, time.time())
+            for step, a_t in enumerate(joints[1:], start=1):
+                if self._stopped:
+                    break
+                a_cmd = limit_joint_velocity(last, a_t, dt, max_joint_speed)
+                last = a_cmd
+                self._sink.on_action(step, np.asarray(a_cmd), time.time())
+                time.sleep(dt)
+            self._sink.on_status("stopped", {"reason": "test_complete"})
+            return
+
         robot = build_stationary_robot(
             with_cameras=False,
             min_time_to_move_multiplier=float(cfg.get("min_time_to_move_multiplier", 3.0)),
             loop_rate=int(cfg.get("loop_rate", 30)),
         )
         self._controller = RobotController(
-            robot, control_frequency=control_freq, test_mode=cfg.get("mode", "test"),
+            robot, control_frequency=control_freq, test_mode=mode,
             smooth_streaming=bool(cfg.get("smooth_streaming", False)),
         )
         try:

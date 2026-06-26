@@ -53,23 +53,32 @@ def _default_reader_factory(dataset_dir):
     return EpisodeReader(dataset_dir)
 
 
-def _default_converter_factory():
+def _default_converter_factory(ik_orientation_weight=0.01, ik_pos_tol_m=1e-3):
     from external.joint_to_ee.ee_to_joints import EEToJointsConverter
     from external.joint_to_ee.kinematics import make_kinematics
-    return EEToJointsConverter(make_kinematics())
+    # Same IK knobs the ReplayRunner uses, so the preview matches what the
+    # hardware path would decode. orientation_weight in particular governs how
+    # tightly the wrist tracks recorded orientation (low values let redundant
+    # wrist DOFs drift -> "EE smooth, joints aggressive" branch flips).
+    return EEToJointsConverter(make_kinematics(),
+                               orientation_weight=float(ik_orientation_weight),
+                               pos_tol_m=float(ik_pos_tol_m))
 
 
 def build_trajectory(dataset_dir, episode_index, control_freq, max_joint_speed,
-                     seed_joints=None, reader_factory=None, converter_factory=None):
+                     seed_joints=None, ik_orientation_weight=0.01, ik_pos_tol_m=1e-3,
+                     reader_factory=None, converter_factory=None):
     """Return a JSON-able dict describing one episode's joint/EE trajectory.
 
     reader_factory(dataset_dir) -> reader with .read_episode(idx) -> episode
         having .ee_chunk16 (N,16) and .fps. converter_factory() -> object with
         .decode_chunk(chunk16, seed14) -> (N,14). Both default to the real,
         robot-free implementations; injected in tests to avoid placo/URDF.
+        The default converter is built with the supplied IK weights.
     """
     reader = (reader_factory or _default_reader_factory)(dataset_dir)
-    converter = (converter_factory or _default_converter_factory)()
+    converter = (converter_factory() if converter_factory is not None
+                 else _default_converter_factory(ik_orientation_weight, ik_pos_tol_m))
     episode = reader.read_episode(int(episode_index))
 
     seed = (np.asarray(seed_joints, dtype=np.float32).flatten()

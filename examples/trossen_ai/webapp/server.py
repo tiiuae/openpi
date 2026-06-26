@@ -121,24 +121,18 @@ def create_app(presets_dir: str | Path | None = None, runner_factory=None,
 
     @app.get("/api/episode_trajectory")
     def episode_trajectory(dataset_dir: str, episode_index: int = 0,
-                           control_freq: int = 0, max_joint_speed: float = 3.0):
+                           control_freq: int = 0, max_joint_speed: float = 3.0,
+                           ik_orientation_weight: float = 0.01, ik_pos_tol_m: float = 1e-3):
         from webapp import episode_preview  # lazy: pulls IK/dataset deps on demand
-        # Best-effort live seed: only when idle and a robot can be read cheaply.
-        seed = None
-        if not session.is_running():
-            try:
-                from robot_control import build_stationary_robot, RobotController
-                robot = build_stationary_robot(with_cameras=False)
-                try:
-                    seed = RobotController(robot).current_joints14().tolist()
-                finally:
-                    robot.disconnect()
-            except Exception:  # noqa: BLE001 — no robot / busy: fall back to home seed
-                seed = None
+        # Pure off-robot preview: the trajectory is computed by IK only. We never
+        # connect the arm here (connecting wakes/homes it). Frame-0 IK is seeded
+        # from the home pose, exactly like the test-mode runner.
         return episode_preview.build_trajectory(
             dataset_dir=dataset_dir, episode_index=int(episode_index),
             control_freq=int(control_freq), max_joint_speed=float(max_joint_speed),
-            seed_joints=seed,
+            seed_joints=None,
+            ik_orientation_weight=float(ik_orientation_weight),
+            ik_pos_tol_m=float(ik_pos_tol_m),
         )
 
     @app.websocket("/ws/telemetry")
