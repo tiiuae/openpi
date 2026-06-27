@@ -13,6 +13,7 @@ dataset-replay tool and a browser **web app** for running and observing both.
 | Doc | What's in it |
 |---|---|
 | [Architecture](architecture.md) | How the pieces fit: control core, EE/IK, dataset replay, web app; data flow; threading model; module-by-module reference. |
+| [RobotController & the control chain](robot-controller.md) | Deep dive on how an action becomes motion: layers down to the motor firmware, every `RobotController` function/argument, and how each config knob (`goal_time`, smooth streaming, velocity cap, …) changes the motion. |
 | [CLI — Live policy](cli-live.md) | Run a policy from the terminal (no web app): `main.py` (joint) / `main_ee.py` (end-effector), arguments, test vs autonomous. |
 | [CLI — Dataset replay](cli-replay.md) | Replay a recorded episode from the terminal (no web app, no policy server): `replay_ee_dataset.py`, the sleep helper. |
 | [Motion & Safety](motion-safety.md) | Firmware velocity limit, the IK branch-flip fault, the velocity limiter, smooth streaming, the firmware-fault guard, and all tuning knobs. |
