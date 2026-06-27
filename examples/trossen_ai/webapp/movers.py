@@ -48,16 +48,14 @@ class _PoseMover:
                 return
             logger.info("%s mover: moving to target over 5s…", self._kind)
             self._controller.move_to_start_position(self._goal(), duration=5.0)
-            logger.info("%s mover: target reached; holding until stop", self._kind)
-            # Block (no further commands) until the user stops. The arm holds the
-            # commanded pose via servo torque; disconnecting is deferred so the
-            # driver's park sequence doesn't fire the moment we arrive.
-            self._stop.wait()
+            # Auto-release once the pose is reached — no manual Stop required. The
+            # session ends here and the UI returns to idle on the "stopped" status
+            # below. If an E-STOP arrived during the 5s move, sleep first.
             if self._estop:
                 logger.warning("%s mover: E-STOP — moving to sleep before release", self._kind)
                 self._controller.move_to_sleep_position(duration=10.0)
             else:
-                logger.info("%s mover: stop received; releasing", self._kind)
+                logger.info("%s mover: target reached; releasing", self._kind)
         finally:
             self._controller.disconnect()
             logger.info("%s mover: robot disconnected", self._kind)

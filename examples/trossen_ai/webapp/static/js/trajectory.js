@@ -43,6 +43,17 @@ const spikePlugin = {
 };
 if (typeof Chart !== "undefined") Chart.register(cursorPlugin, spikePlugin);
 
+// Pin the hover tooltip to the chart's top-left corner instead of letting it
+// follow the cursor. With many series the default floating box lands in the
+// middle of the plot and hides the data underneath; a fixed corner keeps the
+// readout visible without covering the trace.
+if (typeof Chart !== "undefined" && Chart.Tooltip) {
+  Chart.Tooltip.positioners.corner = function () {
+    const area = this.chart.chartArea;
+    return { x: area.left + 6, y: area.top + 6 };
+  };
+}
+
 const FONT = { size: 9, family: "Consolas,Menlo,Monaco,monospace" };
 function baseOpts(title) {
   return {
@@ -55,6 +66,7 @@ function baseOpts(title) {
       legend: { labels: { color: "#8b949e", boxWidth: 10, font: FONT }, position: "bottom" },
       title: { display: true, text: title, color: "#8b949e", font: FONT },
       tooltip: {
+        position: "corner",  // pinned top-left; never covers the plotted trace
         backgroundColor: "#161b22", borderColor: "#30363d", borderWidth: 1,
         titleColor: "#8b949e", bodyColor: "#e6edf3", bodyFont: FONT, caretPadding: 8,
       },
@@ -97,9 +109,42 @@ function buildChart(canvas, title, series, spikeSeries) {
   return new Chart(canvas, { type: "line", data: { datasets }, options: baseOpts(title) });
 }
 
-// Build the two preview charts from a /api/episode_trajectory payload.
+// Joint-velocity chart: 14 raw per-step speed series, a dashed horizontal limit
+// line at max_joint_speed, and a triangle marker on each spike frame (placed at
+// that frame's peak joint speed). Vertical spike markers come from $spikes.
+function buildVelocityChart(canvas, data) {
+  const N = data.n_frames;
+  const limit = data.max_joint_speed;
+  const datasets = JOINT_NAMES_14.map((label, j) => ({
+    label, borderColor: PALETTE[j % PALETTE.length], borderWidth: 1, pointRadius: 0, tension: 0,
+    data: Array.from({ length: N }, (_, t) => ({ x: t, y: data.velocity[t][j] })),
+  }));
+  // Dashed limit line spanning the full time axis.
+  datasets.push({
+    label: `limit ${limit}`, borderColor: "#ff5555", borderWidth: 1.5,
+    borderDash: [6, 4], pointRadius: 0,
+    data: [{ x: 0, y: limit }, { x: Math.max(0, N - 1), y: limit }],
+  });
+  // One triangle per spike frame, sitting at that frame's worst joint speed.
+  const spikePoints = data.spikes.map((t) => ({
+    x: t, y: Math.max(...data.velocity[t]),
+  }));
+  if (spikePoints.length) {
+    datasets.push({
+      label: "⚠ spike", type: "scatter", showLine: false,
+      pointRadius: 4, pointStyle: "triangle",
+      backgroundColor: "#ff5555", borderColor: "#ff5555",
+      data: spikePoints,
+    });
+  }
+  const chart = new Chart(canvas, { type: "line", data: { datasets }, options: baseOpts("Joint velocity (rad/s)") });
+  chart.$spikes = data.spikes;  // vertical spike-marker plugin
+  return chart;
+}
+
+// Build the preview charts from a /api/episode_trajectory payload.
 // Returns { charts:[Chart], setCursor(frameIdx) }.
-export function buildTrajectoryCharts(jointsCanvas, eeCanvas, data) {
+export function buildTrajectoryCharts(jointsCanvas, velCanvas, eeCanvas, data) {
   if (typeof Chart !== "undefined") Chart.register(cursorPlugin, spikePlugin);
   const N = data.n_frames;
   // Joints chart: 14 series, raw vs clamped. Spikes plotted on joint 0's clamped y.
@@ -123,11 +168,45 @@ export function buildTrajectoryCharts(jointsCanvas, eeCanvas, data) {
   }
   const eeChart = buildChart(eeCanvas, "EE position (m)", eeSeries, null);
 
-  const charts = [jointsChart, eeChart];
+  const velChart = buildVelocityChart(velCanvas, data);
+
+  const charts = [jointsChart, velChart, eeChart];
+
+  // Mirror zoom/pan across all charts: a wheel-zoom or drag-pan on any one
+  // applies the same x-window (time axis) to the others, so the joint, velocity
+  // and EE traces stay aligned. `syncing` guards against the re-entrancy that
+  // would otherwise loop (applying to others fires their complete callbacks).
+  let syncing = false;
+  const syncX = (src) => {
+    if (syncing) return;
+    syncing = true;
+    const { min, max } = src.scales.x;
+    for (const c of charts) {
+      if (c === src) continue;
+      c.options.scales.x.min = min;
+      c.options.scales.x.max = max;
+      c.update("none");
+    }
+    syncing = false;
+  };
+  for (const c of charts) {
+    const z = c.options.plugins.zoom;
+    z.zoom.onZoomComplete = ({ chart }) => syncX(chart);
+    z.pan.onPanComplete = ({ chart }) => syncX(chart);
+  }
+
   return {
     charts,
     setCursor(frameIdx) {
       for (const c of charts) { c.$frameX = frameIdx; c.update("none"); }
+    },
+    // Reset every chart back to the full, un-zoomed time window.
+    resetZoom() {
+      for (const c of charts) {
+        c.options.scales.x.min = undefined;
+        c.options.scales.x.max = undefined;
+        c.resetZoom();
+      }
     },
   };
 }

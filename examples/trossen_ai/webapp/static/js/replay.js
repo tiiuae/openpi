@@ -37,6 +37,7 @@ document.addEventListener("DOMContentLoaded", () => {
   $("dataset_dir").addEventListener("change", loadEpisodes);
   $("btn-preview").addEventListener("click", buildPreview);
   $("btn-replay").addEventListener("click", onReplayClick);
+  $("tp-reset").addEventListener("click", () => { if (charts) charts.resetZoom(); });
 
   // Spike modal wiring.
   $("spike-ack").addEventListener("change", (e) => { $("spike-confirm").disabled = !e.target.checked; });
@@ -66,9 +67,11 @@ function readReplayConfig() {
     max_joint_speed: num("cf_max_joint_speed") || "3.0",
     ik_orientation_weight: num("cf_ik_orientation_weight") || "0.01",
     ik_pos_tol_m: num("cf_ik_pos_tol_m") || "0.001",
-    min_time_to_move_multiplier: num("cf_min_time_to_move_multiplier") || "3.0",
+    ik_max_joint_jump_deg: num("cf_ik_max_joint_jump_deg") || "0",
+    min_time_to_move_multiplier: num("cf_min_time_to_move_multiplier") || "10.0",
     loop_rate: num("cf_loop_rate") || "30",
-    smooth_streaming: $("cf_smooth_streaming")?.checked ? "1" : "",
+    // Smooth streaming is a Live-mode feature; in dense per-frame replay its
+    // short goal_time fights the motion and shakes the arm, so replay never uses it.
   };
 }
 
@@ -81,6 +84,7 @@ function trajUrl() {
     max_joint_speed: c.max_joint_speed,
     ik_orientation_weight: c.ik_orientation_weight,
     ik_pos_tol_m: c.ik_pos_tol_m,
+    ik_max_joint_jump_deg: c.ik_max_joint_jump_deg,
   });
   return `/api/episode_trajectory?${p}`;
 }
@@ -101,7 +105,7 @@ async function buildPreview() {
     const data = await fetchTrajectory();
     // Build the charts/transport FIRST so a later (cosmetic) banner error can
     // never leave the page chart-less.
-    charts = buildTrajectoryCharts($("chart-joints"), $("chart-ee"), data);
+    charts = buildTrajectoryCharts($("chart-joints"), $("chart-vel"), $("chart-ee"), data);
     transport = new Transport({
       nFrames: data.n_frames, fps: data.fps,
       els: { play: $("tp-play"), stop: $("tp-stop"), slider: $("tp-slider"),

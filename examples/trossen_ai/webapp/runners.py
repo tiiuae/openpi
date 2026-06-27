@@ -129,10 +129,14 @@ class ReplayRunner:
         # *before* falling back to the episode fps (else dt = 1/0).
         control_freq = int(cfg.get("control_freq") or 0) or int(episode.fps)
         max_joint_speed = float(cfg.get("max_joint_speed", 3.0))
+        # >0 enables the in-IK branch-flip guard (hold last good pose when a
+        # single solve jumps more than N deg vs the previous frame); 0 disables.
+        jump_deg = float(cfg.get("ik_max_joint_jump_deg", 0) or 0)
         converter = EEToJointsConverter(
             make_kinematics(),
             orientation_weight=float(cfg.get("ik_orientation_weight", 0.01)),
             pos_tol_m=float(cfg.get("ik_pos_tol_m", 1e-3)),
+            max_joint_jump_deg=(jump_deg if jump_deg > 0 else None),
         )
         if self._stopped:
             self._sink.on_status("stopped", {"reason": "cancelled"})
@@ -160,12 +164,16 @@ class ReplayRunner:
 
         robot = build_stationary_robot(
             with_cameras=False,
-            min_time_to_move_multiplier=float(cfg.get("min_time_to_move_multiplier", 3.0)),
+            min_time_to_move_multiplier=float(cfg.get("min_time_to_move_multiplier", 10.0)),
             loop_rate=int(cfg.get("loop_rate", 30)),
         )
+        # Smooth streaming intentionally disabled for replay: its short goal_time
+        # + feed-forward is tuned for sparse Live policy waypoints and shakes the
+        # arm under dense per-frame replay. Plain send_action (with the goal-time
+        # multiplier above) is the smooth path for replay.
         self._controller = RobotController(
             robot, control_frequency=control_freq, test_mode=mode,
-            smooth_streaming=bool(cfg.get("smooth_streaming", False)),
+            smooth_streaming=False,
         )
         try:
             cur = self._controller.current_joints14()
@@ -181,9 +189,12 @@ class ReplayRunner:
                 # "joint velocity limit exceeded"). Feed the clamped target back
                 # as `last` so the arm keeps migrating toward the true target.
                 a_cmd = limit_joint_velocity(last, a_t, dt, max_joint_speed)
+                # Feed-forward velocity from the *commanded* trajectory (not the
+                # noisy measured pose) so smooth streaming stays smooth.
+                ff_vel = (a_cmd - last) / dt
                 last = a_cmd
                 t0 = time.perf_counter()
-                ok = self._controller.execute_action(a_cmd)
+                ok = self._controller.execute_action(a_cmd, feedforward_velocity=ff_vel)
                 self._sink.on_action(step, np.asarray(a_cmd), time.time())
                 if not ok:
                     self._sink.on_status("firmware_error", {"step": step})

@@ -23,19 +23,32 @@ logger = logging.getLogger(__name__)
 HOME_POSITION = np.array([0, np.pi / 3, np.pi / 6, np.pi / 5, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0], dtype=float)
 
 
-def send_action_smooth(robot, action14: np.ndarray, dt: float) -> None:
+def send_action_smooth(
+    robot, action14: np.ndarray, dt: float, feedforward_velocity: np.ndarray | None = None
+) -> None:
     """Stream a 14-D joint target with feed-forward velocity for natural motion.
 
     Bypasses robot.send_action (which sends zero feed-forward velocity, planning
-    to arrive at rest at every waypoint -> stutter). We compute ff = (goal-cur)/dt
-    so the arm carries velocity through each waypoint, and set goal_time = dt so
-    the firmware does not over/under-shoot the control period.
+    to arrive at rest at every waypoint -> stutter). The arm carries velocity
+    through each waypoint, and goal_time = dt so the firmware does not
+    over/under-shoot the control period.
+
+    ``feedforward_velocity`` is the intended per-joint velocity (rad/s). When the
+    caller already knows the commanded trajectory (dataset replay), it should
+    pass ``(target - prev_command)/dt`` here: that is the *smooth* trajectory
+    velocity. Falling back to ``(target - measured)/dt`` (when None) reads the
+    live pose, which lags and carries encoder jitter; dividing that by the small
+    control period dt amplifies the noise into a shaky, audible command. The
+    autonomous loop, which has no prior commanded target, uses the fallback.
     """
     action14 = np.asarray(action14, dtype=float).flatten()
-    obs = robot.get_observation()
-    joint_pos_keys = [k for k in obs if k.endswith(".pos")]
-    current = np.array([obs[k] for k in joint_pos_keys], dtype=float)
-    ff = (action14 - current) / dt
+    if feedforward_velocity is not None:
+        ff = np.asarray(feedforward_velocity, dtype=float).flatten()
+    else:
+        obs = robot.get_observation()
+        joint_pos_keys = [k for k in obs if k.endswith(".pos")]
+        current = np.array([obs[k] for k in joint_pos_keys], dtype=float)
+        ff = (action14 - current) / dt
     ff = np.nan_to_num(ff, nan=0.0, posinf=0.0, neginf=0.0)
     n = len(robot.left_arm.config.joint_names)
     robot.left_arm.driver.set_all_positions(
@@ -79,7 +92,7 @@ def limit_joint_velocity(
 
 
 def build_stationary_robot(
-    *, connect: bool = True, with_cameras: bool = True, min_time_to_move_multiplier: float = 3.0, loop_rate: int = 30
+    *, connect: bool = True, with_cameras: bool = True, min_time_to_move_multiplier: float = 10.0, loop_rate: int = 30
 ):
     """Build (and optionally connect) the Trossen bimanual follower robot.
 
@@ -142,9 +155,14 @@ class RobotController:
         return np.array([obs[k] for k in joint_pos_keys])
 
     # ---- motion ----
-    def execute_action(self, action: np.ndarray) -> bool:
+    def execute_action(self, action: np.ndarray, feedforward_velocity: np.ndarray | None = None) -> bool:
         """Send a 14-D joint action. Returns True on success, False if the
-        firmware faulted (in which case the arm is moved to sleep)."""
+        firmware faulted (in which case the arm is moved to sleep).
+
+        ``feedforward_velocity`` (rad/s) is forwarded to the smooth-streaming
+        path; pass the commanded trajectory velocity so the feed-forward term is
+        smooth instead of derived from the noisy measured pose. Ignored when
+        ``smooth_streaming`` is off."""
         full_action = np.asarray(action).flatten()
 
         if self.test_mode == "test":
@@ -153,7 +171,7 @@ class RobotController:
 
         try:
             if self.smooth_streaming:
-                send_action_smooth(self.robot, full_action, self.dt)
+                send_action_smooth(self.robot, full_action, self.dt, feedforward_velocity)
             else:
                 joint_features = list(self.robot._joint_ft.keys())  # noqa: SLF001
                 action_dict = {k: full_action[i] for i, k in enumerate(joint_features)}

@@ -13,12 +13,19 @@ from .kinematics import fk_pose8
 
 class EEToJointsConverter:
     def __init__(self, kin, position_weight: float = 1.0, orientation_weight: float = 0.01,
-                 pos_tol_m: float = 1e-3, ik_max_iters: int = 50):
+                 pos_tol_m: float = 1e-3, ik_max_iters: int = 50,
+                 max_joint_jump_deg: float | None = None):
         self.kin = kin
         self.position_weight = position_weight
         self.orientation_weight = orientation_weight
         self.pos_tol_m = pos_tol_m
         self.ik_max_iters = ik_max_iters
+        # Branch-flip guard: if a single per-frame solve moves any revolute joint
+        # more than this (deg) vs the previous frame, reject it and hold the last
+        # good pose. None disables. Orientation weight alone can't prevent placo
+        # settling into an alternate (flipped) configuration for the same EE
+        # pose; this rejects that discontinuity at the source.
+        self.max_joint_jump_deg = max_joint_jump_deg
 
     # ---- observation side: joints -> EE state (reuses existing FK) ----
     def joints14_to_ee16(self, joints14: np.ndarray) -> np.ndarray:
@@ -69,9 +76,19 @@ class EEToJointsConverter:
         fb_l = cur[C.OBS_LEFT_JOINTS].astype(np.float32)
         fb_r = cur[C.OBS_RIGHT_JOINTS].astype(np.float32)
 
+        max_jump = self.max_joint_jump_deg
         for i, row in enumerate(chunk16):
             jl, gl, seed_l, _ = self._ik_arm(row[:8], C.LEFT_MOUNT_XYZ, seed_l, fb_l)
             jr, gr, seed_r, _ = self._ik_arm(row[8:16], C.RIGHT_MOUNT_XYZ, seed_r, fb_r)
+            # Reject a single-frame branch flip: if the solve jumps more than
+            # max_jump deg vs the previous frame, hold the last good joints and
+            # re-seed the next frame from them (frame 0 is exempt: its seed is the
+            # home/current pose, so a large first move is legitimate).
+            if i > 0 and max_jump is not None:
+                if np.max(np.abs(np.rad2deg(jl - fb_l))) > max_jump:
+                    jl, seed_l = fb_l, np.rad2deg(fb_l)
+                if np.max(np.abs(np.rad2deg(jr - fb_r))) > max_jump:
+                    jr, seed_r = fb_r, np.rad2deg(fb_r)
             full = np.zeros(14, dtype=np.float32)
             full[C.OBS_LEFT_JOINTS] = jl
             full[C.LEFT_GRIPPER_IDX] = gl

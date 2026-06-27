@@ -122,7 +122,8 @@ def create_app(presets_dir: str | Path | None = None, runner_factory=None,
     @app.get("/api/episode_trajectory")
     def episode_trajectory(dataset_dir: str, episode_index: int = 0,
                            control_freq: int = 0, max_joint_speed: float = 3.0,
-                           ik_orientation_weight: float = 0.01, ik_pos_tol_m: float = 1e-3):
+                           ik_orientation_weight: float = 0.01, ik_pos_tol_m: float = 1e-3,
+                           ik_max_joint_jump_deg: float = 0.0):
         from fastapi import HTTPException
         from webapp import episode_preview  # lazy: pulls IK/dataset deps on demand
         # Pure off-robot preview: the trajectory is computed by IK only. We never
@@ -135,6 +136,8 @@ def create_app(presets_dir: str | Path | None = None, runner_factory=None,
                 seed_joints=None,
                 ik_orientation_weight=float(ik_orientation_weight),
                 ik_pos_tol_m=float(ik_pos_tol_m),
+                max_joint_jump_deg=(float(ik_max_joint_jump_deg)
+                                    if float(ik_max_joint_jump_deg) > 0 else None),
             )
         except Exception as exc:  # noqa: BLE001 — report the reason to the UI
             # e.g. a dataset without EE action columns, an unreadable episode, or

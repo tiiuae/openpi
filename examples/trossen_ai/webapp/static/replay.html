@@ -52,10 +52,11 @@
         <div class="field-inline"><label>IK position tol (m)</label>
           <input type="number" id="cf_ik_pos_tol_m" value="0.001" step="0.001" min="0" title="Acceptable IK position error in metres."></div>
         <div class="field-inline"><label>Goal-time multiplier</label>
-          <input type="number" id="cf_min_time_to_move_multiplier" value="3.0" step="0.5" min="0" title="Autonomous only. Driver goal_time = multiplier / loop rate. Larger = smoother/laggier."></div>
+          <input type="number" id="cf_min_time_to_move_multiplier" value="10.0" step="0.5" min="0" title="Autonomous only. Driver goal_time = multiplier / loop rate. Larger = smoother/laggier. 10.0 removes small per-frame joint shake."></div>
         <div class="field-inline"><label>Driver loop rate (Hz)</label>
           <input type="number" id="cf_loop_rate" value="30" step="1" min="1" title="Autonomous only. Driver loop rate."></div>
-        <label class="checkbox-label"><input type="checkbox" id="cf_smooth_streaming"> Smooth streaming (feed-forward velocity)</label>
+        <div class="field-inline"><label>IK max joint jump (deg)</label>
+          <input type="number" id="cf_ik_max_joint_jump_deg" value="45" step="5" min="0" title="Reject any single IK solve whose joint angle jumps more than this vs the previous frame (a branch flip) and hold the last good pose instead. 0 disables. Catches chaotic end/mid-episode flips that orientation weight can't."></div>
       </section>
     </aside>
     <main class="live-main">
@@ -74,10 +75,12 @@
           </div>
         </div>
         <div class="chart-cj-container"><canvas id="chart-joints"></canvas></div>
+        <div class="chart-cj-container"><canvas id="chart-vel"></canvas></div>
         <div class="chart-cj-container"><canvas id="chart-ee"></canvas></div>
         <div class="transport" id="transport">
           <button class="btn-sm" id="tp-play">▶ Play</button>
           <button class="btn-sm" id="tp-stop">⏹ Stop</button>
+          <button class="btn-sm" id="tp-reset" title="Reset all charts to the full time window">⤢ Reset view</button>
           <input type="range" id="tp-slider" min="0" max="0" value="0" style="flex:1">
           <span id="tp-readout" class="counter">— / —</span>
           <label>Speed
