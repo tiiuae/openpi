@@ -10,24 +10,19 @@ arguments, and exactly how each config knob changes the motion.
 
 ## 1. The layers
 
-```
- your 14-D action  (left 0:7 | right 7:14)
-        │
-        ▼
- RobotController            robot_control.py   ── 14-D joint motion + safety
-        │  execute_action()
-        ▼
- BiWidowXAIFollower (robot) lerobot_robot_trossen ── splits 14-D → left / right
-        │  send_action(dict)                          and exposes get_observation()
-        ▼
- WidowXAIFollower ×2        widowxai_follower.py ── one per arm; turns a joint
-        │  driver.set_all_positions(...)               dict into a driver call
-        ▼
- TrossenArmDriver           trossen_arm (C++ .pyi) ── talks to the arm over IP
-        │  set_all_positions(goal, goal_time, ff…)
-        ▼
- Motor firmware             on the arm           ── interpolates to the goal,
-                                                     enforces velocity/limit faults
+```mermaid
+flowchart TD
+    A["14-D action (left 0:7, right 7:14)"]
+    B["RobotController — robot_control.py<br/>14-D joint motion + safety"]
+    C["BiWidowXAIFollower (robot) — lerobot_robot_trossen<br/>splits 14-D to left/right, get_observation()"]
+    D["WidowXAIFollower x2 — widowxai_follower.py<br/>one per arm, joint dict to driver call"]
+    E["TrossenArmDriver — trossen_arm (C++)<br/>talks to the arm over IP"]
+    F["Motor firmware — on the arm<br/>interpolates to goal, enforces velocity/limit faults"]
+    A -->|"execute_action()"| B
+    B -->|"send_action(dict)"| C
+    C -->|"driver.set_all_positions(...)"| D
+    D -->|"set_all_positions(goal, goal_time, ff)"| E
+    E --> F
 ```
 
 - **`RobotController`** works in **14-D joint space**: left arm = indices `0:7`,

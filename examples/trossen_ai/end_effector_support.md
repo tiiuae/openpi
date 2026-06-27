@@ -36,16 +36,17 @@ were made is the key to inverting them correctly.
 There are **two** frames in play, and the difference between them is the whole
 reason the "undo mount" step exists.
 
-```
-        robot_base_link  (shared frame — torso / mobile base origin)
-              │
-              ├──  T_mount_left  = translate( +0.331, +0.300, +0.831 )
-              │         │
-              │     left_arm base_link  ──FK(joint_0..5)──►  left EE (ee_gripper_link)
-              │
-              └──  T_mount_right = translate( +0.331, -0.300, +0.831 )
-                        │
-                    right_arm base_link ──FK(joint_0..5)──►  right EE (ee_gripper_link)
+```mermaid
+flowchart TD
+    RB["robot_base_link<br/>shared frame — torso / mobile base origin"]
+    TL["T_mount_left = translate(+0.331, +0.300, +0.831)"]
+    TR["T_mount_right = translate(+0.331, -0.300, +0.831)"]
+    LB["left_arm base_link"]
+    RBR["right_arm base_link"]
+    LEE["left EE (ee_gripper_link)"]
+    REE["right EE (ee_gripper_link)"]
+    RB --> TL --> LB -->|"FK(joint_0..5)"| LEE
+    RB --> TR --> RBR -->|"FK(joint_0..5)"| REE
 ```
 
 - **Arm-base frame** — each arm's own `base_link`. This is what the arm's
@@ -155,19 +156,15 @@ joint-space machinery unchanged.
 
 ### Pipeline
 
-```
-model EE chunk (N x 16)
-   └─ per arm, per step:
-        ee_pose8_to_arm_se3()                 # shared front-end
-        joints_deg = kin.inverse_kinematics(  # placo, arm-base frame
-                         current_joints_deg,   #   seed = current pose
-                         T_arm)                #   6 joints out (deg)
-        joints_rad = deg2rad(joints_deg)       # send path uses radians
-        arm_action = [*joints_rad, grip_m]     # 7-D per arm
-   └─ concat L+R -> joint chunk (N x 14)
-        │
-        ▼
-   EXISTING pipeline: ensemble -> limit check -> send_action / sleep-safety
+```mermaid
+flowchart TD
+    A["model EE chunk (N x 16)"]
+    B["per arm, per step: ee_pose8_to_arm_se3() — shared front-end"]
+    C["kin.inverse_kinematics(current_joints_deg, T_arm)<br/>placo, arm-base, seed = current pose, 6 joints out (deg)"]
+    D["deg2rad; arm_action = [joints_rad, grip_m] — 7-D per arm"]
+    E["concat L+R to joint chunk (N x 14)"]
+    F["EXISTING pipeline: ensemble, limit check, send_action / sleep-safety"]
+    A --> B --> C --> D --> E --> F
 ```
 
 Key facts that make this clean:
@@ -227,17 +224,15 @@ the **firmware** do the IK. Gripper is commanded separately.
 
 ### Pipeline
 
-```
-model EE chunk (N x 16)
-   └─ per arm, per step:
-        ee_pose8_to_arm_se3()                          # shared front-end
-        rotvec = Rotation.from_matrix(R).as_rotvec()   # quat -> angle-axis (3)
-        pose6  = [x, y, z, *rotvec]                     # ArrayDouble6, arm-base
-        driver.set_cartesian_positions(
-            pose6, InterpolationSpace.cartesian_space,
-            goal_time=dt, blocking=False)
-        # gripper: SEPARATE command (cartesian call has no gripper slot)
-        driver.<gripper command>(grip_m)
+```mermaid
+flowchart TD
+    A["model EE chunk (N x 16)"]
+    B["per arm, per step: ee_pose8_to_arm_se3() — shared front-end"]
+    C["rotvec = Rotation.from_matrix(R).as_rotvec() — quat to angle-axis (3)"]
+    D["pose6 = [x, y, z, rotvec] — ArrayDouble6, arm-base"]
+    E["driver.set_cartesian_positions(pose6, cartesian_space, goal_time=dt, blocking=False)"]
+    F["gripper: SEPARATE command — cartesian call has no gripper slot"]
+    A --> B --> C --> D --> E --> F
 ```
 
 Note the format change: trossen cartesian is **6-D** `[x, y, z, wx, wy, wz]`

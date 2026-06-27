@@ -4,22 +4,18 @@
 
 ## 1. The big picture
 
-```
-                         ┌─────────────────────┐
-   cameras + joints ───► │  OpenPI policy      │ ──► action chunks
-                         │  server (websocket) │
-                         └─────────────────────┘
-                                   ▲  │
-                       observation │  │ actions
-                                   │  ▼
-   ┌───────────────────────────────────────────────────────────┐
-   │              TrossenOpenPIBridge  (trossen_bridge.py)        │
-   │  build obs → infer → ensemble blend → adapter decode →       │
-   │  velocity-limit → send to robot                              │
-   └───────────────────────────────────────────────────────────┘
-                                   │
-                                   ▼
-            build_stationary_robot()  →  lerobot BiWidowXAI follower  →  arms
+```mermaid
+flowchart TD
+    OBS["cameras + joints"]
+    POL["OpenPI policy server (websocket)"]
+    BR["TrossenOpenPIBridge — trossen_bridge.py<br/>build obs, infer, ensemble blend, adapter decode, velocity-limit, send"]
+    RB["build_stationary_robot()"]
+    ARMS["lerobot BiWidowXAI follower to arms"]
+    OBS -->|observation| POL
+    POL -->|action chunks| BR
+    BR -->|"get_observation()"| OBS
+    BR --> RB
+    RB --> ARMS
 ```
 
 Two **control paths** share the same robot construction and motion/safety code:
@@ -32,23 +28,27 @@ Both are exposed through a CLI and through the [web app](../webapp/README.md).
 ## 2. Data flow
 
 ### Live (policy)
-```
-robot.get_observation()
-  → adapter.build_state()        (adapters.py: Joint or EE state)
-  → policy_client.infer()        (openpi websocket)
-  → adapter.decode_chunk()       (raw policy output → 14-D joint chunk; EE path runs IK)
-  → ensemble.add_chunk/get_action  (ensemble/: blend overlapping chunks)
-  → action_fallback              (hold last action if no prediction yet)
-  → limit_joint_velocity()       (robot_control.py: per-joint velocity cap)
-  → robot.send_action()  /  send_action_smooth()
+```mermaid
+flowchart TD
+    A["robot.get_observation()"]
+    B["adapter.build_state() — Joint or EE state"]
+    C["policy_client.infer() — openpi websocket"]
+    D["adapter.decode_chunk()<br/>raw policy output to 14-D joint chunk; EE path runs IK"]
+    E["ensemble.add_chunk / get_action<br/>blend overlapping chunks"]
+    F["action_fallback — hold last action if no prediction yet"]
+    G["limit_joint_velocity() — per-joint velocity cap"]
+    H["robot.send_action() or send_action_smooth()"]
+    A --> B --> C --> D --> E --> F --> G --> H
 ```
 
 ### Replay (dataset)
-```
-EpisodeReader.read_episode()     (dataset_replay.py: EE chunk, fps)
-  → EEToJointsConverter.decode_chunk()  (external/joint_to_ee: placo IK, EE→14-D joints)
-  → move_to_start_position()     (PCHIP ramp to first frame)
-  → per frame: limit_joint_velocity() → RobotController.execute_action()
+```mermaid
+flowchart TD
+    A["EpisodeReader.read_episode() — EE chunk, fps"]
+    B["EEToJointsConverter.decode_chunk()<br/>placo IK, EE to 14-D joints"]
+    C["move_to_start_position() — PCHIP ramp to first frame"]
+    D["per frame: limit_joint_velocity() then RobotController.execute_action()"]
+    A --> B --> C --> D
 ```
 
 See [Motion & Safety](motion-safety.md) for why the velocity limiter sits on both paths.
