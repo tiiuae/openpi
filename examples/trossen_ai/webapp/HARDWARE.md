@@ -13,7 +13,7 @@ installed and the arms physically wired up). Off-hardware development uses the
 
 ## 0. Prerequisites (on the robot machine)
 
-- The robot runtime Python env that already runs the CLI (`main.py` / `main_ee.py`)
+- The robot runtime Python env that already runs the CLI (`cli.py`)
   — i.e. the one where `python -c "import lerobot_robot_trossen"` succeeds.
 - The OpenPI policy server reachable on the network (default `192.168.50.174:8800`).
 - Arms powered, e-stop within reach, **clear workspace**.

@@ -181,13 +181,13 @@ We will use a the `examples/trossen_ai` as root directory for running the client
 
 ```bash
 cd examples/trossen_ai
-uv run main.py --mode autonomous --task_prompt "grab red cube"
+uv run cli.py live-joint --mode autonomous --task-prompt "grab red cube"
 ```
 
 The client will connect to the policy server and perform the specified task using the trained model.
 
 
-You can change the cameras and arm ip address in the script `examples/trossen_ai/main.py` by editing
+You can change the cameras and arm ip address in `examples/trossen_ai/robot_control.py` (the `build_stationary_robot` helper) by editing
 
 ```python
 bi_widowx_ai_config = BiWidowXAIFollowerConfig(
@@ -262,7 +262,7 @@ Check the results out here:
 We run this exact same command for testing each of these scenarios. The command is:
 
 ```bash
-uv run main.py --mode autonomous --task_prompt "grab red cube"
+uv run cli.py live-joint --mode autonomous --task-prompt "grab red cube"
 ```
 
 The task prompt remains the same for all tests, as we haven't collected any data for other object types or scenarios.
@@ -271,5 +271,5 @@ The task prompt remains the same for all tests, as we haven't collected any data
 If you want to run the client in test mode (no movement, just logs the actions that would be taken), you can use the following command:
 
 ```bash
-uv run main.py --mode test --task_prompt "grab red cube"
+uv run cli.py live-joint --mode test --task-prompt "grab red cube"
 ```

@@ -8,7 +8,7 @@ an EE-space policy on the bimanual WidowX-AI arms. No code has been written yet.
 
 ## 1. Context
 
-Today [`main.py`](main.py) drives the arms in **joint space**: the policy server
+Today [`cli.py live-joint`](../cli.py) drives the arms in **joint space**: the policy server
 returns a 14-D joint action (7 per arm = 6 arm joints + 1 gripper), and the
 bridge sends it straight to the robot via lerobot's `send_action`.
 

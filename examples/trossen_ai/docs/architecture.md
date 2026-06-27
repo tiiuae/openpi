@@ -98,13 +98,15 @@ ES modules under `static/js/` (`api`, `ws`, `config`, `charts`, `filebrowser`, `
 `static/vendor/` so the pages load with no internet. Layout details in the
 [web app overview](../webapp/README.md).
 
-### CLI entrypoints
-| Script | Role |
+### CLI entrypoint
+All terminal commands live in one Typer app, [`cli.py`](../cli.py):
+
+| Command | Role |
 |---|---|
-| [`main.py`](../main.py) | Live policy in **joint** space. |
-| [`main_ee.py`](../main_ee.py) | Live policy in **end-effector** space (IK). |
-| [`replay_ee_dataset.py`](../replay_ee_dataset.py) | Replay a dataset episode on the arm. |
-| [`sleep.py`](../sleep.py) | Send the arm to the sleep pose. |
+| `cli.py live-joint` | Live policy in **joint** space. |
+| `cli.py live-ee` | Live policy in **end-effector** space (IK). |
+| `cli.py replay` | Replay a dataset episode on the arm. |
+| [`scripts/sleep.py`](../scripts/sleep.py) | Send the arm to the sleep pose (standalone script). |
 
 ## 4. Threading & lifecycle (web app)
 

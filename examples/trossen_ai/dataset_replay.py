@@ -1,8 +1,8 @@
 """Read EE actions from a LeRobot v3.0 dataset, one episode at a time.
 
 Pure data layer — no robot, no IK — so it is unit-testable off-hardware. The
-replay entrypoint (``replay_ee_dataset.py``) feeds the returned ``(N, 16)``
-absolute-EE chunk into the same IK decoder used by ``main_ee.py``.
+replay command (``cli.py replay``) feeds the returned ``(N, 16)``
+absolute-EE chunk into the same IK decoder used by ``cli.py live-ee``.
 """
 
 from __future__ import annotations
