@@ -1,11 +1,11 @@
 // Reads the Gamepad API and keyboard into a normalized teleop input snapshot.
 // axes6 = [tx, ty, tz, roll, pitch, yaw] in [-1,1]; grip in [-1,1] (+ open).
-// Edges (switch_arm/go_home/go_sleep) latch until consumed by readEdges().
+// Edges (switch_arm/go_home/go_sleep/estop/stop) latch until consumed by readEdges().
 const keys = new Set();
 window.addEventListener("keydown", (e) => { keys.add(e.key.toLowerCase()); if (e.key === "Tab") e.preventDefault(); });
 window.addEventListener("keyup",   (e) => keys.delete(e.key.toLowerCase()));
 
-let edges = { switch_arm: false, go_home: false, go_sleep: false };
+let edges = { switch_arm: false, go_home: false, go_sleep: false, estop: false, stop: false };
 let prevPadButtons = [];
 let prevTabKey = false, prevHomeKey = false, prevSleepKey = false;
 
@@ -34,6 +34,8 @@ export function readInput(deadzone) {
     if (btn(2) && !prevPadButtons[2]) edges.switch_arm = true;   // X
     if (btn(12) && !prevPadButtons[12]) edges.go_home = true;    // D-up
     if (btn(13) && !prevPadButtons[13]) edges.go_sleep = true;   // D-down
+    if (btn(8) && !prevPadButtons[8]) edges.estop = true;        // Back/Select
+    if (btn(9) && !prevPadButtons[9]) edges.stop = true;         // Start
     prevPadButtons = pad.buttons.map((b) => b.pressed);
   }
   const tab = keys.has("tab"), h = keys.has("h"), p = keys.has("p");
@@ -58,6 +60,6 @@ export function readInput(deadzone) {
 
 export function readEdges() {
   const e = edges;
-  edges = { switch_arm: false, go_home: false, go_sleep: false };
+  edges = { switch_arm: false, go_home: false, go_sleep: false, estop: false, stop: false };
   return e;
 }

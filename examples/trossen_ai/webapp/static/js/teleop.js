@@ -44,9 +44,11 @@ function startSendLoop(cfg) {
   sendTimer = setInterval(() => {
     if (!active) return;
     const inp = readInput(cfg.deadzone);
-    const edges = readEdges();
+    const { estop, stop, ...moves } = readEdges();
     $("badge-pad").textContent = inp.hasPad ? "gamepad ✓" : "keyboard only";
-    send({ action: "teleop_input", payload: { axes: inp.axes, grip: inp.grip, ...edges } });
+    if (estop) { active = false; send({ action: "estop" }); return; }
+    if (stop) { active = false; send({ action: "stop" }); return; }
+    send({ action: "teleop_input", payload: { axes: inp.axes, grip: inp.grip, ...moves } });
   }, period);
 }
 
