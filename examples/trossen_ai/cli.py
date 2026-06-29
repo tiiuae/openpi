@@ -222,5 +222,72 @@ def replay(
         controller.disconnect()
 
 
+@app.command("teleop")
+def teleop(
+    mode: str = typer.Option("detached", help="detached (3D only, no robot) | test (cameras, no motion) | autonomous (real motion)"),
+    control_freq: int = typer.Option(25, help="Control loop frequency in Hz"),
+    arm: str = typer.Option("left", help="Initial active arm: left | right"),
+    device: Optional[str] = typer.Option(None, help="evdev gamepad path (default: first /dev/input device)"),
+    max_lin: float = typer.Option(0.05, help="Max EE linear velocity (m/s) at full stick"),
+    max_ang: float = typer.Option(0.5, help="Max EE angular velocity (rad/s) at full stick"),
+    grip_rate: float = typer.Option(0.5, help="Gripper rate (normalized 1/s) while held"),
+    deadzone: float = typer.Option(0.1, help="Analog stick deadzone"),
+    max_joint_speed: float = typer.Option(3.0, help="Per-joint velocity cap (rad/s)"),
+    ik_orientation_weight: float = typer.Option(0.01, help="placo IK orientation weight"),
+    ik_pos_tol_m: float = typer.Option(1e-3, help="IK convergence/failure tolerance (m)"),
+) -> None:
+    """Joystick/keyboard end-effector teleoperation through the current EE IK.
+
+    Detached mode runs off-robot (3D model only) — useful to dry-test IK before
+    touching hardware. test/autonomous build the real robot (cameras on);
+    autonomous moves it for real. Same control core as the /teleop web page.
+    """
+    import logging
+    import signal
+
+    import numpy as np
+
+    from external.joint_to_ee.ee_to_joints import EEToJointsConverter
+    from external.joint_to_ee.kinematics import make_kinematics
+    from robot_control import HOME_POSITION
+    from teleop import TeleopController
+    from teleop_evdev import EvdevTeleopInput
+    from webapp.telemetry import NullSink
+
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
+
+    converter = EEToJointsConverter(
+        make_kinematics(), orientation_weight=ik_orientation_weight, pos_tol_m=ik_pos_tol_m)
+
+    controller = None
+    cam_keys: list[str] = []
+    start14 = np.asarray(HOME_POSITION, float)
+    if mode != "detached":
+        from robot_control import RobotController, build_stationary_robot
+        robot = build_stationary_robot(with_cameras=True)
+        cam_keys = list(robot._cameras_ft.keys())  # noqa: SLF001
+        controller = RobotController(robot, control_frequency=control_freq, test_mode=mode)
+        start14 = controller.current_joints14()
+
+    inp = EvdevTeleopInput(device_path=device, max_lin=max_lin, max_ang=max_ang,
+                           grip_rate=grip_rate, deadzone=deadzone)
+    inp.start()
+    teleop_ctrl = TeleopController(
+        converter, NullSink(), inp, controller=controller, start14=start14,
+        control_freq=control_freq, max_lin=max_lin, max_ang=max_ang,
+        grip_rate=grip_rate, max_joint_speed=max_joint_speed, cam_keys=cam_keys)
+    teleop_ctrl.active_arm = arm
+
+    stop = {"flag": False}
+    signal.signal(signal.SIGINT, lambda *_: stop.__setitem__("flag", True))
+    typer.echo(f"Teleop running (mode={mode}, arm={arm}). Ctrl-C to stop.")
+    try:
+        teleop_ctrl.run(should_stop=lambda: stop["flag"])
+    finally:
+        inp.stop()
+        if controller is not None:
+            controller.disconnect()
+
+
 if __name__ == "__main__":
     app()
