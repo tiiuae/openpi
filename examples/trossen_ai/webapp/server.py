@@ -45,6 +45,9 @@ def create_app(presets_dir: str | Path | None = None, runner_factory=None,
             if kind == "home":
                 from webapp.movers import HomeRunner
                 return HomeRunner(kind, config, sink)
+            if kind == "teleop":
+                from webapp.teleop_runner import TeleopRunner
+                return TeleopRunner(kind, config, sink)
             from webapp.runners import make_runner
             return make_runner(kind, config, sink)
 
@@ -74,6 +77,10 @@ def create_app(presets_dir: str | Path | None = None, runner_factory=None,
     @app.get("/replay")
     def replay():
         return FileResponse(STATIC_DIR / "replay.html")
+
+    @app.get("/teleop")
+    def teleop_page():
+        return FileResponse(STATIC_DIR / "teleop.html")
 
     @app.get("/api/health")
     def health():
@@ -198,6 +205,14 @@ def create_app(presets_dir: str | Path | None = None, runner_factory=None,
                     await loop.run_in_executor(None, session.stop)
                 elif action == "estop":
                     await loop.run_in_executor(None, session.estop)
+                elif action == "start_teleop":
+                    start("teleop", cmd["config"])
+                elif action in ("teleop_input", "switch_arm"):
+                    runner = getattr(session, "_runner", None)
+                    if runner is not None and hasattr(runner, "input"):
+                        payload = ({"switch_arm": True} if action == "switch_arm"
+                                   else cmd.get("payload", {}))
+                        runner.input.update(payload)
         except WebSocketDisconnect:
             logger.info("WS disconnected; stopping session")
             await loop.run_in_executor(None, session.stop)

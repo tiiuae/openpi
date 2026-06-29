@@ -90,6 +90,39 @@ def test_episode_trajectory_route(monkeypatch):
     assert captured["seed_joints"] is None
 
 
+def test_teleop_page_served():
+    client = TestClient(create_app())
+    r = client.get("/teleop")
+    assert r.status_code == 200
+    assert "text/html" in r.headers["content-type"]
+
+
+def test_ws_start_teleop_uses_factory():
+    started = {}
+
+    class FakeRunner:
+        def __init__(self, kind, config, sink):
+            started["kind"] = kind
+            started["config"] = config
+            self._sink = sink
+        def run(self):
+            self._sink.on_status("teleop_started", {"detached": True})
+        def stop(self): pass
+        def estop(self): pass
+
+    app = create_app(runner_factory=lambda k, c, s: FakeRunner(k, c, s))
+    client = TestClient(app)
+    with client.websocket_connect("/ws/telemetry") as ws:
+        ws.send_json({"action": "start_teleop",
+                      "config": {"mode": "detached", "control_freq": 10}})
+        for _ in range(20):
+            evt = ws.receive_json()
+            if evt.get("type") == "status" and evt.get("kind") == "teleop_started":
+                break
+        assert started["kind"] == "teleop"
+        assert started["config"]["mode"] == "detached"
+
+
 @pytest.mark.skipif(not _URDF.is_file(), reason="URDF tree not checked out")
 def test_robot_urdf_and_mesh_served():
     client = TestClient(create_app())
