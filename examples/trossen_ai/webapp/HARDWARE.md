@@ -192,6 +192,25 @@ Run pytest **from `examples/trossen_ai`** — its `conftest.py` puts the dir on
 
 ---
 
+## 8. Joystick teleoperation (`/teleop` and `cli.py teleop`)
+
+Drive the arm in 6-DoF by gamepad/keyboard through the current EE IK — a manual
+test path before running a policy live.
+
+- **Web:** open `/teleop`. Pick a **Mode**: `detached` (3D model only, no robot —
+  safe IK-flip dry test), `test` (cameras on, no motion), `autonomous` (real
+  motion, confirm-gated). Press **Start Teleop**. The 3D view + 3 camera tiles
+  update live; the key-bindings panel lists every control.
+- **CLI:** `python cli.py teleop --mode detached` (add `--device /dev/input/eventN`
+  to pick a gamepad). `--mode autonomous` moves the real arm.
+- **Bindings:** left stick / WASD = translate X-Y; RB·LB / Q·E = Z; right stick /
+  IJKL = pitch·yaw; RT·LT / U·O = roll; A·B / Z·C = gripper; X / Tab = switch arm;
+  D-pad↑·H = Home; D-pad↓·P = Sleep; Back / Space = E-STOP; Start / Esc = Stop.
+- **Safety:** detached touches no hardware; autonomous is confirm-gated, honors
+  E-STOP (→ sleep) and the firmware-fault guard, and cannot race another session.
+
+---
+
 ## Safety (read before autonomous)
 
 - **Test mode is the default** — no arm movement. Stay in it until charts/cameras/
