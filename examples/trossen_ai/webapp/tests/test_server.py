@@ -123,6 +123,47 @@ def test_ws_start_teleop_uses_factory():
         assert started["config"]["mode"] == "detached"
 
 
+def test_ws_teleop_input_and_switch_arm_routed_to_runner():
+    import threading
+
+    calls = []
+    release = threading.Event()
+
+    class FakeInput:
+        def update(self, payload):
+            calls.append(payload)
+
+    class FakeRunner:
+        def __init__(self, kind, config, sink):
+            self.input = FakeInput()
+            self._sink = sink
+        def run(self):
+            # Reachable as session._runner while the test sends input, then
+            # block until the test releases so run() doesn't hang the suite.
+            self._sink.on_status("teleop_started", {"detached": True})
+            release.wait(timeout=5.0)
+        def stop(self): release.set()
+        def estop(self): release.set()
+
+    app = create_app(runner_factory=lambda k, c, s: FakeRunner(k, c, s))
+    client = TestClient(app)
+    with client.websocket_connect("/ws/telemetry") as ws:
+        ws.send_json({"action": "start_teleop", "config": {"mode": "detached"}})
+        for _ in range(20):
+            evt = ws.receive_json()
+            if evt.get("type") == "status" and evt.get("kind") == "teleop_started":
+                break
+        ws.send_json({"action": "teleop_input",
+                      "payload": {"axes": [1, 0, 0, 0, 0, 0], "grip": 0.0}})
+        ws.send_json({"action": "switch_arm"})
+        # Spin the WS so both dispatch branches run before we assert.
+        ws.send_json({"action": "stop"})
+        release.set()
+
+    assert {"axes": [1, 0, 0, 0, 0, 0], "grip": 0.0} in calls
+    assert {"switch_arm": True} in calls
+
+
 @pytest.mark.skipif(not _URDF.is_file(), reason="URDF tree not checked out")
 def test_robot_urdf_and_mesh_served():
     client = TestClient(create_app())
