@@ -1,1 +1,80 @@
-<!doctype html><html><head><meta charset="utf-8"><title>Teleop</title></head><body>Teleop</body></html>
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Trossen Control — Teleop</title>
+  <link rel="stylesheet" href="/static/theme.css">
+  <script type="importmap">
+  {
+    "imports": {
+      "three":               "https://cdn.jsdelivr.net/npm/three@0.169.0/build/three.module.js",
+      "three/addons/":       "https://cdn.jsdelivr.net/npm/three@0.169.0/examples/jsm/",
+      "three/examples/jsm/": "https://cdn.jsdelivr.net/npm/three@0.169.0/examples/jsm/",
+      "urdf-loader":         "/static/vendor/URDFLoader.js"
+    }
+  }
+  </script>
+</head>
+<body>
+  <header class="app-header">
+    <div class="app-nav"><strong style="color:var(--text);margin-right:16px">Trossen Control</strong>
+      <a href="/">Live</a><a href="/replay">Replay</a><a href="/teleop" class="active">Teleop</a></div>
+    <div class="header-actions">
+      <span class="badge" id="badge-session">idle</span>
+      <span class="badge" id="badge-arm">arm: left</span>
+      <span class="badge" id="badge-pad">no gamepad</span>
+    </div>
+  </header>
+
+  <div class="live-grid">
+    <aside id="config-col">
+      <section class="card"><h2>Teleop</h2>
+        <div class="field-inline"><label>Mode</label>
+          <select id="cf_mode">
+            <option value="detached">Detached — 3D only (no robot)</option>
+            <option value="test">Test — cameras, no motion</option>
+            <option value="autonomous">Autonomous — real motion</option>
+          </select></div>
+        <div class="field-inline"><label>Control rate (Hz)</label>
+          <input type="number" id="cf_control_freq" value="25" min="1" step="1"></div>
+        <div class="field-inline"><label>Max linear (m/s)</label>
+          <input type="number" id="cf_max_lin" value="0.05" step="0.01" min="0"></div>
+        <div class="field-inline"><label>Max angular (rad/s)</label>
+          <input type="number" id="cf_max_ang" value="0.5" step="0.1" min="0"></div>
+        <div class="field-inline"><label>Gripper rate (1/s)</label>
+          <input type="number" id="cf_grip_rate" value="0.5" step="0.1" min="0"></div>
+        <div class="field-inline"><label>Deadzone</label>
+          <input type="number" id="cf_deadzone" value="0.1" step="0.05" min="0" max="0.9"></div>
+        <div class="field-inline"><label>IK orientation weight</label>
+          <input type="number" id="cf_ik_orientation_weight" value="0.01" step="0.01" min="0"></div>
+        <div class="field-inline"><label>IK position tol (m)</label>
+          <input type="number" id="cf_ik_pos_tol_m" value="0.001" step="0.001" min="0"></div>
+        <div class="run-controls">
+          <button class="btn-primary" id="btn-start">Start Teleop</button>
+          <button class="btn-outline" id="btn-switch">Switch arm</button>
+          <button class="btn-outline" id="btn-stop">Stop</button>
+          <button class="btn-danger" id="btn-estop">E-STOP</button></div>
+      </section>
+      <section class="card"><h2>Key bindings</h2>
+        <div id="keybindings"></div></section>
+    </aside>
+    <main class="live-main">
+      <section class="card">
+        <div class="urdf-wrap"><canvas id="urdf-canvas"></canvas>
+          <div class="cam-views" id="cam-views">
+            <button class="btn-sm" data-view="iso">Iso</button>
+            <button class="btn-sm" data-view="front">Front</button>
+            <button class="btn-sm" data-view="top">Top</button>
+            <button class="btn-sm" data-view="left">L</button>
+            <button class="btn-sm" data-view="right">R</button>
+          </div>
+        </div>
+        <div class="images-row" id="images-box"></div>
+      </section>
+      <section class="card"><div class="log-header"><h2>Logs</h2><button class="btn-sm" id="btn-clear-log">Clear</button></div>
+        <div class="log-panel" id="log-box"></div></section>
+    </main>
+  </div>
+  <script type="module" src="/static/js/teleop.js"></script>
+</body>
+</html>
