@@ -188,9 +188,8 @@ class TrossenOpenPIBridge:
                 image_resized = cv2.resize(image_hwc, DEFAULT_TRAINING_SIZE, interpolation=cv2.INTER_LANCZOS4)
                 image_rgb = cv2.cvtColor(image_resized, cv2.COLOR_BGR2RGB)
             images[cam] = np.transpose(image_rgb, (2, 0, 1))
-        self.sink.on_images(
-            {cam: cv2.imencode(".jpg", observation_dict[cam])[1].tobytes() for cam in cameras}, time.time()
-        )
+        from camera_utils import encode_camera_jpegs
+        self.sink.on_images(encode_camera_jpegs(observation_dict, cameras), time.time())
         return {"state": state, "images": images, "prompt": task_prompt}
 
     def move_to_start_position(self, goal_position: np.ndarray, duration: float = 5.0):
