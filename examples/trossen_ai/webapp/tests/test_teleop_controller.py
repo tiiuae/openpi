@@ -61,3 +61,59 @@ def test_detached_step_feeds_decoded_joints_back_as_next_seed():
     ctrl.step(cmd, dt=1.0)
     # second decode_chunk seed == first decoded joints (continuity)
     assert conv.seeds[1][0] == sink.actions[0][1][0]
+
+
+class FakeRobot:
+    def __init__(self):
+        self._obs = {"cam_high": np.zeros((2, 2, 3), dtype=np.uint8), "j.pos": 0.0}
+    def get_observation(self):
+        return self._obs
+
+
+class FakeRobotController:
+    """Stands in for RobotController in test/autonomous paths."""
+    def __init__(self, execute_ok=True):
+        self.robot = FakeRobot()
+        self.executed = []
+        self.moves = []
+        self._ok = execute_ok
+    def execute_action(self, joints, feedforward_velocity=None):
+        self.executed.append(np.asarray(joints)); return self._ok
+    def move_to_start_position(self, goal, duration=5.0):
+        self.moves.append(np.asarray(goal))
+
+
+def test_go_home_reseeds_target_to_fk_of_home():
+    import teleop
+    conv, sink = FakeConverter(), RecordingSink()
+    ctrl = TeleopController(conv, sink, OneShotInput(None), controller=None,
+                            start14=np.zeros(14), control_freq=10)
+    home_cmd = TeleopCommand(lin=np.zeros(3), ang=np.zeros(3), go_home=True)
+    ctrl.step(home_cmd, dt=0.1)
+    # seed14 now equals HOME_POSITION, target16 == FK(HOME)
+    np.testing.assert_allclose(ctrl.seed14, teleop.HOME_POSITION)
+    assert ctrl.target16[0] == float(teleop.HOME_POSITION[0])
+    assert ("teleop_move", {"target": "home"}) in sink.status
+
+
+def test_autonomous_step_executes_and_streams_images():
+    conv, sink = FakeConverter(), RecordingSink()
+    fc = FakeRobotController()
+    cmd = TeleopCommand(lin=np.array([0.1, 0, 0]), ang=np.zeros(3), arm="left")
+    ctrl = TeleopController(conv, sink, OneShotInput(cmd), controller=fc,
+                            start14=np.zeros(14), control_freq=10,
+                            cam_keys=["cam_high"])
+    ctrl.step(cmd, dt=1.0)
+    assert len(fc.executed) == 1            # real execute attempted
+    assert len(sink.images) == 1            # camera frame streamed
+    assert "cam_high" in sink.images[0]
+
+
+def test_firmware_fault_emits_status():
+    conv, sink = FakeConverter(), RecordingSink()
+    fc = FakeRobotController(execute_ok=False)
+    cmd = TeleopCommand(lin=np.array([0.1, 0, 0]), ang=np.zeros(3), arm="left")
+    ctrl = TeleopController(conv, sink, OneShotInput(cmd), controller=fc,
+                            start14=np.zeros(14), control_freq=10)
+    ctrl.step(cmd, dt=1.0)
+    assert any(k == "firmware_error" for k, _ in sink.status)
