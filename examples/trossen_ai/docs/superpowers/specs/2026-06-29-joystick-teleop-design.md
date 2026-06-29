@@ -68,7 +68,9 @@ and in the pytest suite (same precedent as `/api/episode_trajectory`).
 ### New / changed modules
 
 - **`teleop.py`** (next to `trossen_bridge.py`) — the shared core:
-  - `TeleopCommand` dataclass: `lin[3]`, `ang[3]`, `grip` (float), `arm` ('left'|'right').
+  - `TeleopCommand` dataclass: `lin[3]`, `ang[3]`, `grip` (float), `arm`
+    ('left'|'right'), and edge events `switch_arm`, `go_home`, `go_sleep` (bool,
+    consumed once per press).
   - `TeleopInputSource` Protocol: `poll() -> TeleopCommand` (non-blocking, returns
     latest latched command).
   - `integrate_pose16(target16, cmd, dt, max_lin, max_ang, grip_rate) -> target16` —
@@ -137,12 +139,15 @@ velocity (hold-to-move). Sign = positive direction.
 | RT / LT | triggers | roll + / - |
 | A / B | buttons | gripper close / open |
 | X | button | switch active arm (L<->R), edge |
+| D-pad up | button | move to **Home** pose, then resume teleop, edge |
+| D-pad down | button | move to **Sleep** pose, then resume teleop, edge |
 | Back / Select | button | E-STOP |
 | Start | button | Stop session |
 
 Gamepad API indices: `axes[0]=LS_X, axes[1]=LS_Y, axes[2]=RS_X, axes[3]=RS_Y`;
-`buttons[4/5]=LB/RB, [6/7]=LT/RT, [0..3]=A/B/X/Y, [8/9]=Back/Start`.
-evdev codes: `ABS_X/ABS_Y/ABS_RX/ABS_RY/ABS_Z/ABS_RZ` + `BTN_*`.
+`buttons[4/5]=LB/RB, [6/7]=LT/RT, [0..3]=A/B/X/Y, [8/9]=Back/Start,
+[12/13]=D-up/D-down`.
+evdev codes: `ABS_X/ABS_Y/ABS_RX/ABS_RY/ABS_Z/ABS_RZ`, `ABS_HAT0Y` (D-pad) + `BTN_*`.
 
 ### Keyboard (fallback)
 
@@ -156,6 +161,8 @@ evdev codes: `ABS_X/ABS_Y/ABS_RX/ABS_RY/ABS_Z/ABS_RZ` + `BTN_*`.
 | U / O | roll + / - |
 | Z / C | gripper close / open |
 | Tab | switch active arm |
+| H | move to Home pose, then resume teleop |
+| P | move to Sleep (park) pose, then resume teleop |
 | Space | E-STOP |
 | Esc | Stop session |
 
@@ -167,6 +174,13 @@ evdev codes: `ABS_X/ABS_Y/ABS_RX/ABS_RY/ABS_Z/ABS_RZ` + `BTN_*`.
   `grip_rate` 0.5 /s, `deadzone` 0.1.
 - Per tick: `target_pose8[arm] += vel × dt`; xyz linear, quat small-angle increment,
   `grip_norm` clamped [0,1]; inactive arm holds.
+- **Home / Sleep edges** (in-session, distinct from the header movers that *end* the
+  session): on `go_home` / `go_sleep`, `TeleopController` drives **both** arms to the
+  goal joints (`HOME_POSITION` / `RobotController.SLEEP_POSITION`) —
+  test/autonomous via `controller.move_to_start_position` /
+  `move_to_sleep_position` (PCHIP smooth, reusing `RobotController`); detached snaps
+  `seed14` to the goal — then re-seeds `target16 = converter.joints14_to_ee16(goal)`
+  and **resumes** teleop from there. Velocity input is ignored during the move.
 
 ## Data flow
 
@@ -202,6 +216,8 @@ console sink (+ real robot in test/autonomous).
 - `TeleopController.step` test/autonomous path with a fake controller: asserts
   `execute_action` called (autonomous) / not called (test), images emitted when
   cameras present.
+- `go_home` / `go_sleep` edges re-seed `target16` to `FK(goal)` and resume (detached
+  path, no hardware): assert `seed14` and `target16` match the goal pose.
 - `WebTeleopInput` latch concurrency (writer thread vs `poll`).
 - `EvdevTeleopInput` code->command mapping via a pure mapping fn (no device needed).
 - Server: `/teleop` route returns HTML; `start_teleop` + `teleop_input` over WS via a
