@@ -70,6 +70,12 @@ def create_app(presets_dir: str | Path | None = None, runner_factory=None,
     def robot_urdf():
         return FileResponse(URDF_FILE, media_type="application/xml")
 
+    @app.get("/favicon.ico")
+    def favicon():
+        # Browsers implicitly request /favicon.ico; serve the robot-arm icon so
+        # it no longer 404s (the <link rel="icon"> tags also point here).
+        return FileResponse(STATIC_DIR / "robot-arm.png", media_type="image/png")
+
     @app.get("/")
     def index():
         return FileResponse(STATIC_DIR / "index.html")
