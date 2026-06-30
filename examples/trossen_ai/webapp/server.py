@@ -162,7 +162,9 @@ def create_app(presets_dir: str | Path | None = None, runner_factory=None,
     @app.websocket("/ws/telemetry")
     async def telemetry_ws(ws: WebSocket):
         await ws.accept()
-        q: queue.Queue = queue.Queue()
+        # Bounded: QueueSink drops the oldest event when full, so a fast control
+        # loop can't build a backlog that lags the live chart behind the robot.
+        q: queue.Queue = queue.Queue(maxsize=1000)
         metrics = Metrics()
         loop = asyncio.get_event_loop()
 

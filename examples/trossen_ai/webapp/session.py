@@ -88,10 +88,17 @@ class SessionManager:
         if thread is not None:
             thread.join(timeout=timeout)
             if thread.is_alive():
+                # Keep the refs: a still-alive thread still holds the cameras and
+                # arms. Clearing them here would make is_running() report idle, so
+                # the next start() would collide on the busy camera. Leaving them
+                # makes start() raise "already running" until the orphan finishes
+                # its blocking call, runs cleanup, and releases the hardware.
                 logger.warning(
-                    "Session thread did not stop within %ss; it may still be running",
+                    "Session thread did not stop within %ss; still running, "
+                    "holding hardware until it exits",
                     timeout,
                 )
+                return
         with self._lock:
             self._runner, self._thread = None, None
 
@@ -104,9 +111,13 @@ class SessionManager:
         if thread is not None:
             thread.join(timeout=timeout)
             if thread.is_alive():
+                # See stop(): keep refs so a still-running thread keeps the
+                # session marked busy until it releases the hardware.
                 logger.warning(
-                    "Session thread did not stop within %ss; it may still be running",
+                    "Session thread did not stop within %ss; still running, "
+                    "holding hardware until it exits",
                     timeout,
                 )
+                return
         with self._lock:
             self._runner, self._thread = None, None

@@ -147,9 +147,17 @@ class TrossenOpenPIBridge:
             # Velocity-limit the commanded action: cap per-joint delta vs the last
             # command so a policy/IK jump is spread over several control steps
             # instead of faulting the firmware ("joint velocity limit exceeded").
-            if self.max_joint_speed > 0 and self._last_commanded is not None:
-                full_action = limit_joint_velocity(self._last_commanded, full_action, self.dt, self.max_joint_speed)
-            self._last_commanded = np.asarray(full_action, dtype=float).flatten()
+            prev_cmd = self._last_commanded
+            if self.max_joint_speed > 0 and prev_cmd is not None:
+                full_action = limit_joint_velocity(prev_cmd, full_action, self.dt, self.max_joint_speed)
+            cmd = np.asarray(full_action, dtype=float).flatten()
+            # Feed-forward velocity from the *commanded* trajectory, not the
+            # measured pose: send_action_smooth's measured-pose fallback lags and
+            # amplifies encoder jitter into a shaky, audible "move-and-brake"
+            # chatter. The commanded delta is the smooth velocity the arm should
+            # carry through the waypoint.
+            ff_vel = (cmd - prev_cmd) / self.dt if prev_cmd is not None else None
+            self._last_commanded = cmd
 
             joint_features = list(self.robot._joint_ft.keys())  # noqa
             action_dict = {k: full_action[i] for i, k in enumerate(joint_features)}
@@ -158,7 +166,7 @@ class TrossenOpenPIBridge:
                 if self.smooth_streaming:
                     from robot_control import send_action_smooth  # noqa
 
-                    send_action_smooth(self.robot, full_action, self.dt)
+                    send_action_smooth(self.robot, full_action, self.dt, feedforward_velocity=ff_vel)
                 else:
                     self.robot.send_action(action_dict)
             except Exception as exc:
@@ -208,7 +216,7 @@ class TrossenOpenPIBridge:
         start_time = time.time()
         end_time = start_time + duration
 
-        while time.time() < end_time:
+        while time.time() < end_time and self.is_running:  # abort ramp on Stop
             loop_start_time = time.time()
             current_time = loop_start_time - start_time
             positions = interpolator_position(current_time)
@@ -294,6 +302,8 @@ class TrossenOpenPIBridge:
                     self._emit_cameras(obs_raw)
                     # Synchronous: request new chunk every rate_of_inference steps
                     if self.current_action_chunk is None or self.action_chunk_idx >= self.rate_of_inference:
+                        if not self.is_running:  # Stop arrived; don't block on a new infer
+                            break
                         observation = self._build_observation(obs_raw, task_prompt)
                         logger.info(f"Step {self.episode_step}: Requesting new action chunk")
                         _t0 = time.perf_counter()
@@ -364,7 +374,10 @@ class TrossenOpenPIBridge:
                 if self.dt - dt_s > 0:
                     time.sleep(self.dt - dt_s)
                 loop_s = time.perf_counter() - start_loop_time
-                logger.info(f"time: {loop_s * 1e3:.2f}ms ({1 / loop_s:.0f} Hz)")
+                # Per-step timing is debug-only: at 25 Hz this line (forwarded to
+                # the browser log) floods the telemetry queue and starves the
+                # action/image events, making the live chart lag minutes behind.
+                logger.debug(f"time: {loop_s * 1e3:.2f}ms ({1 / loop_s:.0f} Hz)")
 
         finally:
             if self.async_inference:

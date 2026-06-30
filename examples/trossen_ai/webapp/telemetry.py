@@ -51,8 +51,28 @@ class QueueSink:
         self._last_chunk: tuple[int, np.ndarray] | None = None
         self._last_image_ts = float("-inf")
 
+    def _put(self, evt: dict) -> None:
+        """Enqueue an event, dropping the oldest if the queue is full.
+
+        A bounded queue + drop-oldest keeps the browser view *current* under a
+        fast control loop: if the producer outruns the WebSocket, stale events
+        are discarded instead of building a multi-minute backlog that would make
+        the chart lag far behind the robot and take ages to drain after Stop.
+        """
+        try:
+            self._q.put_nowait(evt)
+        except queue.Full:
+            try:
+                self._q.get_nowait()  # evict oldest, then retry
+            except queue.Empty:
+                pass
+            try:
+                self._q.put_nowait(evt)
+            except queue.Full:
+                pass
+
     def on_log(self, level: str, msg: str, ts: float) -> None:
-        self._q.put({"type": "log", "level": level, "msg": msg, "ts": ts})
+        self._put({"type": "log", "level": level, "msg": msg, "ts": ts})
 
     def on_action(self, step: int, action: np.ndarray, ts: float) -> None:
         raw = None
@@ -61,7 +81,7 @@ class QueueSink:
             offset = step - qs
             if 0 <= offset < len(chunk):
                 raw = np.asarray(chunk[offset]).flatten().tolist()
-        self._q.put({
+        self._put({
             "type": "action",
             "step": step,
             "action": np.asarray(action).flatten().tolist(),
@@ -70,18 +90,18 @@ class QueueSink:
         })
 
     def on_inference(self, rtt_ms: float, ts: float) -> None:
-        self._q.put({"type": "inference", "rtt_ms": rtt_ms, "ts": ts})
+        self._put({"type": "inference", "rtt_ms": rtt_ms, "ts": ts})
 
     def on_chunk(self, query_step: int, chunk: np.ndarray, ts: float) -> None:
         arr = np.asarray(chunk)
         self._last_chunk = (query_step, arr)
-        self._q.put({"type": "chunk", "query_step": query_step, "len": int(len(arr)), "ts": ts})
+        self._put({"type": "chunk", "query_step": query_step, "len": int(len(arr)), "ts": ts})
 
     def on_overlap(self, step: int, count: int) -> None:
-        self._q.put({"type": "overlap", "step": step, "count": count})
+        self._put({"type": "overlap", "step": step, "count": count})
 
     def on_weights(self, step: int, weights: np.ndarray, ts: float) -> None:
-        self._q.put({
+        self._put({
             "type": "weights",
             "step": step,
             "weights": np.asarray(weights).flatten().tolist(),
@@ -93,7 +113,7 @@ class QueueSink:
             return
         self._last_image_ts = ts
         encoded = {k: base64.b64encode(v).decode("ascii") for k, v in images.items()}
-        self._q.put({"type": "images", "images": encoded, "ts": ts})
+        self._put({"type": "images", "images": encoded, "ts": ts})
 
     def on_status(self, kind: str, payload: dict) -> None:
-        self._q.put({"type": "status", "kind": kind, "payload": payload})
+        self._put({"type": "status", "kind": kind, "payload": payload})
