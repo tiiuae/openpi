@@ -25,10 +25,19 @@ document.addEventListener("DOMContentLoaded", () => {
   }
 
   onMessage("action", (e) => { if (jointCharts) jointCharts.pushAction(e.step, e.action); });
+  // Reuse one <img> per camera and just swap its .src each frame. Rebuilding the
+  // DOM every frame (old behaviour) tore down + re-laid-out the strip on every
+  // inference, which read as a fast full-page "refresh"/flicker.
+  const camImgs = {};
   onMessage("images", (e) => {
-    const ib = $("images-box"); ib.innerHTML = "";
+    const ib = $("images-box");
     for (const [name, b64] of Object.entries(e.images)) {
-      const img = new Image(); img.src = "data:image/jpeg;base64," + b64; img.title = name; ib.appendChild(img);
+      let img = camImgs[name];
+      if (!img) {
+        img = new Image(); img.title = name; img.className = "cam-frame";
+        camImgs[name] = img; ib.appendChild(img);
+      }
+      img.src = "data:image/jpeg;base64," + b64;
     }
   });
   onMessage("metrics", (e) => {

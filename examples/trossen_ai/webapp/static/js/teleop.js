@@ -62,10 +62,18 @@ document.addEventListener("DOMContentLoaded", async () => {
   });
 
   onMessage("action", (e) => view.setFrameJoints(e.action));
+  // Reuse one <img> per camera (swap .src) instead of rebuilding the strip every
+  // frame — avoids layout-thrash flicker.
+  const camImgs = {};
   onMessage("images", (e) => {
-    const ib = $("images-box"); ib.innerHTML = "";
+    const ib = $("images-box");
     for (const [name, b64] of Object.entries(e.images)) {
-      const img = new Image(); img.src = "data:image/jpeg;base64," + b64; img.title = name; ib.appendChild(img);
+      let img = camImgs[name];
+      if (!img) {
+        img = new Image(); img.title = name; img.className = "cam-frame";
+        camImgs[name] = img; ib.appendChild(img);
+      }
+      img.src = "data:image/jpeg;base64," + b64;
     }
   });
   onMessage("status", (e) => {

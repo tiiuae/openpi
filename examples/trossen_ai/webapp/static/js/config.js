@@ -17,22 +17,22 @@ const GROUPS = [
     { key:"adapter", label:"Action space", type:"select",
       options:[["joint","Joint"],["ee","End-effector"]], def:"joint",
       help:"Joint = raw 14-D joints. End-effector = EE poses solved to joints via IK." },
-    { key:"task_prompt", label:"Task prompt", type:"text", def:"move the arm to the left",
+    { key:"task_prompt", label:"Task prompt", type:"textarea", rows:3,
+      def:"Pick up the yellow object and place it in the fixed orange basket",
       help:"Natural-language instruction sent to the policy." },
-    { key:"starvla", label:"StarVLA input mode (224×224 RGB)", type:"checkbox", def:false,
-      help:"Preprocess camera images to 224×224 RGB (PIL) for StarVLA-family policies. Off uses the default training resize." },
   ]},
   { title: "Action smoothing", fields: [
-    { key:"ensemble_type", label:"Action smoothing", type:"select",
-      options:[["exp","Exponential"],["cogact","CogACT"],["none","None"]], def:"exp",
-      help:"Blends overlapping predicted action chunks. Exponential = recency-weighted; CogACT = learned weighting; None = latest only." },
-    { key:"cogact_mode", label:"CogACT blend mode", type:"select",
-      options:[["cogact","cogact"],["latest","latest"],["hybrid","hybrid"]], def:"cogact",
-      help:"Weighting variant used only when smoothing = CogACT." },
+    { key:"smoothing", label:"Temporal smoothing", type:"checkbox", def:true,
+      help:"Blend overlapping predicted action chunks (exponential-decay temporal ensemble) to smooth motion. Off = use the latest chunk's action directly." },
+    { key:"smoothing_decay", label:"Smoothing decay", type:"number", step:0.1, def:1.0,
+      disabledWhen:(c)=>!c.smoothing,
+      help:"Higher = trust older, already-committed predictions more (smoother, less reactive). 0 = plain average of overlaps." },
     { key:"rate_of_inference", label:"Inference interval (steps)", type:"number", def:20,
-      help:"Run a new policy inference every N control steps." },
+      disabledWhen:(c)=>c.async_inference,
+      help:"Run a new policy inference every N control steps. Ignored with async inference (async queries every step)." },
     { key:"async_inference", label:"Async inference", type:"checkbox", def:false,
-      help:"Run inference in a background thread (requires a smoothing method other than None)." },
+      disabledWhen:(c)=>!c.smoothing || c.adapter === "ee",
+      help:"Run inference in a background thread. Requires smoothing on and Joint action space (EE async is unsupported)." },
   ]},
   { title: "Arms", fields: [
     { key:"use_left_arm_only", label:"Left arm only", type:"checkbox", def:false,
@@ -45,6 +45,8 @@ const GROUPS = [
       help:"How strongly IK matches target orientation vs position." },
     { key:"ik_pos_tol_m", label:"IK position tolerance (m)", type:"number", step:0.001, def:0.001,
       help:"Acceptable IK position error in metres." },
+    { key:"ik_max_joint_jump_deg", label:"Branch-flip guard (deg)", type:"number", step:5, def:0,
+      help:"Reject any single IK solve whose joint angle jumps more than this vs the previous frame (a branch flip) and hold the last good pose. 0 disables. Catches chaotic flips that orientation weight can't. Start with a dry run before enabling on the robot." },
   ]},
   { title: "Motion tuning (Advanced)", fields: [
     { key:"smooth_streaming", label:"Smooth streaming (feed-forward velocity)", type:"checkbox", def:false,
@@ -65,9 +67,28 @@ export function renderConfig(container) {
     GROUPS.map(g => `<section class="card" data-group="${g.title}" ${g.eeOnly?'data-ee-only="1"':''}>
       <h2>${g.title}</h2>${g.fields.map(fieldHtml).join("")}</section>`).join("")
     + presetsHtml() + modeHtml();
-  $("cf_adapter")?.addEventListener("change", updateEEVisibility);
+  // Any field change can flip a dependent field's enabled state (e.g. async
+  // depends on smoothing + adapter), so re-evaluate on every change.
+  container.addEventListener("change", () => { updateEEVisibility(); updateDependencies(); });
   updateEEVisibility();
+  updateDependencies();
   wirePresets();
+}
+
+// Enable/disable fields whose `disabledWhen(cfg)` predicate is true, dimming the
+// row. Disabled checkboxes are forced off so an invalid combo (e.g. async with
+// smoothing off) is never submitted.
+function updateDependencies() {
+  const cfg = readConfig();
+  GROUPS.forEach(g => g.fields.forEach(f => {
+    if (!f.disabledWhen) return;
+    const el = $(`cf_${f.key}`); if (!el) return;
+    const dis = !!f.disabledWhen(cfg);
+    el.disabled = dis;
+    if (dis && f.type === "checkbox" && el.checked) el.checked = false;
+    const row = el.closest(".field-inline, .field-col, .checkbox-label");
+    if (row) row.classList.toggle("row-disabled", dis);
+  }));
 }
 
 function fieldHtml(f) {
@@ -75,6 +96,9 @@ function fieldHtml(f) {
   const id = `cf_${f.key}`;
   if (f.type === "checkbox")
     return `<label class="checkbox-label"><input type="checkbox" name="${f.key}" id="${id}">${f.label}${help}</label>`;
+  if (f.type === "textarea")
+    return `<div class="field-col"><label>${f.label}${help}</label>
+      <textarea name="${f.key}" id="${id}" rows="${f.rows || 3}"></textarea></div>`;
   if (f.type === "select")
     return `<div class="field-inline"><label>${f.label}${help}</label>
       <select name="${f.key}" id="${id}">${f.options.map(([v,t])=>`<option value="${v}">${t}</option>`).join("")}</select></div>`;
@@ -118,6 +142,7 @@ export function applyConfig(cfg) {
   }));
   if (cfg.mode && $("mode-select")) $("mode-select").value = cfg.mode;
   updateEEVisibility();
+  updateDependencies();
 }
 
 function updateEEVisibility() {

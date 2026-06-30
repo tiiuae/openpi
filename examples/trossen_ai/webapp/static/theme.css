@@ -566,7 +566,21 @@ button {
 
 /* ── Cameras strip ────────────────────────────────────────────── */
 .cameras-strip { display:flex; gap:8px; flex-wrap:wrap; }
-.cameras-strip img { max-height:200px; border-radius:4px; border:1px solid var(--border); }
+/* Fixed frame box (cameras are 4:3) so a new frame can't resize the strip and
+   shift the page layout. object-fit keeps the image undistorted. */
+.cameras-strip img, .cam-frame {
+  width:320px; aspect-ratio:4/3; object-fit:cover;
+  border-radius:4px; border:1px solid var(--border); background:var(--bg);
+}
+
+/* Textarea fields (e.g. task prompt) + dependency-disabled rows. */
+.field-col { display:flex; flex-direction:column; gap:4px; margin:6px 0; }
+.field-col textarea {
+  width:100%; box-sizing:border-box; resize:vertical; min-height:48px;
+  background:var(--bg); color:var(--text); border:1px solid var(--border);
+  border-radius:4px; padding:6px 8px; font:inherit;
+}
+.row-disabled { opacity:.45; }
 
 /* ── Log panel (terminal parity) ──────────────────────────────── */
 .log-header { display:flex; justify-content:space-between; align-items:center; }
