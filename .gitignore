@@ -183,3 +183,4 @@ cython_debug/
 
 # Debugging directories.
 examples/trossen_ai/debug
+get_inspired*
