@@ -49,11 +49,24 @@ def test_send_action_smooth_sets_feedforward_velocity():
     send_action_smooth(robot, target, dt=0.04)
     assert len(robot.left_arm.calls) == 1
     call = robot.left_arm.calls[0]
-    assert call["goal_time"] == pytest.approx(0.04)
+    # goal_time must clear the firmware's 0.2s quintic threshold, otherwise the
+    # firmware uses linear interpolation and ignores the feed-forward velocity.
+    assert call["goal_time"] > robot_control._QUINTIC_MIN_GOAL_TIME
     assert call["blocking"] is False
     # feedforward velocity == (target - current) / dt, current is zeros
     assert call["ff"][0] == pytest.approx(0.0)
     assert call["ff"][1] == pytest.approx(0.1 / 0.04)
+
+
+def test_send_action_smooth_respects_goal_time_but_clamps_to_quintic():
+    robot = FakeRobot()
+    target = np.zeros(14)
+    # An explicit horizon above the threshold is honoured as-is...
+    send_action_smooth(robot, target, dt=0.04, goal_time=0.3)
+    assert robot.left_arm.calls[-1]["goal_time"] == pytest.approx(0.3)
+    # ...but a too-small one (e.g. multiplier*dt = 3*0.04) is raised above 0.2s.
+    send_action_smooth(robot, target, dt=0.04, goal_time=0.12)
+    assert robot.left_arm.calls[-1]["goal_time"] > robot_control._QUINTIC_MIN_GOAL_TIME
 
 
 def test_execute_action_smooth_path_used_when_enabled():

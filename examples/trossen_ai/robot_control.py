@@ -23,25 +23,52 @@ logger = logging.getLogger(__name__)
 HOME_POSITION = np.array([0, np.pi / 3, np.pi / 6, np.pi / 5, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0], dtype=float)
 
 
+# The Trossen firmware chooses its interpolation from goal_time
+# (set_all_positions docs): goal_time > 0.2s -> quintic polynomial, which is the
+# ONLY mode that uses goal_feedforward_velocities; 0.001-0.2s -> linear, which
+# IGNORES the feed-forward terms; below that -> applied immediately. So a
+# feed-forward velocity only does anything when goal_time clears 0.2s.
+_QUINTIC_MIN_GOAL_TIME = 0.2
+
+
 def send_action_smooth(
-    robot, action14: np.ndarray, dt: float, feedforward_velocity: np.ndarray | None = None
+    robot,
+    action14: np.ndarray,
+    dt: float,
+    feedforward_velocity: np.ndarray | None = None,
+    goal_time: float | None = None,
 ) -> None:
     """Stream a 14-D joint target with feed-forward velocity for natural motion.
 
-    Bypasses robot.send_action (which sends zero feed-forward velocity, planning
-    to arrive at rest at every waypoint -> stutter). The arm carries velocity
-    through each waypoint, and goal_time = dt so the firmware does not
-    over/under-shoot the control period.
+    How the firmware uses this (verified against the trossen_arm SDK, not just
+    its docstring): set_all_positions plans a trajectory from the arm's current
+    (position, velocity) to ``(goal_position, goal_feedforward_velocity)`` over
+    ``goal_time``. With the feed-forward velocity set to the streaming
+    trajectory velocity, the planned path *passes through* the waypoint at speed
+    instead of decelerating to rest at it — that is what removes the stutter.
 
-    ``feedforward_velocity`` is the intended per-joint velocity (rad/s). When the
-    caller already knows the commanded trajectory (dataset replay), it should
-    pass ``(target - prev_command)/dt`` here: that is the *smooth* trajectory
-    velocity. Falling back to ``(target - measured)/dt`` (when None) reads the
-    live pose, which lags and carries encoder jitter; dividing that by the small
-    control period dt amplifies the noise into a shaky, audible command. The
-    autonomous loop, which has no prior commanded target, uses the fallback.
+    The catch the old implementation missed: the firmware only runs the quintic
+    interpolation that honours the feed-forward velocity when ``goal_time`` is
+    above ~0.2s; at the old ``goal_time = dt`` (0.04s @ 25Hz) it silently used
+    linear interpolation, dropped the feed-forward entirely, and re-planned a
+    fresh linear segment every control period — the "accelerate then brake"
+    chatter. So we plan over a horizon longer than that threshold while still
+    issuing a new command every ``dt``: the arm follows only the smooth early
+    part of each quintic toward the (continuously updated) target, and the next
+    command supersedes the plan long before it would brake at the goal. A larger
+    ``goal_time`` is smoother but lags the target more.
+
+    ``feedforward_velocity`` is the per-joint velocity (rad/s) the arm should
+    carry through the waypoint. Prefer the *commanded* trajectory velocity
+    ``(target - prev_command)/dt``. The ``None`` fallback derives it from the
+    measured pose ``(target - measured)/dt``, which lags and carries encoder
+    jitter — usable only when no commanded history exists.
     """
     action14 = np.asarray(action14, dtype=float).flatten()
+    # Horizon: caller's goal_time (e.g. min_time_to_move_multiplier * dt) but
+    # never below the quintic threshold, else the feed-forward is ignored.
+    horizon = goal_time if goal_time is not None else max(0.25, 5.0 * dt)
+    horizon = max(horizon, _QUINTIC_MIN_GOAL_TIME + 0.01)
     if feedforward_velocity is not None:
         ff = np.asarray(feedforward_velocity, dtype=float).flatten()
     else:
@@ -53,13 +80,13 @@ def send_action_smooth(
     n = len(robot.left_arm.config.joint_names)
     robot.left_arm.driver.set_all_positions(
         list(action14[:n]),
-        goal_time=dt,
+        goal_time=horizon,
         blocking=False,
         goal_feedforward_velocities=list(ff[:n]),
     )
     robot.right_arm.driver.set_all_positions(
         list(action14[n : n * 2]),
-        goal_time=dt,
+        goal_time=horizon,
         blocking=False,
         goal_feedforward_velocities=list(ff[n : n * 2]),
     )

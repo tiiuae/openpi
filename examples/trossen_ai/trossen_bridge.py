@@ -67,6 +67,10 @@ class TrossenOpenPIBridge:
             loop_rate=loop_rate,
         )
         self.smooth_streaming = smooth_streaming
+        # Goal-time horizon for smooth streaming (s). The "Goal-time multiplier"
+        # knob scales it; send_action_smooth raises it to the firmware's quintic
+        # threshold if needed so the feed-forward velocity is actually honoured.
+        self.min_time_to_move_multiplier = min_time_to_move_multiplier
         # Per-joint velocity cap (rad/s) applied to every commanded action so a
         # policy/IK discontinuity can't trip the firmware velocity limit. <=0 disables.
         self.max_joint_speed = max_joint_speed
@@ -166,7 +170,11 @@ class TrossenOpenPIBridge:
                 if self.smooth_streaming:
                     from robot_control import send_action_smooth  # noqa
 
-                    send_action_smooth(self.robot, full_action, self.dt, feedforward_velocity=ff_vel)
+                    send_action_smooth(
+                        self.robot, full_action, self.dt,
+                        feedforward_velocity=ff_vel,
+                        goal_time=self.min_time_to_move_multiplier * self.dt,
+                    )
                 else:
                     self.robot.send_action(action_dict)
             except Exception as exc:
