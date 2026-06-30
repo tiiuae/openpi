@@ -5,7 +5,7 @@ from webapp.config_store import ConfigStore
 
 def test_save_then_load_round_trip(tmp_path):
     store = ConfigStore(tmp_path)
-    cfg = {"policy_host": "192.168.1.9", "control_freq": 25, "ensemble_type": "cogact"}
+    cfg = {"policy_host": "192.168.1.9", "control_freq": 25, "smoothing": True}
     store.save("rig-a", cfg)
     assert store.load("rig-a") == cfg
 

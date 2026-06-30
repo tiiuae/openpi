@@ -1,7 +1,7 @@
 """Background inference worker.
 
 Runs policy inference off the control-loop thread so the loop never blocks on
-network / GPU latency. Depends only on the :class:`ActionEnsemble` abstraction.
+network / GPU latency. Depends only on the :class:`TemporalEnsemble`.
 """
 
 from __future__ import annotations
@@ -10,7 +10,7 @@ import logging
 import threading
 import time
 
-from ensemble import ActionEnsemble
+from ensemble import TemporalEnsemble
 import numpy as np
 from webapp.telemetry import NullSink
 from webapp.telemetry import TelemetrySink
@@ -27,8 +27,8 @@ class AsyncPolicyWorker:
     stale observation is silently dropped (latest-wins semantics).  Each
     completed chunk is added directly to the ensemble.
 
-    This pairs naturally with CogACTEnsemble (query every step, blend by
-    agreement) but works with any ActionEnsemble.
+    The control loop submits a fresh observation every step and the worker adds
+    each completed chunk to the temporal ensemble, which blends overlaps.
 
     Usage::
 
@@ -50,7 +50,7 @@ class AsyncPolicyWorker:
     def __init__(
         self,
         policy_client,
-        ensemble: ActionEnsemble,
+        ensemble: TemporalEnsemble,
         action_dim: int,
         sink: TelemetrySink = NullSink(),  # noqa
     ) -> None:

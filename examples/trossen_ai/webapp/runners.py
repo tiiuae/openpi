@@ -36,10 +36,16 @@ class LiveRunner:
 
         adapter = JointAdapter()
         if config.get("adapter") == "ee":
+            # >0 enables the in-IK branch-flip guard (hold last good pose when a
+            # single solve jumps more than N deg vs the previous frame); 0
+            # disables. Same knob as replay; decode_chunk is seeded per inference
+            # from the measured joints, so frame 0 of each chunk is exempt.
+            jump_deg = float(config.get("ik_max_joint_jump_deg", 0) or 0)
             conv = EEToJointsConverter(
                 make_kinematics(),
                 orientation_weight=float(config.get("ik_orientation_weight", 0.01)),
                 pos_tol_m=float(config.get("ik_pos_tol_m", 1e-3)),
+                max_joint_jump_deg=(jump_deg if jump_deg > 0 else None),
             )
             adapter = EEAdapter(conv)
         return TrossenOpenPIBridge(
@@ -49,12 +55,11 @@ class LiveRunner:
             test_mode=config.get("mode", "test"),
             max_steps=int(config.get("max_steps", 1000)),
             rate_of_inference=int(config.get("rate_of_inference", 20)),
-            ensemble_type=config.get("ensemble_type", "exp"),
-            cogact_mode=config.get("cogact_mode", "cogact"),
+            smoothing=bool(config.get("smoothing", True)),
+            smoothing_decay=float(config.get("smoothing_decay", 1.0)),
             async_inference=bool(config.get("async_inference", False)),
             use_left_arm_only=bool(config.get("use_left_arm_only", False)),
             use_right_arm_only=bool(config.get("use_right_arm_only", False)),
-            starvla=bool(config.get("starvla", False)),
             smooth_streaming=bool(config.get("smooth_streaming", False)),
             min_time_to_move_multiplier=float(config.get("min_time_to_move_multiplier", 3.0)),
             loop_rate=int(config.get("loop_rate", config.get("control_freq", 25))),
@@ -87,6 +92,10 @@ class LiveRunner:
             self._bridge.run_episode(task_prompt=cfg.get("task_prompt", ""))
         finally:
             self._bridge.cleanup()
+            # Always tell the UI the session ended (normal finish, max_steps, or
+            # Stop), so the badge returns to idle and Start re-enables. Without
+            # this the UI stays "running" forever after a clean stop.
+            self._sink.on_status("stopped", {"reason": "finished"})
 
     def stop(self) -> None:
         self._stopped = True

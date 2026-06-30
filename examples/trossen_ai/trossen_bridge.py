@@ -11,7 +11,6 @@ import cv2
 from ensemble import make_ensemble
 import numpy as np
 from openpi_client import websocket_client_policy
-from PIL import Image
 from robot_control import build_stationary_robot
 from robot_control import limit_joint_velocity
 from scipy.interpolate import PchipInterpolator
@@ -38,13 +37,12 @@ class TrossenOpenPIBridge:
         max_steps: int = 1000,
         action_chunk_size: int = 10,
         rate_of_inference: int = 10,
-        ensemble_type: str = "exp",
-        cogact_mode: str = "cogact",
+        smoothing: bool = True,
+        smoothing_decay: float = 1.0,
         async_inference: bool = False,  # noqa
         log_dir: str | None = None,
         use_left_arm_only: bool = False,  # noqa
         use_right_arm_only: bool = False,  # noqa
-        starvla: bool = False,  # noqa
         adapter: "ActionSpaceAdapter | None" = None,
         sink: TelemetrySink = NullSink(),  # noqa
         smooth_streaming: bool = False,  # noqa
@@ -54,7 +52,6 @@ class TrossenOpenPIBridge:
     ):
         self.adapter = adapter if adapter is not None else JointAdapter()
         self.sink = sink
-        self.starvla = starvla
         self.control_frequency = control_frequency
         self.max_steps = max_steps
         self.dt = 1.0 / control_frequency
@@ -85,10 +82,10 @@ class TrossenOpenPIBridge:
         self.rate_of_inference = rate_of_inference  # Number of control steps per policy inference
         self.action_dim = len(self.robot._joint_ft)  # 7 joints per arm * 2 arms # noqa
         self.state_dim = self.adapter.state_dim
-        self.ensemble = make_ensemble(ensemble_type, cogact_mode=cogact_mode)
+        self.ensemble = make_ensemble(smoothing, decay=smoothing_decay)
 
         if async_inference and self.ensemble is None:
-            raise ValueError("--async_inference requires an ensemble (ensemble_type cannot be 'none')")
+            raise ValueError("Async inference requires smoothing (it cannot be disabled).")
         self.async_inference = async_inference
         self._policy_worker = (
             AsyncPolicyWorker(self.policy_client, self.ensemble, self.action_dim, sink=self.sink)
@@ -182,15 +179,20 @@ class TrossenOpenPIBridge:
         images = {}
         for cam in cameras:
             image_hwc = observation_dict[cam]
-            if self.starvla:
-                image_rgb = np.array(Image.fromarray(cv2.cvtColor(image_hwc, cv2.COLOR_BGR2RGB)).resize((224, 224)))
-            else:
-                image_resized = cv2.resize(image_hwc, DEFAULT_TRAINING_SIZE, interpolation=cv2.INTER_LANCZOS4)
-                image_rgb = cv2.cvtColor(image_resized, cv2.COLOR_BGR2RGB)
+            image_resized = cv2.resize(image_hwc, DEFAULT_TRAINING_SIZE, interpolation=cv2.INTER_LANCZOS4)
+            image_rgb = cv2.cvtColor(image_resized, cv2.COLOR_BGR2RGB)
             images[cam] = np.transpose(image_rgb, (2, 0, 1))
-        from camera_utils import encode_camera_jpegs
-        self.sink.on_images(encode_camera_jpegs(observation_dict, cameras), time.time())
         return {"state": state, "images": images, "prompt": task_prompt}
+
+    def _emit_cameras(self, observation_dict: dict) -> None:
+        """Push the current camera frames to the telemetry sink for the live UI.
+
+        Called every control step (not just on inference) so the browser sees a
+        live feed; QueueSink throttles the actual send by wall-clock interval.
+        """
+        from camera_utils import encode_camera_jpegs
+        cameras = list(self.robot._cameras_ft.keys())  # noqa
+        self.sink.on_images(encode_camera_jpegs(observation_dict, cameras), time.time())
 
     def move_to_start_position(self, goal_position: np.ndarray, duration: float = 5.0):
         """Smoothly move the arm to a start position using PCHIP interpolation."""
@@ -270,7 +272,9 @@ class TrossenOpenPIBridge:
 
                 if self.async_inference:
                     # Submit fresh observation every step — non-blocking
-                    obs = self._build_observation(self.robot.get_observation(), task_prompt)
+                    obs_raw = self.robot.get_observation()
+                    self._emit_cameras(obs_raw)  # live feed every step (throttled in sink)
+                    obs = self._build_observation(obs_raw, task_prompt)
                     self._policy_worker.submit(obs, self.episode_step)
                     if is_first_step:
                         logger.info("Waiting for first inference result...")
@@ -284,9 +288,12 @@ class TrossenOpenPIBridge:
                         continue
 
                 else:
+                    # Read once per step so the camera feed stays live even
+                    # between inferences; reuse the same frame for inference.
+                    obs_raw = self.robot.get_observation()
+                    self._emit_cameras(obs_raw)
                     # Synchronous: request new chunk every rate_of_inference steps
                     if self.current_action_chunk is None or self.action_chunk_idx >= self.rate_of_inference:
-                        obs_raw = self.robot.get_observation()
                         observation = self._build_observation(obs_raw, task_prompt)
                         logger.info(f"Step {self.episode_step}: Requesting new action chunk")
                         _t0 = time.perf_counter()

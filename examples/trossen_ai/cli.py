@@ -39,14 +39,11 @@ def live_joint(
     task_prompt: str = typer.Option("move the arm to the left", help="Task description"),
     max_steps: int = typer.Option(1000, help="Maximum steps per episode"),
     action_chunk_size: int = typer.Option(25, help="Actions predicted per inference"),
-    rate_of_inference: int = typer.Option(20, help="Control steps between inferences"),
-    ensemble_type: str = typer.Option("exp", help="Action ensemble strategy: exp|cogact|none"),
-    cogact_mode: str = typer.Option(
-        "cogact", help="CogACT weighting mode (only with --ensemble-type cogact): cogact|latest|hybrid"
-    ),
+    rate_of_inference: int = typer.Option(20, help="Control steps between inferences (ignored with --async-inference)"),
+    smoothing: bool = typer.Option(True, help="Temporal action smoothing (blend overlapping chunks)"),
+    smoothing_decay: float = typer.Option(1.0, help="Smoothing decay (higher = trust older predictions more)"),
     log_dir: Optional[str] = typer.Option(None, help="Directory for per-episode overlap JSON"),
-    async_inference: bool = typer.Option(False, help="Background-thread inference (needs ensemble)"),
-    starvla: bool = typer.Option(False, help="StarVLA 224x224 PIL resizing"),
+    async_inference: bool = typer.Option(False, help="Background-thread inference (needs --smoothing)"),
     use_left_arm_only: bool = typer.Option(False, help="Only move the left arm"),
     use_right_arm_only: bool = typer.Option(False, help="Only move the right arm"),
 ) -> None:
@@ -62,13 +59,12 @@ def live_joint(
         max_steps=max_steps,
         action_chunk_size=action_chunk_size,
         rate_of_inference=rate_of_inference,
-        ensemble_type=ensemble_type,
-        cogact_mode=cogact_mode,
+        smoothing=smoothing,
+        smoothing_decay=smoothing_decay,
         async_inference=async_inference,
         log_dir=log_dir,
         use_left_arm_only=use_left_arm_only,
         use_right_arm_only=use_right_arm_only,
-        starvla=starvla,
         adapter=JointAdapter(),
     )
     bridge.autonomous_mode(task_prompt=task_prompt)
@@ -85,13 +81,10 @@ def live_ee(
     max_steps: int = typer.Option(1000, help="Maximum steps per episode"),
     action_chunk_size: int = typer.Option(25, help="Actions predicted per inference"),
     rate_of_inference: int = typer.Option(20, help="Control steps between inferences"),
-    ensemble_type: str = typer.Option("exp", help="Action ensemble strategy: exp|cogact|none"),
-    cogact_mode: str = typer.Option(
-        "cogact", help="CogACT weighting mode (only with --ensemble-type cogact): cogact|latest|hybrid"
-    ),
+    smoothing: bool = typer.Option(True, help="Temporal action smoothing (blend overlapping chunks)"),
+    smoothing_decay: float = typer.Option(1.0, help="Smoothing decay (higher = trust older predictions more)"),
     log_dir: Optional[str] = typer.Option(None, help="Directory for per-episode overlap JSON"),
     async_inference: bool = typer.Option(False, help="Background-thread inference (not supported in EE mode)"),
-    starvla: bool = typer.Option(False, help="StarVLA 224x224 PIL resizing"),
     use_left_arm_only: bool = typer.Option(False, help="Only move the left arm"),
     use_right_arm_only: bool = typer.Option(False, help="Only move the right arm"),
     ik_orientation_weight: float = typer.Option(
@@ -131,13 +124,12 @@ def live_ee(
         max_steps=max_steps,
         action_chunk_size=action_chunk_size,
         rate_of_inference=rate_of_inference,
-        ensemble_type=ensemble_type,
-        cogact_mode=cogact_mode,
+        smoothing=smoothing,
+        smoothing_decay=smoothing_decay,
         async_inference=False,
         log_dir=log_dir,
         use_left_arm_only=use_left_arm_only,
         use_right_arm_only=use_right_arm_only,
-        starvla=starvla,
         adapter=adapter,
     )
     bridge.autonomous_mode(task_prompt=task_prompt)
@@ -156,6 +148,11 @@ def replay(
     ),
     ik_pos_tol_m: float = typer.Option(
         1e-3, help="IK convergence + failure tolerance (m); above it -> hold last joints"
+    ),
+    ik_max_joint_jump_deg: float = typer.Option(
+        0.0,
+        help="Branch-flip guard: >0 rejects a frame whose IK jumps any joint more "
+        "than this (deg) vs the previous frame and holds the last good pose; 0 disables",
     ),
 ) -> None:
     """Replay one episode's EE actions from a LeRobot v3.0 dataset on the robot.
@@ -192,6 +189,7 @@ def replay(
         make_kinematics(),
         orientation_weight=ik_orientation_weight,
         pos_tol_m=ik_pos_tol_m,
+        max_joint_jump_deg=(ik_max_joint_jump_deg if ik_max_joint_jump_deg > 0 else None),
     )
 
     robot = build_stationary_robot(with_cameras=False)
