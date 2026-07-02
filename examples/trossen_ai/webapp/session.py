@@ -76,6 +76,14 @@ class SessionManager:
             except Exception:
                 pass
         finally:
+            # Flush any recording sink so summary.json is written even on crash
+            # / estop. Sinks without close() (NullSink, QueueSink) are skipped.
+            close = getattr(sink, "close", None)
+            if close is not None:
+                try:
+                    close()
+                except Exception:  # noqa: BLE001
+                    logger.exception("Session %s: sink close failed", kind)
             root.removeHandler(handler)
             root.setLevel(prev_level)
 

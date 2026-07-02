@@ -134,3 +134,42 @@ def test_construction_error_emits_error_status():
     time.sleep(0.1)
     assert any(k == "error" for k, _ in statuses)
     assert not sm.is_running()
+
+
+def test_session_calls_sink_close_on_finish():
+    closed = []
+
+    class _Sink:
+        def on_status(self, kind, payload): pass
+        def close(self): closed.append(True)
+
+    class _Runner:
+        def __init__(self, kind, config, sink): pass
+        def run(self): pass
+        def stop(self): pass
+        def estop(self): pass
+
+    mgr = SessionManager(lambda k, c, s: _Runner(k, c, s))
+    sink = _Sink()
+    mgr.start("live", {}, sink)
+    mgr._thread.join(timeout=5.0)
+    assert closed == [True]
+
+
+def test_session_close_called_even_when_runner_raises():
+    closed = []
+
+    class _Sink:
+        def on_status(self, kind, payload): pass
+        def close(self): closed.append(True)
+
+    class _Boom:
+        def __init__(self, kind, config, sink): pass
+        def run(self): raise RuntimeError("crash")
+        def stop(self): pass
+        def estop(self): pass
+
+    mgr = SessionManager(lambda k, c, s: _Boom(k, c, s))
+    mgr.start("live", {}, _Sink())
+    mgr._thread.join(timeout=5.0)
+    assert closed == [True]
