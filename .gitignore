@@ -9,6 +9,9 @@ converted_to_EE/
 
 # Web app saved config presets.
 examples/trossen_ai/webapp/presets/
+
+# Recorded Live experiment runs (data, not source).
+examples/trossen_ai/webapp/runs/
 checkpoints/
 data/
 wandb/
