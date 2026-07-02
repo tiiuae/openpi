@@ -53,3 +53,28 @@ def test_live_runner_stop_before_run_skips_bridge(monkeypatch):
     r.stop()  # request stop before run
     r.run()   # should raise ConnectStopped internally, caught, no bridge
     assert built["bridge"] is False
+
+
+def test_live_runner_emits_model_metadata(monkeypatch):
+    import runners
+
+    events = []
+
+    class _Sink:
+        def on_status(self, kind, payload): events.append((kind, payload))
+        def on_log(self, *a): pass
+
+    class _Client:
+        def get_server_metadata(self): return {"policy": "pi0", "ckpt": "step_40000"}
+
+    class _Bridge:
+        def __init__(self): self.policy_client = _Client()
+        def run_episode(self, task_prompt=""): pass
+        def cleanup(self): pass
+
+    r = runners.LiveRunner("live", {"policy_host": "h", "policy_port": 1,
+                            "connect_timeout": 0.1}, _Sink())
+    monkeypatch.setattr(runners, "wait_for_policy_server", lambda *a, **k: None)
+    monkeypatch.setattr(r, "_make_bridge", lambda cfg: _Bridge())
+    r.run()
+    assert ("model", {"policy": "pi0", "ckpt": "step_40000"}) in events

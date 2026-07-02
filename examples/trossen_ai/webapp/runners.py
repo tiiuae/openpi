@@ -25,6 +25,7 @@ class LiveRunner:
         self._config = config
         self._sink = sink
         self._stopped = False
+        self._estop = False
         self._bridge = None
 
     def _make_bridge(self, config: dict):
@@ -57,6 +58,8 @@ class LiveRunner:
             rate_of_inference=int(config.get("rate_of_inference", 20)),
             smoothing=bool(config.get("smoothing", True)),
             smoothing_decay=float(config.get("smoothing_decay", 1.0)),
+            smoothing_method=str(config.get("smoothing_method", "temporal")),
+            cogact_mode=str(config.get("cogact_mode", "cogact")),
             async_inference=bool(config.get("async_inference", False)),
             use_left_arm_only=bool(config.get("use_left_arm_only", False)),
             use_right_arm_only=bool(config.get("use_right_arm_only", False)),
@@ -88,14 +91,31 @@ class LiveRunner:
             return
 
         self._bridge = self._make_bridge(cfg)
+        # Capture the policy server's identity for the run log. Best-effort: the
+        # server may not expose a name, so never let this block the run.
+        try:
+            meta = self._bridge.policy_client.get_server_metadata()
+            self._sink.on_status("model", meta)
+        except Exception:
+            logger.debug("policy server metadata unavailable", exc_info=True)
         try:
             self._bridge.run_episode(task_prompt=cfg.get("task_prompt", ""))
+            # E-STOP requested during the run: run_episode has now fully exited
+            # (is_running=False), so the control loop is no longer touching the
+            # arm. Run the sleep ramp HERE, on the session thread — never on the
+            # estop caller's thread. Doing the sleep+cleanup from estop() raced
+            # this finally's cleanup: two threads driving the robot at once could
+            # wedge the control loop mid-command, so run_episode never returned
+            # and the "stopped" status below never fired — leaving Start Live
+            # disabled forever. Same single-thread pattern as movers.py.
+            if self._estop:
+                self._bridge.move_to_sleep_position(duration=10.0)
         finally:
             self._bridge.cleanup()
-            # Always tell the UI the session ended (normal finish, max_steps, or
-            # Stop), so the badge returns to idle and Start re-enables. Without
-            # this the UI stays "running" forever after a clean stop.
-            self._sink.on_status("stopped", {"reason": "finished"})
+            # Always tell the UI the session ended (normal finish, max_steps,
+            # Stop, or E-STOP), so the badge returns to idle and Start re-enables.
+            # Without this the UI stays "running" forever after a clean stop.
+            self._sink.on_status("stopped", {"reason": "estop" if self._estop else "finished"})
 
     def stop(self) -> None:
         self._stopped = True
@@ -103,13 +123,13 @@ class LiveRunner:
             self._bridge.is_running = False
 
     def estop(self) -> None:
+        # Signal only; the sleep move + cleanup happen on the session thread in
+        # run(). estop() must return promptly so it never blocks racing the
+        # session thread's robot access (see run()).
         self._stopped = True
+        self._estop = True
         if self._bridge is not None:
             self._bridge.is_running = False
-            try:
-                self._bridge.move_to_sleep_position(duration=10.0)
-            finally:
-                self._bridge.cleanup()
 
 
 class ReplayRunner:
