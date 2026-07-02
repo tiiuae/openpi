@@ -159,6 +159,30 @@ class RecordingSink:
                     logger.exception("RecordingSink: manifest rewrite failed")
         self._put({"type": "status", "kind": kind, "payload": payload})
 
+    def _end_reason(self) -> str:
+        if self._last_status is None:
+            return "unknown"
+        kind, payload = self._last_status
+        if kind in ("error", "connect_failed"):
+            return "error"
+        reason = str(payload.get("reason", "")).lower()
+        if "estop" in reason:
+            return "estop"
+        if "cancel" in reason:
+            return "stopped"
+        if "finish" in reason:
+            return "completed"
+        return "unknown"
+
+    def _pct(self, vals, p):
+        return float(np.percentile(vals, p)) if vals else None
+
+    def _loop_hz(self):
+        if len(self._action_ts) < 2:
+            return None
+        span = self._action_ts[-1] - self._action_ts[0]
+        return (len(self._action_ts) - 1) / span if span > 0 else None
+
     def close(self) -> None:
         if self._fh is not None:
             try:
@@ -166,3 +190,23 @@ class RecordingSink:
             except Exception:  # noqa: BLE001
                 pass
             self._fh = None
+        if self._disabled:
+            return
+        span = (self._action_ts[-1] - self._action_ts[0]) if len(self._action_ts) >= 2 else 0.0
+        summary = {
+            "run_id": self._run_id,
+            "ended_at": time.time(),
+            "duration_s": round(span, 6),
+            "steps": self._steps,
+            "end_reason": self._end_reason(),
+            "rtt_ms": {"mean": (sum(self._rtts) / len(self._rtts)) if self._rtts else None,
+                       "p50": self._pct(self._rtts, 50),
+                       "p95": self._pct(self._rtts, 95)},
+            "loop_hz": self._loop_hz(),
+            "overlap_mean": (sum(self._overlaps) / len(self._overlaps)) if self._overlaps else None,
+            "smoothing_delta_mean": (sum(self._deltas) / len(self._deltas)) if self._deltas else None,
+        }
+        try:
+            (self._dir / "summary.json").write_text(json.dumps(summary, indent=2))
+        except Exception:  # noqa: BLE001
+            logger.exception("RecordingSink: summary write failed")

@@ -123,3 +123,52 @@ def test_recording_disk_error_degrades_to_noop(tmp_path):
     sink = RecordingSink(bad_parent / "run", run_id="run", config={})  # must not raise
     sink.on_overlap(0, 1)  # must not raise
     sink.close()           # must not raise
+
+
+# add to webapp/tests/test_recording.py
+def test_recording_close_writes_summary(tmp_path):
+    import numpy as np
+    run_dir = tmp_path / "r"
+    sink = RecordingSink(run_dir, run_id="r", config={})
+    sink.on_chunk(0, np.array([[0.0], [0.0]]), 1.0)
+    sink.on_action(0, np.array([0.0]), 1.0)   # raw=0 -> delta 0
+    sink.on_action(1, np.array([1.0]), 1.5)   # raw=0 -> delta 1
+    sink.on_inference(40.0, 1.0)
+    sink.on_inference(60.0, 1.5)
+    sink.on_overlap(0, 2)
+    sink.on_overlap(1, 4)
+    sink.on_status("stopped", {"reason": "finished"})
+    sink.close()
+    s = json.loads((run_dir / "summary.json").read_text())
+    assert s["steps"] == 2
+    assert s["end_reason"] == "completed"
+    assert s["overlap_mean"] == 3.0
+    assert abs(s["smoothing_delta_mean"] - 0.5) < 1e-9
+    assert abs(s["rtt_ms"]["mean"] - 50.0) < 1e-9
+    assert s["duration_s"] == 0.5
+
+
+def test_recording_end_reason_mapping(tmp_path):
+    cases = {
+        ("stopped", "finished"): "completed",
+        ("stopped", "estop"): "estop",
+        ("stopped", "cancelled"): "stopped",
+        ("error", None): "error",
+        ("connect_failed", None): "error",
+    }
+    for (kind, reason), expected in cases.items():
+        run_dir = tmp_path / f"{kind}-{reason}"
+        sink = RecordingSink(run_dir, run_id="r", config={})
+        payload = {"reason": reason} if reason else {"message": "x"}
+        sink.on_status(kind, payload)
+        sink.close()
+        s = json.loads((run_dir / "summary.json").read_text())
+        assert s["end_reason"] == expected, (kind, reason)
+
+
+def test_recording_close_without_status_is_unknown(tmp_path):
+    run_dir = tmp_path / "r"
+    sink = RecordingSink(run_dir, run_id="r", config={})
+    sink.close()
+    s = json.loads((run_dir / "summary.json").read_text())
+    assert s["end_reason"] == "unknown"
