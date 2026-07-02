@@ -21,7 +21,7 @@ captured data instead of hand-written observations.
 | Images | **Not logged** in v1 (actions / smoothing / metrics / config only) |
 | Run outcome | **Dedicated quick-rating prompt** on session end (success + score + note) |
 | Feedback box | **Not** reused — feedback card stays webapp bug-reporting only |
-| Policy model name | Captured from `policy_client.get_server_metadata()` |
+| Policy model name | **User-typed config field** (server does not reliably send it); `get_server_metadata()` stored as bonus if non-empty |
 | Scope | Logs + run list + **compare view** |
 
 ## Non-Goals (v1)
@@ -79,16 +79,17 @@ runs/<run_id>/            run_id = YYYY-MM-DD-HHMMSS[-N]
   "run_id": "2026-07-02-181500",
   "started_at": 1751476500.12,
   "kind": "live",
-  "config": { "...": "full readConfig() payload" },
-  "model": { "...": "full get_server_metadata() dict" },
-  "model_name": "<best-effort name pulled from model metadata>",
+  "config": { "...": "full readConfig() payload, includes model_name" },
+  "model_name": "pi0-trossen-joint-v3",
+  "model": { "...": "full get_server_metadata() dict, or null" },
   "git": { "branch": "ibrahim/feat/web-app-eval", "commit": "e79e46c" }
 }
 ```
 
-`model` is the full metadata dict (schema owned by the policy server, not us, so
-store verbatim). `model_name` is a best-effort convenience field extracted from
-common keys; if none found, null and the raw `model` dict is still present.
+`model_name` is the **user-typed value** from the new config field — the
+authoritative name for comparison. `model` is the raw `get_server_metadata()`
+dict stored verbatim as a bonus when non-empty (the server does not reliably
+report a name), else null.
 
 ### `events.jsonl`
 
@@ -140,11 +141,16 @@ same math as `webapp/metrics.py` where possible.
    holds a list of sinks; every `TelemetrySink` method forwards to each. A raise
    from one inner sink is caught + logged so one bad sink can't starve the other.
 
-3. **Model metadata emission** — `TrossenBridge` (or the runner) calls
-   `sink.on_status("model", policy_client.get_server_metadata())` once, right
-   after the policy client connects. NullSink ignores it (CLI unaffected);
-   QueueSink forwards it (browser can show model name in the header);
-   RecordingSink stores it.
+3. **Model name config field** (`webapp/static/js/config.js`) — add a
+   `model_name` text field to the Policy group (e.g. label "Model name / tag",
+   help "Name this policy checkpoint so runs can be compared by model"). Flows
+   through `readConfig()` into `manifest.config.model_name`, which
+   `RecordingSink` copies to the top-level `manifest.model_name`. This is the
+   authoritative name. **Bonus:** `TrossenBridge` still emits
+   `sink.on_status("model", policy_client.get_server_metadata())` once after
+   connect; RecordingSink stores it verbatim under `manifest.model` when
+   non-empty (NullSink ignores → CLI unaffected). Never blocks a run if metadata
+   is empty/absent.
 
 4. **Wiring** (`webapp/server.py`) — in `start(kind, config)`:
    - For `kind == "live"`: allocate `run_id`, build
