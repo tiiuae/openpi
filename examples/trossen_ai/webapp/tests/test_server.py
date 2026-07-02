@@ -174,3 +174,57 @@ def test_robot_urdf_and_mesh_served():
     m = client.get("/pkg/trossen_arm_description/meshes/wxai/base_link.stl")
     assert m.status_code == 200
     assert len(m.content) > 0
+
+
+# add to webapp/tests/test_server.py
+import json as _json
+
+
+def test_live_run_records_to_runs_dir(tmp_path):
+    class FakeRunner:
+        def __init__(self, kind, config, sink):
+            self._sink = sink
+        def run(self):
+            import numpy as np
+            self._sink.on_status("started", {})
+            self._sink.on_action(0, np.array([1.0]), 1.0)
+            self._sink.on_overlap(0, 2)
+            self._sink.on_status("stopped", {"reason": "finished"})
+        def stop(self): pass
+        def estop(self): pass
+
+    app = create_app(runs_dir=tmp_path, runner_factory=lambda k, c, s: FakeRunner(k, c, s))
+    client = TestClient(app)
+    with client.websocket_connect("/ws/telemetry") as ws:
+        ws.send_json({"action": "start_live", "config": {"model_name": "pi0-test"}})
+        run_id = None
+        for _ in range(40):
+            evt = ws.receive_json()
+            if evt.get("type") == "status" and evt.get("kind") == "run_started":
+                run_id = evt["payload"]["run_id"]
+            if evt.get("type") == "status" and evt.get("kind") == "stopped":
+                break
+        assert run_id is not None
+    # RecordingSink wrote a run dir with manifest + events (+ summary via close()).
+    run_dir = tmp_path / run_id
+    manifest = _json.loads((run_dir / "manifest.json").read_text())
+    assert manifest["model_name"] == "pi0-test"
+    assert (run_dir / "events.jsonl").read_text().strip() != ""
+
+
+def test_non_live_run_does_not_record(tmp_path):
+    class FakeRunner:
+        def __init__(self, kind, config, sink): self._sink = sink
+        def run(self): self._sink.on_status("stopped", {"reason": "finished"})
+        def stop(self): pass
+        def estop(self): pass
+
+    app = create_app(runs_dir=tmp_path, runner_factory=lambda k, c, s: FakeRunner(k, c, s))
+    client = TestClient(app)
+    with client.websocket_connect("/ws/telemetry") as ws:
+        ws.send_json({"action": "start_replay", "config": {"dataset_dir": "/x"}})
+        for _ in range(20):
+            evt = ws.receive_json()
+            if evt.get("type") == "status" and evt.get("kind") == "stopped":
+                break
+    assert list(tmp_path.iterdir()) == []  # nothing recorded for replay

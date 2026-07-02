@@ -17,6 +17,8 @@ from fastapi.staticfiles import StaticFiles
 
 from webapp.config_store import ConfigStore
 from webapp.metrics import Metrics
+from webapp.recording import RecordingSink, TeeSink
+from webapp.run_store import RunStore
 from webapp.session import SessionManager
 from webapp.telemetry import QueueSink
 
@@ -29,11 +31,14 @@ logger = logging.getLogger(__name__)
 
 
 def create_app(presets_dir: str | Path | None = None, runner_factory=None,
-               feedback_dir: str | Path | None = None) -> FastAPI:
+               feedback_dir: str | Path | None = None,
+               runs_dir: str | Path | None = None) -> FastAPI:
     if presets_dir is None:
         presets_dir = Path(__file__).parent / "presets"
     if feedback_dir is None:
         feedback_dir = Path(__file__).parent / "feedback"
+    if runs_dir is None:
+        runs_dir = Path(__file__).parent / "runs"
     if runner_factory is None:
         # Defer the robot-only import until a session actually starts, so the
         # REST/WebSocket layer (and the tests) work off-robot where
@@ -54,6 +59,8 @@ def create_app(presets_dir: str | Path | None = None, runner_factory=None,
     app = FastAPI(title="Trossen Control")
     store = ConfigStore(presets_dir)
     session = SessionManager(runner_factory)
+    runs_dir = Path(runs_dir)
+    run_store = RunStore(runs_dir)
 
     @app.on_event("shutdown")
     def _cleanup_on_shutdown():
@@ -185,11 +192,29 @@ def create_app(presets_dir: str | Path | None = None, runner_factory=None,
                 await asyncio.sleep(0.5)
                 await ws.send_json({"type": "metrics", **metrics.snapshot()})
 
+        import datetime as _dt
+
+        def _new_run_id() -> str:
+            stamp = _dt.datetime.now().strftime("%Y-%m-%d-%H%M%S")
+            run_id, n = stamp, 1
+            while (runs_dir / run_id).exists():
+                run_id = f"{stamp}-{n}"
+                n += 1
+            return run_id
+
         def start(kind: str, config: dict):
             # Surface "a session is already running" (and any factory error) to
             # the UI as a status event instead of killing the WS handler.
             try:
-                session.start(kind, config, QueueSink(q))
+                sink = QueueSink(q)
+                if kind == "live":
+                    run_id = _new_run_id()
+                    recorder = RecordingSink(runs_dir / run_id, run_id=run_id, config=config)
+                    sink = TeeSink([sink, recorder])
+                    # Tell the browser which run this is (for the rating prompt).
+                    q.put({"type": "status", "kind": "run_started",
+                           "payload": {"run_id": run_id}})
+                session.start(kind, config, sink)
             except Exception as exc:  # noqa: BLE001
                 logger.warning("Cannot start %s session: %s", kind, exc)
                 q.put({"type": "status", "kind": "error", "payload": {"message": str(exc)}})
