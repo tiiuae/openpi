@@ -4,6 +4,8 @@ import { makeJointCharts } from "./charts.js";
 import { setupLogs } from "./logs.js";
 import { setupControls, setSessionActive } from "./controls.js";
 import { renderFeedback } from "./feedback.js";
+import { setupSmoothing } from "./smoothing.js";
+import { onRunStatus } from "./runlog.js";
 
 const $ = (id) => document.getElementById(id);
 let jointCharts = null;
@@ -16,6 +18,9 @@ document.addEventListener("DOMContentLoaded", () => {
   setupControls();
   renderFeedback($("feedback-card"));
 
+  const smoothing = setupSmoothing($("smoothing-box"));
+  setInterval(() => smoothing.update(), 200);
+
   try {
     jointCharts = makeJointCharts($("charts-box"));
     setInterval(() => jointCharts.update(), 200);
@@ -24,7 +29,11 @@ document.addEventListener("DOMContentLoaded", () => {
     $("charts-box").innerHTML = '<div class="browser-msg err">Charts unavailable (chart library failed to load).</div>';
   }
 
-  onMessage("action", (e) => { if (jointCharts) jointCharts.pushAction(e.step, e.action); });
+  onMessage("action", (e) => { if (jointCharts) jointCharts.pushAction(e.step, e.action); smoothing.onAction(e); });
+  onMessage("chunk", (e) => smoothing.onChunk(e));
+  onMessage("overlap", (e) => smoothing.onOverlap(e));
+  onMessage("weights", (e) => smoothing.onWeights(e));
+  onMessage("status", (e) => onRunStatus(e));
   // Reuse one <img> per camera and just swap its .src each frame. Rebuilding the
   // DOM every frame (old behaviour) tore down + re-laid-out the strip on every
   // inference, which read as a fast full-page "refresh"/flicker.
@@ -49,6 +58,10 @@ document.addEventListener("DOMContentLoaded", () => {
   $("btn-start").addEventListener("click", () => {
     const cfg = readConfig();
     if (cfg.mode === "autonomous" && !confirm("Autonomous mode moves the REAL robot. Continue?")) return;
+    // Fresh run → wipe live viz so nothing carries over from the last run, and
+    // size the action charts to hold the whole episode (max_steps).
+    if (jointCharts) { jointCharts.setMaxPts(Number(cfg.max_steps) || 1000); jointCharts.clear(); }
+    smoothing.reset();
     setSessionActive(true);  // optimistic; status events keep it in sync
     send({ action: "start_live", config: cfg });
   });
