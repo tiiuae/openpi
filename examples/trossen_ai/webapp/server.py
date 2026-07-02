@@ -11,7 +11,7 @@ import logging
 import queue
 from pathlib import Path
 
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
@@ -91,6 +91,10 @@ def create_app(presets_dir: str | Path | None = None, runner_factory=None,
     def replay():
         return FileResponse(STATIC_DIR / "replay.html")
 
+    @app.get("/runs")
+    def runs_page():
+        return FileResponse(STATIC_DIR / "runs.html")
+
     @app.get("/teleop")
     def teleop_page():
         return FileResponse(STATIC_DIR / "teleop.html")
@@ -127,6 +131,25 @@ def create_app(presets_dir: str | Path | None = None, runner_factory=None,
             feedback=body.get("feedback", ""),
         )
         return {"ok": True, "path": path}
+
+    @app.get("/api/runs")
+    def api_list_runs():
+        return run_store.list()
+
+    @app.get("/api/runs/{run_id}")
+    def api_get_run(run_id: str, events: int = 0):
+        try:
+            return run_store.get(run_id, with_events=bool(events))
+        except (KeyError, ValueError):
+            raise HTTPException(status_code=404, detail="run not found")
+
+    @app.patch("/api/runs/{run_id}/rating")
+    def api_rate_run(run_id: str, rating: dict):
+        try:
+            run_store.set_rating(run_id, rating)
+        except (KeyError, ValueError):
+            raise HTTPException(status_code=404, detail="run not found")
+        return {"ok": True}
 
     @app.get("/api/files")
     def files(path: str | None = None):

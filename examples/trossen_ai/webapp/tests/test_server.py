@@ -228,3 +228,44 @@ def test_non_live_run_does_not_record(tmp_path):
             if evt.get("type") == "status" and evt.get("kind") == "stopped":
                 break
     assert list(tmp_path.iterdir()) == []  # nothing recorded for replay
+
+
+def test_runs_api_list_get_and_rating(tmp_path):
+    # Seed one run dir directly.
+    d = tmp_path / "2026-07-02-090000"
+    d.mkdir()
+    (d / "manifest.json").write_text(_json.dumps({
+        "run_id": "2026-07-02-090000", "started_at": 1.0, "kind": "live",
+        "config": {"model_name": "m"}, "model_name": "m", "model": None}))
+    (d / "summary.json").write_text(_json.dumps({"steps": 5, "end_reason": "completed",
+                                                 "rtt_ms": {"mean": 40.0}}))
+    (d / "events.jsonl").write_text(_json.dumps({"type": "overlap", "step": 0, "count": 2}))
+
+    client = TestClient(create_app(runs_dir=tmp_path))
+    lst = client.get("/api/runs").json()
+    assert lst[0]["run_id"] == "2026-07-02-090000"
+    assert lst[0]["model_name"] == "m"
+
+    detail = client.get("/api/runs/2026-07-02-090000").json()
+    assert detail["summary"]["steps"] == 5
+    assert "events" not in detail
+
+    with_events = client.get("/api/runs/2026-07-02-090000", params={"events": 1}).json()
+    assert len(with_events["events"]) == 1
+
+    r = client.patch("/api/runs/2026-07-02-090000/rating",
+                     json={"success": "yes", "score": 5, "note": "clean"})
+    assert r.status_code == 200
+    assert _json.loads((d / "rating.json").read_text())["success"] == "yes"
+
+
+def test_runs_api_missing_run_404(tmp_path):
+    client = TestClient(create_app(runs_dir=tmp_path))
+    assert client.get("/api/runs/does-not-exist").status_code == 404
+
+
+def test_runs_page_served():
+    client = TestClient(create_app())
+    r = client.get("/runs")
+    assert r.status_code == 200
+    assert "text/html" in r.headers["content-type"]
