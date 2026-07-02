@@ -269,3 +269,9 @@ def test_runs_page_served():
     r = client.get("/runs")
     assert r.status_code == 200
     assert "text/html" in r.headers["content-type"]
+
+
+def test_runs_static_assets_served():
+    client = TestClient(create_app())
+    assert client.get("/static/js/runs.js").status_code == 200
+    assert client.get("/static/runs.html").status_code == 200

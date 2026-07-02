@@ -2,9 +2,33 @@
 <html lang="en">
 <head>
   <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Compare Runs — Trossen</title>
+  <link rel="stylesheet" href="/static/theme.css">
+  <link rel="icon" type="image/png" href="/static/robot-arm.png">
+  <script src="/static/vendor/chart.umd.min.js"></script>
+  <script src="/static/vendor/chartjs-plugin-zoom.min.js"></script>
 </head>
 <body>
-  <p>Compare runs view — coming soon.</p>
+  <header class="topbar"><h1>Compare Runs</h1><a href="/" class="btn-sm">← Live</a></header>
+  <main class="runs-main">
+    <section class="card">
+      <h2>Runs <span class="muted">(pick 2+ to compare)</span></h2>
+      <div id="runs-list" class="runs-list">Loading…</div>
+    </section>
+    <section class="card">
+      <h2>Config diff</h2>
+      <div id="runs-diff" class="runs-diff-wrap"><em class="muted">Select runs above.</em></div>
+    </section>
+    <section class="card">
+      <h2>Smoothing Δ vs step</h2>
+      <div class="chart-cj-container"><canvas id="runs-chart-delta"></canvas></div>
+    </section>
+    <section class="card">
+      <h2>Overlap depth vs step</h2>
+      <div class="chart-cj-container"><canvas id="runs-chart-overlap"></canvas></div>
+    </section>
+  </main>
+  <script type="module" src="/static/js/runs.js"></script>
 </body>
 </html>

@@ -13,7 +13,7 @@
   <header class="app-header">
     <div class="app-nav">
       <strong style="color:var(--text);margin-right:16px">Trossen Control</strong>
-      <a href="/" class="active">Live</a><a href="/replay">Replay</a><a href="/teleop">Teleop</a>
+      <a href="/" class="active">Live</a><a href="/replay">Replay</a><a href="/teleop">Teleop</a><a href="/runs">Compare</a>
     </div>
     <div class="header-actions">
       <span class="badge" id="badge-rtt">rtt</span>
@@ -29,6 +29,7 @@
       <section class="card"><h2>Cameras</h2><div class="cameras-strip" id="images-box"></div></section>
       <section class="card"><h2>Actions</h2><div class="charts-grid" id="charts-box"></div>
         <div class="section-label">Metrics</div><div id="metrics-box"></div></section>
+      <section class="card"><h2>Action Smoothing</h2><div id="smoothing-box"></div></section>
       <section class="card">
         <div class="log-header"><h2>Logs</h2><button class="btn-sm" id="btn-clear-log">Clear</button></div>
         <div class="log-panel" id="log-box"></div>

@@ -679,3 +679,19 @@ table.kb kbd { background:#21262d; border-radius:4px; padding:1px 5px; color:var
 .runlog-row label { flex:0 0 90px; font-size:12px; color:var(--muted); }
 .runlog-row select, .runlog-row input { flex:1; }
 .runlog-actions { display:flex; justify-content:flex-end; gap:8px; margin-top:6px; }
+
+/* ── Compare runs view ── */
+.runs-main { max-width:1100px; margin:0 auto; padding:16px; display:grid; gap:14px; }
+.runs-list { display:grid; gap:4px; }
+.run-item { display:grid; grid-template-columns:24px 1.6fr 1.4fr repeat(3,1fr);
+  align-items:center; gap:8px; font-size:12px; padding:4px 6px; border-radius:6px; }
+.run-item:hover { background:var(--bg); }
+.run-id { font-family:monospace; color:var(--text); }
+.run-model { color:var(--muted); }
+.run-metric { color:var(--muted); text-align:right; }
+.runs-diff-wrap { overflow-x:auto; }
+table.runs-diff { border-collapse:collapse; font-size:12px; width:100%; }
+table.runs-diff th, table.runs-diff td { border:1px solid var(--border);
+  padding:4px 8px; text-align:left; color:var(--text); }
+table.runs-diff tr.diff td { background:rgba(255,184,108,.12); }
+table.runs-diff tr.diff td:first-child { font-weight:700; }
