@@ -7,7 +7,12 @@ Both are defensive: a failure in one sink never propagates into the control loop
 """
 from __future__ import annotations
 
+import json
 import logging
+import time
+from pathlib import Path
+
+import numpy as np
 
 logger = logging.getLogger(__name__)
 
@@ -48,3 +53,116 @@ class TeeSink:
                 close()
             except Exception:  # noqa: BLE001
                 logger.exception("TeeSink: inner sink %s.close failed", type(s).__name__)
+
+
+class RecordingSink:
+    """Record one live run to disk as manifest.json + events.jsonl (+ summary).
+
+    Defensive by construction: any filesystem error disables recording (the sink
+    becomes a no-op) and is logged once, so a broken disk never crashes the run.
+    Images are intentionally not recorded (see spec). Summary math lives in
+    Task 3's close().
+    """
+
+    def __init__(self, run_dir, *, run_id: str, config: dict, kind: str = "live") -> None:
+        self._run_id = run_id
+        self._dir = Path(run_dir)
+        self._config = dict(config or {})
+        self._kind = kind
+        self._disabled = False
+        self._fh = None
+        self._last_chunk = None  # (query_step, np.ndarray) for raw lookup
+        self._model = None
+        # ---- summary accumulators (used in Task 3) ----
+        self._rtts = []
+        self._overlaps = []
+        self._deltas = []
+        self._action_ts = []
+        self._steps = 0
+        self._last_status = None
+        try:
+            self._dir.mkdir(parents=True, exist_ok=True)
+            self._fh = open(self._dir / "events.jsonl", "a", encoding="utf-8")
+            self._write_manifest()
+        except Exception:  # noqa: BLE001
+            logger.exception("RecordingSink: init failed for %s; recording disabled", self._dir)
+            self._disabled = True
+
+    # ---- internals ----
+    def _write_manifest(self) -> None:
+        manifest = {
+            "run_id": self._run_id,
+            "started_at": time.time(),
+            "kind": self._kind,
+            "config": self._config,
+            "model_name": self._config.get("model_name") or None,
+            "model": self._model,
+        }
+        (self._dir / "manifest.json").write_text(json.dumps(manifest, indent=2))
+
+    def _put(self, evt: dict) -> None:
+        if self._disabled or self._fh is None:
+            return
+        try:
+            self._fh.write(json.dumps(evt) + "\n")
+            self._fh.flush()
+        except Exception:  # noqa: BLE001
+            logger.exception("RecordingSink: write failed; disabling recording")
+            self._disabled = True
+
+    # ---- TelemetrySink ----
+    def on_log(self, level, msg, ts):
+        self._put({"type": "log", "level": level, "msg": msg, "ts": ts})
+
+    def on_action(self, step, action, ts):
+        act = np.asarray(action).flatten().tolist()
+        raw = None
+        if self._last_chunk is not None:
+            qs, chunk = self._last_chunk
+            off = step - qs
+            if 0 <= off < len(chunk):
+                raw = np.asarray(chunk[off]).flatten().tolist()
+        if raw is not None:
+            self._deltas.append(float(np.linalg.norm(np.array(act) - np.array(raw))))
+        self._steps += 1
+        self._action_ts.append(float(ts))
+        self._put({"type": "action", "step": step, "action": act, "raw": raw, "ts": ts})
+
+    def on_inference(self, rtt_ms, ts):
+        self._rtts.append(float(rtt_ms))
+        self._put({"type": "inference", "rtt_ms": rtt_ms, "ts": ts})
+
+    def on_chunk(self, query_step, chunk, ts):
+        arr = np.asarray(chunk)
+        self._last_chunk = (query_step, arr)
+        self._put({"type": "chunk", "query_step": query_step, "len": int(len(arr)), "ts": ts})
+
+    def on_overlap(self, step, count):
+        self._overlaps.append(int(count))
+        self._put({"type": "overlap", "step": step, "count": count})
+
+    def on_weights(self, step, weights, ts):
+        self._put({"type": "weights", "step": step,
+                   "weights": np.asarray(weights).flatten().tolist(), "ts": ts})
+
+    def on_images(self, images, ts):
+        pass  # images intentionally not recorded
+
+    def on_status(self, kind, payload):
+        self._last_status = (kind, dict(payload or {}))
+        if kind == "model":
+            self._model = payload
+            if not self._disabled:
+                try:
+                    self._write_manifest()
+                except Exception:  # noqa: BLE001
+                    logger.exception("RecordingSink: manifest rewrite failed")
+        self._put({"type": "status", "kind": kind, "payload": payload})
+
+    def close(self) -> None:
+        if self._fh is not None:
+            try:
+                self._fh.close()
+            except Exception:  # noqa: BLE001
+                pass
+            self._fh = None
