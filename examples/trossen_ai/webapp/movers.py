@@ -38,9 +38,13 @@ class _PoseMover:
         self._sink.on_status("started", {"kind": self._kind})
         robot = build_stationary_robot(with_cameras=False)
         logger.info("%s mover: robot connected", self._kind)
+        # Home/Sleep always physically move the arm and then release the session.
+        # They are explicit "park the hardware" commands, so they ignore the
+        # page's mode selector — a "test" selection must NOT turn these into a
+        # no-op that only logs "TEST MODE: would execute".
         self._controller = RobotController(
             robot, control_frequency=int(self._config.get("control_freq", 25)),
-            test_mode=self._config.get("mode", "test"),
+            test_mode="autonomous",
         )
         try:
             if self._stop.is_set():

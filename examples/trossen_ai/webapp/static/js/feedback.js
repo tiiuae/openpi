@@ -5,7 +5,7 @@ export function renderFeedback(card) {
   card.innerHTML = `<h2>Feedback</h2>
     <div class="field-inline"><label>Name</label><input id="fb-name" type="text"></div>
     <div class="field-inline"><label>Email</label><input id="fb-email" type="text"></div>
-    <div class="field-row align-top"><label>Feedback</label><textarea id="fb-text" rows="3" style="width:100%"></textarea></div>
+    <div class="field-row align-top"><label>Feedback</label><textarea id="fb-text" rows="10" style="width:100%;min-height:180px;resize:vertical"></textarea></div>
     <div class="run-controls"><button class="btn-primary" id="fb-submit">Submit</button>
       <span class="run-status" id="fb-status"></span></div>`;
   card.querySelector("#fb-submit").addEventListener("click", async () => {

@@ -28,7 +28,7 @@ export function makeSeriesChart(canvas, series) {
 
 // Streaming chart: push(seriesIdx, x, y), bounded to maxPts.
 export class LiveChart {
-  constructor(canvas, labels, maxPts = 300) {
+  constructor(canvas, labels, maxPts = 1000) {
     this.maxPts = maxPts;
     this.chart = new Chart(canvas, {
       type:'line',
@@ -41,6 +41,8 @@ export class LiveChart {
     const d = this.chart.data.datasets[idx].data;
     d.push({ x, y }); if (d.length > this.maxPts) d.shift();
   }
+  setMaxPts(n) { if (Number.isFinite(n) && n > 0) this.maxPts = n; }
+  clear() { for (const ds of this.chart.data.datasets) ds.data.length = 0; this.chart.update('none'); }
   update() { this.chart.update('none'); }
 }
 
@@ -63,7 +65,7 @@ export const JOINT_NAMES_14 = [
 // { charts:[LiveChart], pushAction(step, action14), update() }.
 // Each LiveChart owns one arm's 7 series; pushAction routes each global joint
 // index to the right chart + local series index.
-export function makeJointCharts(container, names = JOINT_NAMES_14, maxPts = 300) {
+export function makeJointCharts(container, names = JOINT_NAMES_14, maxPts = 1000) {
   const { left, right } = splitArms(names);
   const groups = [['Left arm', left], ['Right arm', right]].filter(([, g]) => g.length);
   container.innerHTML = groups.map((_, gi) =>
@@ -80,6 +82,8 @@ export function makeJointCharts(container, names = JOINT_NAMES_14, maxPts = 300)
       for (const { chart, members } of charts)
         members.forEach((m, local) => chart.push(local, step, action[m.i]));
     },
+    setMaxPts(n) { for (const { chart } of charts) chart.setMaxPts(n); },
+    clear() { for (const { chart } of charts) chart.clear(); },
     update() { for (const { chart } of charts) chart.update(); },
   };
 }

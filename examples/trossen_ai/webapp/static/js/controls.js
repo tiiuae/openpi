@@ -37,10 +37,11 @@ export function setupControls() {
   onMessage("inference", (e) => badge("badge-rtt", `${e.rtt_ms.toFixed(0)}ms`, e.rtt_ms < 100 ? "ok" : "bad"));
 }
 
+// Home/Sleep always physically move the arm regardless of the page's mode
+// selector, so always confirm and never forward `mode` (the mover ignores it).
 function guarded(action, prompt, label) {
-  const mode = $("mode-select")?.value;
-  if (mode === "autonomous" && !confirm(prompt + " (moves the REAL robot)")) return;
-  logLine("INFO", `${label} clicked (mode=${mode})`);
+  if (!confirm(prompt + " (moves the REAL robot)")) return;
+  logLine("INFO", `${label} clicked`);
   setSessionActive(true);
-  send({ action, config: { mode } });
+  send({ action });
 }

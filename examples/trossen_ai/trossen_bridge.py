@@ -39,6 +39,8 @@ class TrossenOpenPIBridge:
         rate_of_inference: int = 10,
         smoothing: bool = True,
         smoothing_decay: float = 1.0,
+        smoothing_method: str = "temporal",  # "temporal" (exp-decay) or "cogact" (consensus)
+        cogact_mode: str = "cogact",  # "cogact" | "latest" | "hybrid" (only for cogact method)
         async_inference: bool = False,  # noqa
         log_dir: str | None = None,
         use_left_arm_only: bool = False,  # noqa
@@ -86,7 +88,10 @@ class TrossenOpenPIBridge:
         self.rate_of_inference = rate_of_inference  # Number of control steps per policy inference
         self.action_dim = len(self.robot._joint_ft)  # 7 joints per arm * 2 arms # noqa
         self.state_dim = self.adapter.state_dim
-        self.ensemble = make_ensemble(smoothing, decay=smoothing_decay)
+        self.ensemble = make_ensemble(
+            smoothing, decay=smoothing_decay,
+            method=smoothing_method, cogact_mode=cogact_mode,
+        )
 
         if async_inference and self.ensemble is None:
             raise ValueError("Async inference requires smoothing (it cannot be disabled).")

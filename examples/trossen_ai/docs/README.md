@@ -17,6 +17,9 @@ dataset-replay tool and a browser **web app** for running and observing both.
 | [CLI — Live policy](cli-live.md) | Run a policy from the terminal (no web app): `cli.py live-joint` / `cli.py live-ee` (end-effector), arguments, test vs autonomous. |
 | [CLI — Dataset replay](cli-replay.md) | Replay a recorded episode from the terminal (no web app, no policy server): `cli.py replay`, the sleep helper. |
 | [Motion & Safety](motion-safety.md) | Firmware velocity limit, the IK branch-flip fault, the velocity limiter, smooth streaming, the firmware-fault guard, and all tuning knobs. |
+| [Action smoothing — Temporal & CogACT](action_smoothing.md) | How overlapping action chunks are blended: temporal exp-decay ensembling vs CogACT consensus-by-agreement, the three CogACT modes, and where to watch it live. |
+| [Motion tuning knobs (Live)](motion_tuning_live.md) | What goal-time multiplier, driver loop rate, and max joint speed do; how they interact; and why they act on execution, not the policy model. |
+| [Live vs `main.py` joint eval](live_vs_main_joint_eval.md) | Divergence audit: web-app Live joint run vs `trossen-ai` `main.py` — what's numerically identical and where execution/defaults differ. |
 | [Web App — overview](../webapp/README.md) | The two pages (Live / Replay) and the frontend module layout. |
 | [Web App — hardware runbook](../webapp/HARDWARE.md) | Step-by-step run, first-run checklist, motion tuning, troubleshooting, off-robot testing. |
 
