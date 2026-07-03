@@ -11,7 +11,7 @@ class NormalizationType(str, Enum):
     BOUNDS = "bounds"               # Normalize to Interval = [-1, 1]
     BOUNDS_Q99 = "bounds_q99"       # Normalize [quantile_01, ..., quantile_99] --> [-1, ..., 1]
     # fmt: on
-ACTION_PROPRIO_NORMALIZATION_TYPE = NormalizationType.BOUNDS_Q99
+ACTION_PROPRIO_NORMALIZATION_TYPE = NormalizationType.BOUNDS
 
 
 def normalize_proprio(proprio: np.ndarray, norm_stats: Dict[str, Any]) -> np.ndarray:

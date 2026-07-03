@@ -70,8 +70,11 @@ class FalconVLAPolicy(BasePolicy):
         if actions.ndim == 1:
             model_config = self._model.config
 
-            print(f"Model output shape: {actions.shape}, reshape {(model_config.action_horizon * model_config.action_dim,)}")
+            # print(f"Model output shape: {actions.shape}, reshape {(model_config.action_horizon * model_config.action_dim,)}")
             actions = actions.reshape(model_config.action_horizon, model_config.action_dim)
+            print(f"Actions: {actions}")
+            print("*"*10)
+            print()
 
         outputs = {
             "actions": actions,

@@ -57,6 +57,8 @@ class TrossenOpenPIBridge:
         use_left_arm_only: bool = False,
         use_right_arm_only: bool = False,
         starvla: bool = False,
+        raw_gripper: bool = True,
+        gripper_indices: list[int] | None = None,
     ):
         self.starvla = starvla
         self.control_frequency = control_frequency
@@ -113,6 +115,18 @@ class TrossenOpenPIBridge:
 
         self.use_left_arm_only = use_left_arm_only
         self.use_right_arm_only = use_right_arm_only
+
+        # Gripper channels are near-binary, so temporal averaging makes them mushy and
+        # laggy. When an ensemble is active we bypass it for the gripper dims and use the
+        # latest raw prediction instead (joints stay smoothed). For a 14-dim bimanual
+        # ALOHA layout ([6 joints + gripper] per arm) the grippers are at indices 6 and 13.
+        self.raw_gripper = raw_gripper
+        if gripper_indices is not None:
+            self.gripper_indices = list(gripper_indices)
+        elif self.action_dim == 14:
+            self.gripper_indices = [6, 13]
+        else:
+            self.gripper_indices = []
 
     def execute_action(self, action: np.ndarray):
         """Execute action on the arm."""
@@ -243,6 +257,15 @@ class TrossenOpenPIBridge:
                         self.ensemble.get_overlap_count(self.episode_step),
                     )
 
+                # Use the latest raw prediction for the gripper channels to avoid the
+                # ensemble averaging/lag that leaves the gripper half-open.
+                if self.raw_gripper and self.ensemble is not None and self.gripper_indices:
+                    raw = self.ensemble.get_latest_raw(self.episode_step)
+                    if raw is not None:
+                        for gi in self.gripper_indices:
+                            if gi < len(a_t) and gi < len(raw):
+                                a_t[gi] = raw[gi]
+
                 if is_first_step:
                     logger.info("Moving to start position to avoid large jumps...")
                     self.move_to_start_position(a_t, duration=5.0)
@@ -324,6 +347,12 @@ if __name__ == "__main__":
     parser.add_argument(
         "--use_right_arm_only", action="store_true", help="Only move the right arm; left arm stays at current pose"
     )
+    parser.add_argument(
+        "--ensemble_gripper",
+        action="store_true",
+        help="Also temporally ensemble the gripper channels. By default the gripper uses "
+        "the latest raw prediction to avoid mushy/laggy open-close behaviour.",
+    )
     args = parser.parse_args()
 
     bridge = TrossenOpenPIBridge(
@@ -340,6 +369,7 @@ if __name__ == "__main__":
         use_left_arm_only=args.use_left_arm_only,
         use_right_arm_only=args.use_right_arm_only,
         starvla=args.starvla,
+        raw_gripper=not args.ensemble_gripper,
     )
 
     bridge.autonomous_mode(task_prompt=args.task_prompt)

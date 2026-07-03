@@ -23,6 +23,7 @@ class EnvMode(enum.Enum):
     DROID = "droid"
     LIBERO = "libero"
     FALCONVLA_ALOHA = "falconvla_aloha"
+    ACT_ALOHA = "act_aloha"
     OPENVLA = "openvla"
     OPENVLA_OFT = "openvla-oft"
     COGACT = "cogact"
