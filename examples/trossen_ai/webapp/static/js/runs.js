@@ -3,7 +3,7 @@ import { makeSeriesChart, JOINT_NAMES_14 } from "./charts.js";
 
 const $ = (id) => document.getElementById(id);
 const selected = new Set();
-let deltaChart = null, overlapChart = null, jointChart = null, rttChart = null;
+let deltaChart = null, overlapChart = null, jointChart = null, rttChart = null, eeChart = null;
 
 async function loadList() {
   const runs = await (await fetch("/api/runs")).json();
@@ -28,6 +28,12 @@ async function loadList() {
   if (sel && !sel.options.length) {
     sel.innerHTML = JOINT_NAMES_14.map((n, i) => `<option value="${i}">${n}</option>`).join("");
     sel.addEventListener("change", refresh);
+  }
+
+  const esel = $("runs-ee-sel");
+  if (esel && !esel.options.length) {
+    esel.innerHTML = EE_NAMES_16.map((n, i) => `<option value="${i}">${n}</option>`).join("");
+    esel.addEventListener("change", refresh);
   }
 }
 
@@ -69,6 +75,15 @@ function jointSeries(events, jointIdx) {
     .filter(e => e.type === "action" && Array.isArray(e.action) && e.action.length > jointIdx)
     .map(e => ({ x: e.step, y: e.action[jointIdx] }));
 }
+// 16-D EE target names: per arm [x,y,z,qw,qx,qy,qz,grip].
+const EE_NAMES_16 = ["l_x","l_y","l_z","l_qw","l_qx","l_qy","l_qz","l_grip",
+                     "r_x","r_y","r_z","r_qw","r_qx","r_qy","r_qz","r_grip"];
+function hasEE(events) { return events.some(e => e.type === "ee"); }
+function eeSeries(events, dim) {
+  return events
+    .filter(e => e.type === "ee" && Array.isArray(e.ee) && e.ee.length > dim)
+    .map(e => ({ x: e.step, y: e.ee[dim] }));
+}
 // inference RTT vs event index (inference events carry no step).
 function rttSeries(events) {
   let i = 0;
@@ -90,6 +105,9 @@ async function refresh() {
   if (ids.length < 1) {
     $("runs-diff").innerHTML = '<em class="muted">Select 1+ runs.</em>';
     $("runs-metrics").innerHTML = '<em class="muted">Select runs above.</em>';
+    for (const c of [deltaChart, overlapChart, jointChart, rttChart, eeChart]) { if (c) c.destroy(); }
+    deltaChart = overlapChart = jointChart = rttChart = eeChart = null;
+    const eeCard = $("runs-ee-card"); if (eeCard) eeCard.style.display = "none";
     return;
   }
   const runs = await Promise.all(ids.map(async id => ({ id, ...(await fetchRun(id)) })));
@@ -118,6 +136,18 @@ async function refresh() {
       <span>${f(m.hz, 1)} Hz</span>
       <span>overlap ${f(m.overlap, 2)}</span></div>`;
   }).join("");
+
+  const eeRuns = runs.filter(r => hasEE(r.events));
+  const eeCard = $("runs-ee-card");
+  if (eeChart) { eeChart.destroy(); eeChart = null; }
+  if (eeRuns.length) {
+    eeCard.style.display = "";
+    const eeDim = Number($("runs-ee-sel").value || 0);
+    const eeData = eeRuns.map(r => ({ label: r.id, points: eeSeries(r.events, eeDim) }));
+    eeChart = makeSeriesChart($("runs-chart-ee"), eeData);
+  } else {
+    eeCard.style.display = "none";
+  }
 }
 
 loadList();
