@@ -90,7 +90,7 @@ def live_ee(
     smoothing_method: str = typer.Option("temporal", help="Blend weighting: 'temporal' (exp-decay) or 'cogact' (cosine-similarity consensus)"),
     cogact_mode: str = typer.Option("cogact", help="For --smoothing-method cogact: 'cogact' | 'latest' | 'hybrid'"),
     log_dir: Optional[str] = typer.Option(None, help="Directory for per-episode overlap JSON"),
-    async_inference: bool = typer.Option(False, help="Background-thread inference (not supported in EE mode)"),
+    async_inference: bool = typer.Option(False, help="Background-thread inference (joint and EE mode)"),
     use_left_arm_only: bool = typer.Option(False, help="Only move the left arm"),
     use_right_arm_only: bool = typer.Option(False, help="Only move the right arm"),
     ik_orientation_weight: float = typer.Option(
@@ -104,12 +104,9 @@ def live_ee(
     """Run the end-effector-space policy bridge (FK observations / IK actions).
 
     The policy outputs absolute 8-D EE poses per arm ([x,y,z,qw,qx,qy,qz,grip],
-    robot-base frame). See docs/end_effector_support.md (Option 1). Synchronous
-    inference only (async EE decoding is not yet supported).
+    robot-base frame). See docs/end_effector_support.md (Option 1). Supports
+    `--async-inference` (IK runs in the worker thread).
     """
-    if async_inference:
-        raise typer.BadParameter("--async-inference is not supported in EE mode yet.")
-
     from adapters import EEAdapter
     from external.joint_to_ee.ee_to_joints import EEToJointsConverter
     from external.joint_to_ee.kinematics import make_kinematics
@@ -134,7 +131,7 @@ def live_ee(
         smoothing_decay=smoothing_decay,
         smoothing_method=smoothing_method,
         cogact_mode=cogact_mode,
-        async_inference=False,
+        async_inference=async_inference,
         log_dir=log_dir,
         use_left_arm_only=use_left_arm_only,
         use_right_arm_only=use_right_arm_only,

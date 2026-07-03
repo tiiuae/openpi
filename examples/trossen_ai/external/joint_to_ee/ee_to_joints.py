@@ -4,6 +4,8 @@ decode_chunk converts an (N, 16) absolute-EE-quat action chunk (robot-base frame
 into an (N, 14) joint chunk (radians + gripper meters) by per-arm IK, seeded for
 continuity. On an unreachable / failed solve it holds the last valid joints.
 """
+import threading
+
 import numpy as np
 
 from . import constants as C
@@ -11,11 +13,35 @@ from .ee_frames import pose8_to_arm_se3
 from .kinematics import fk_pose8
 
 
+class _LockedKin:
+    """Serializes access to a non-thread-safe placo RobotKinematics so the
+    control-loop FK and the async worker's IK can share one solver safely.
+
+    Per-call locking keeps critical sections to a single solver step, so the
+    control loop blocks at most one FK/IK call, never a whole chunk decode.
+    """
+
+    def __init__(self, kin):
+        self._kin = kin
+        self._lock = threading.Lock()
+
+    def forward_kinematics(self, *a, **k):
+        with self._lock:
+            return self._kin.forward_kinematics(*a, **k)
+
+    def inverse_kinematics(self, *a, **k):
+        with self._lock:
+            return self._kin.inverse_kinematics(*a, **k)
+
+    def __getattr__(self, name):
+        return getattr(self._kin, name)
+
+
 class EEToJointsConverter:
     def __init__(self, kin, position_weight: float = 1.0, orientation_weight: float = 0.01,
                  pos_tol_m: float = 1e-3, ik_max_iters: int = 50,
                  max_joint_jump_deg: float | None = None):
-        self.kin = kin
+        self.kin = _LockedKin(kin)
         self.position_weight = position_weight
         self.orientation_weight = orientation_weight
         self.pos_tol_m = pos_tol_m

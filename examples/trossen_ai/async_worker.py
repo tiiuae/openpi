@@ -32,11 +32,11 @@ class AsyncPolicyWorker:
 
     Usage::
 
-        worker = AsyncPolicyWorker(policy_client, ensemble, action_dim)
+        worker = AsyncPolicyWorker(policy_client, ensemble, adapter)
         worker.start()
 
         # inside control loop (non-blocking):
-        worker.submit(obs, episode_step)
+        worker.submit(obs, episode_step, joints14)
 
         # block once at the very start of an episode:
         worker.wait_for_first()
@@ -51,14 +51,14 @@ class AsyncPolicyWorker:
         self,
         policy_client,
         ensemble: TemporalEnsemble,
-        action_dim: int,
+        adapter,
         sink: TelemetrySink = NullSink(),  # noqa
     ) -> None:
         self._client = policy_client
         self._ensemble = ensemble
-        self._action_dim = action_dim
+        self._adapter = adapter
         self._sink = sink
-        self._pending: tuple | None = None  # (obs_dict, query_step)
+        self._pending: tuple | None = None  # (obs_dict, query_step, joints14)
         self._lock = threading.Lock()
         self._first_result = threading.Event()
         self._running = False
@@ -76,10 +76,10 @@ class AsyncPolicyWorker:
             self._thread.join(timeout=5.0)
             self._thread = None
 
-    def submit(self, obs: dict, query_step: int) -> None:
+    def submit(self, obs: dict, query_step: int, joints14: np.ndarray) -> None:
         """Submit a fresh observation. Non-blocking. Overwrites any pending stale obs."""
         with self._lock:
-            self._pending = (obs, query_step)
+            self._pending = (obs, query_step, joints14)
 
     def wait_for_first(self, timeout: float = 30.0) -> bool:
         """Block until the first inference chunk has been added to the ensemble."""
@@ -95,15 +95,18 @@ class AsyncPolicyWorker:
             if item is None:
                 time.sleep(0.001)
                 continue
-            obs, query_step = item
+            obs, query_step, joints14 = item
             try:
                 t0 = time.perf_counter()
                 response = self._client.infer(obs)
                 rtt_ms = (time.perf_counter() - t0) * 1e3
                 self._sink.on_inference(rtt_ms, time.time())
-                chunk = np.asarray(response["actions"])[:, : self._action_dim]
+                chunk = self._adapter.decode_chunk(response["actions"], joints14)
                 self._ensemble.add_chunk(query_step, chunk)
                 self._sink.on_chunk(query_step, chunk, time.time())
+                ee = self._adapter.ee_chunk(response["actions"])
+                if ee is not None:
+                    self._sink.on_ee_chunk(query_step, ee, time.time())
                 if first:
                     self._first_result.set()
                     first = False

@@ -97,7 +97,7 @@ class TrossenOpenPIBridge:
             raise ValueError("Async inference requires smoothing (it cannot be disabled).")
         self.async_inference = async_inference
         self._policy_worker = (
-            AsyncPolicyWorker(self.policy_client, self.ensemble, self.action_dim, sink=self.sink)
+            AsyncPolicyWorker(self.policy_client, self.ensemble, self.adapter, sink=self.sink)
             if async_inference
             else None
         )
@@ -271,8 +271,6 @@ class TrossenOpenPIBridge:
         fallback = HoldLastAction()
         # Log forwarding is attached at the session level (webapp.session) for the
         # whole run; attaching here too would double every line in the UI.
-        if self.async_inference and not isinstance(self.adapter, JointAdapter):
-            raise NotImplementedError("Async inference with EE decoding is not supported yet.")
         if self.ensemble is not None:
             self.ensemble.reset()
         if self.action_logger is not None:
@@ -296,7 +294,8 @@ class TrossenOpenPIBridge:
                     obs_raw = self.robot.get_observation()
                     self._emit_cameras(obs_raw)  # live feed every step (throttled in sink)
                     obs = self._build_observation(obs_raw, task_prompt)
-                    self._policy_worker.submit(obs, self.episode_step)
+                    current_joints14 = extract_joints(obs_raw)
+                    self._policy_worker.submit(obs, self.episode_step, current_joints14)
                     if is_first_step:
                         logger.info("Waiting for first inference result...")
                         if not self._policy_worker.wait_for_first(timeout=30.0):
