@@ -445,7 +445,7 @@ button {
 }
 
 .chart-title         { font-size: 11px; color: var(--muted); margin-bottom: 5px; }
-.chart-cj-container  { position: relative; height: 220px; }
+.chart-cj-container  { position: relative; height: 220px; min-width: 0; }
 
 /* ── File browser modal ──────────────────────────────────────── */
 
@@ -561,8 +561,8 @@ button {
 .header-actions { display:flex; gap:8px; align-items:center; }
 
 /* ── Live page layout: config column + stacked cameras→charts→logs ─ */
-.live-grid { display:grid; grid-template-columns:320px 1fr; gap:14px; padding:16px; }
-.live-main { display:flex; flex-direction:column; gap:14px; }
+.live-grid { display:grid; grid-template-columns:320px minmax(0,1fr); gap:14px; padding:16px; }
+.live-main { display:flex; flex-direction:column; gap:14px; min-width:0; }
 @media (max-width:900px){ .live-grid{ grid-template-columns:1fr; } }
 
 /* ── Cameras strip ────────────────────────────────────────────── */
@@ -604,7 +604,7 @@ button {
 .charts-grid { display:flex; flex-direction:column; gap:10px; }
 .chart-wrap { background:var(--bg); border:1px solid var(--border); border-radius:4px; padding:8px; }
 .chart-title { font-size:11px; color:var(--muted); margin-bottom:5px; }
-.chart-cj-container { position:relative; height:220px; }
+.chart-cj-container { position:relative; height:220px; min-width:0; }
 .section-label { font-size:10px; font-weight:600; color:var(--muted);
   text-transform:uppercase; letter-spacing:.8px; margin:10px 0 4px; }
 #metrics-box { font:12px var(--font); white-space:pre-wrap; color:var(--muted); }
