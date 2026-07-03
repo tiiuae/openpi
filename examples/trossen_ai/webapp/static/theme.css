@@ -700,3 +700,7 @@ table.runs-diff tr.diff td:first-child { font-weight:700; }
   border-radius:10px; padding:14px 16px; }
 .runs-main .card h2 { margin:0 0 10px; font-size:14px; color:var(--text); }
 .muted { color:var(--muted); }
+
+.runs-metrics { display:flex; flex-direction:column; gap:6px; margin-bottom:10px; }
+.runs-metric-row { display:flex; gap:14px; font:12px var(--font); color:var(--muted); }
+.runs-metric-row b { color:var(--text); min-width:120px; }

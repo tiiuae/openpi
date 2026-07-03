@@ -16,12 +16,23 @@
   </header>
   <main class="runs-main">
     <section class="card">
-      <h2>Runs <span class="muted">(pick 2+ to compare)</span></h2>
+      <h2>Runs <span class="muted">(pick 1+ to compare)</span></h2>
       <div id="runs-list" class="runs-list">Loading…</div>
     </section>
     <section class="card">
       <h2>Config diff</h2>
       <div id="runs-diff" class="runs-diff-wrap"><em class="muted">Select runs above.</em></div>
+    </section>
+    <section class="card">
+      <h2>Joint traces
+        <select id="runs-joint-sel" class="btn-sm"></select>
+      </h2>
+      <div class="chart-cj-container"><canvas id="runs-chart-joint"></canvas></div>
+    </section>
+    <section class="card">
+      <h2>Metrics</h2>
+      <div id="runs-metrics" class="runs-metrics"><em class="muted">Select runs above.</em></div>
+      <div class="chart-cj-container"><canvas id="runs-chart-rtt"></canvas></div>
     </section>
     <section class="card">
       <h2>Smoothing Δ vs step</h2>
