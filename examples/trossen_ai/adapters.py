@@ -31,6 +31,10 @@ class ActionSpaceAdapter:
         """Map a model action chunk to an (N, 14) joint chunk (rad + gripper m)."""
         raise NotImplementedError
 
+    def ee_chunk(self, raw_chunk: np.ndarray):
+        """EE targets (N, 16) for logging, or None if this space is not EE."""
+        return None
+
 
 class JointAdapter(ActionSpaceAdapter):
     """Identity adapter: the policy already speaks joint space."""
@@ -59,3 +63,6 @@ class EEAdapter(ActionSpaceAdapter):
 
     def decode_chunk(self, raw_chunk: np.ndarray, current_joints14: np.ndarray) -> np.ndarray:
         return self._converter.decode_chunk(raw_chunk, current_joints14)
+
+    def ee_chunk(self, raw_chunk: np.ndarray):
+        return np.asarray(raw_chunk)[:, :16]

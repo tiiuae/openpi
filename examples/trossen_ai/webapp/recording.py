@@ -39,6 +39,7 @@ class TeeSink:
     def on_action(self, step, action, ts): self._fan("on_action", step, action, ts)
     def on_inference(self, rtt_ms, ts): self._fan("on_inference", rtt_ms, ts)
     def on_chunk(self, query_step, chunk, ts): self._fan("on_chunk", query_step, chunk, ts)
+    def on_ee_chunk(self, query_step, ee_chunk, ts): self._fan("on_ee_chunk", query_step, ee_chunk, ts)
     def on_overlap(self, step, count): self._fan("on_overlap", step, count)
     def on_weights(self, step, weights, ts): self._fan("on_weights", step, weights, ts)
     def on_images(self, images, ts): self._fan("on_images", images, ts)
@@ -72,6 +73,7 @@ class RecordingSink:
         self._disabled = False
         self._fh = None
         self._last_chunk = None  # (query_step, np.ndarray) for raw lookup
+        self._last_ee_chunk = None  # (query_step, np.ndarray) for ee lookup
         self._model = None
         # ---- summary accumulators (used in Task 3) ----
         self._rtts = []
@@ -126,6 +128,12 @@ class RecordingSink:
             self._deltas.append(float(np.linalg.norm(np.array(act) - np.array(raw))))
         self._steps += 1
         self._action_ts.append(float(ts))
+        if self._last_ee_chunk is not None:
+            _qs, _ee = self._last_ee_chunk
+            _off = step - _qs
+            if 0 <= _off < len(_ee):
+                self._put({"type": "ee", "step": step,
+                           "ee": np.asarray(_ee[_off]).flatten().tolist(), "ts": ts})
         self._put({"type": "action", "step": step, "action": act, "raw": raw, "ts": ts})
 
     def on_inference(self, rtt_ms, ts):
@@ -136,6 +144,9 @@ class RecordingSink:
         arr = np.asarray(chunk)
         self._last_chunk = (query_step, arr)
         self._put({"type": "chunk", "query_step": query_step, "len": int(len(arr)), "ts": ts})
+
+    def on_ee_chunk(self, query_step, ee_chunk, ts):
+        self._last_ee_chunk = (query_step, np.asarray(ee_chunk))
 
     def on_overlap(self, step, count):
         self._overlaps.append(int(count))

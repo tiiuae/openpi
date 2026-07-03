@@ -18,6 +18,7 @@ def test_null_sink_accepts_all_calls():
     s.on_action(0, np.zeros(14), 1.0)
     s.on_inference(12.3, 1.0)
     s.on_chunk(0, np.ones((5, 14)), 1.0)
+    s.on_ee_chunk(0, np.ones((5, 16)), 1.0)
     s.on_overlap(0, 3)
     s.on_weights(0, np.array([0.6, 0.4]), 1.0)
     s.on_images({"cam": b"x"}, 1.0)

@@ -1,6 +1,6 @@
 import numpy as np
 
-from adapters import JointAdapter, extract_joints
+from adapters import ActionSpaceAdapter, EEAdapter, JointAdapter, extract_joints
 
 
 def _fake_obs():
@@ -32,6 +32,23 @@ def test_joint_adapter_decode_chunk_is_identity_slice():
     out = adapter.decode_chunk(raw, current_joints14=np.zeros(14))
     assert out.shape == (3, 14)
     assert np.allclose(out, raw[:, :14])
+
+
+def test_base_and_joint_adapter_ee_chunk_is_none():
+    raw = np.arange(3 * 20, dtype=np.float32).reshape(3, 20)
+    # base class returns None (not an EE space)
+    assert ActionSpaceAdapter().ee_chunk(raw) is None
+    # JointAdapter inherits the None default
+    assert JointAdapter().ee_chunk(raw) is None
+
+
+def test_ee_adapter_ee_chunk_slices_first_16_cols():
+    # ee_chunk does not touch the converter, so a stub is fine here.
+    adapter = EEAdapter(converter=None)
+    raw = np.arange(4 * 20, dtype=np.float32).reshape(4, 20)  # wider than 16
+    out = adapter.ee_chunk(raw)
+    assert out.shape == (4, 16)
+    assert np.allclose(out, raw[:, :16])
 
 
 import pytest

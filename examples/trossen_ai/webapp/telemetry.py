@@ -18,6 +18,7 @@ class TelemetrySink(Protocol):
     def on_action(self, step: int, action: np.ndarray, ts: float) -> None: ...
     def on_inference(self, rtt_ms: float, ts: float) -> None: ...
     def on_chunk(self, query_step: int, chunk: np.ndarray, ts: float) -> None: ...
+    def on_ee_chunk(self, query_step: int, ee_chunk: np.ndarray, ts: float) -> None: ...
     def on_overlap(self, step: int, count: int) -> None: ...
     def on_weights(self, step: int, weights: np.ndarray, ts: float) -> None: ...
     def on_images(self, images: dict[str, bytes], ts: float) -> None: ...
@@ -31,6 +32,7 @@ class NullSink:
     def on_action(self, step: int, action: np.ndarray, ts: float) -> None: ...
     def on_inference(self, rtt_ms: float, ts: float) -> None: ...
     def on_chunk(self, query_step: int, chunk: np.ndarray, ts: float) -> None: ...
+    def on_ee_chunk(self, query_step: int, ee_chunk: np.ndarray, ts: float) -> None: ...
     def on_overlap(self, step: int, count: int) -> None: ...
     def on_weights(self, step: int, weights: np.ndarray, ts: float) -> None: ...
     def on_images(self, images: dict[str, bytes], ts: float) -> None: ...
@@ -49,6 +51,7 @@ class QueueSink:
         self._q = q
         self._image_min_interval_s = image_min_interval_s
         self._last_chunk: tuple[int, np.ndarray] | None = None
+        self._last_ee_chunk: tuple[int, np.ndarray] | None = None
         self._last_image_ts = float("-inf")
 
     def _put(self, evt: dict) -> None:
@@ -88,6 +91,12 @@ class QueueSink:
             "raw": raw,
             "ts": ts,
         })
+        if self._last_ee_chunk is not None:
+            _qs, _ee = self._last_ee_chunk
+            _off = step - _qs
+            if 0 <= _off < len(_ee):
+                self._put({"type": "ee", "step": step,
+                           "ee": np.asarray(_ee[_off]).flatten().tolist(), "ts": ts})
 
     def on_inference(self, rtt_ms: float, ts: float) -> None:
         self._put({"type": "inference", "rtt_ms": rtt_ms, "ts": ts})
@@ -96,6 +105,9 @@ class QueueSink:
         arr = np.asarray(chunk)
         self._last_chunk = (query_step, arr)
         self._put({"type": "chunk", "query_step": query_step, "len": int(len(arr)), "ts": ts})
+
+    def on_ee_chunk(self, query_step: int, ee_chunk: np.ndarray, ts: float) -> None:
+        self._last_ee_chunk = (query_step, np.asarray(ee_chunk))
 
     def on_overlap(self, step: int, count: int) -> None:
         self._put({"type": "overlap", "step": step, "count": count})

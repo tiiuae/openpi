@@ -327,6 +327,9 @@ class TrossenOpenPIBridge:
                         if self.ensemble is not None:
                             self.ensemble.add_chunk(self.episode_step, self.current_action_chunk)
                             self.sink.on_chunk(self.episode_step, self.current_action_chunk, time.time())
+                        _ee = self.adapter.ee_chunk(response["actions"])
+                        if _ee is not None:
+                            self.sink.on_ee_chunk(self.episode_step, _ee, time.time())
                         self.action_chunk_idx = 0
                         logger.info(f"Received action chunk: {self.current_action_chunk.shape}")
 
