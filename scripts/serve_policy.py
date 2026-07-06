@@ -5,12 +5,11 @@ import socket
 
 import tyro
 
-
-from openpi.policies import policy as _policy
-from openpi.policies import policy_config as _policy_config
+from openpi.policies import cogact_policy as _cogact_policy
 from openpi.policies import openvla_policy as _openvla_policy
 from openpi.policies import openvlaoft_policy as _openvlaoft_policy
-from openpi.policies import cogact_policy as _cogact_policy
+from openpi.policies import policy as _policy
+from openpi.policies import policy_config as _policy_config
 from openpi.serving import websocket_policy_server
 from openpi.training import config as _config
 
@@ -98,6 +97,7 @@ DEFAULT_CHECKPOINT: dict[EnvMode, Checkpoint] = {
     ),
 }
 
+
 def create_default_policy(env: EnvMode, *, default_prompt: str | None = None) -> _policy.Policy:
     """Create a default policy for the given environment."""
     if checkpoint := DEFAULT_CHECKPOINT.get(env):
@@ -107,13 +107,9 @@ def create_default_policy(env: EnvMode, *, default_prompt: str | None = None) ->
     raise ValueError(f"Unsupported environment mode: {env}")
 
 
-
 def create_policy(args: Args) -> _policy.Policy:
-
-    # 1. Route to FalconVLA-specific function if needed
-    if args.env == EnvMode.FALCONVLA_ALOHA:
-        return create_falconvla_policy_from_args(args)
-    # 2. Route to OpenVLA
+    # Route REST-backed environments to their client policies. FalconVLA (in-process) needs no
+    # special case here — it dispatches through create_trained_policy on its model type.
     if args.env == EnvMode.OPENVLA:
         logging.info("Using OpenVLAClientPolicy (REST backend)")
         return _openvla_policy.OpenVLAClientPolicy(
@@ -153,7 +149,6 @@ def create_policy(args: Args) -> _policy.Policy:
 
 
 def main(args: Args) -> None:
-
     policy = create_policy(args)
     policy_metadata = policy.metadata
 
@@ -174,27 +169,6 @@ def main(args: Args) -> None:
     server.serve_forever()
 
 
-def create_falconvla_policy_from_args(args: Args) -> _policy.Policy:
-    """Create a FalconVLA policy from the given arguments."""
-    match args.policy:
-        case Checkpoint():
-            return _policy_config.create_falconvla_policy(
-                _config.get_config(args.policy.config),
-                args.policy.dir,
-                default_prompt=args.default_prompt
-            )
-        case Default():
-            # Use the default FalconVLA checkpoint
-            checkpoint = DEFAULT_CHECKPOINT[EnvMode.FALCONVLA_ALOHA]
-            return _policy_config.create_falconvla_policy(
-                _config.get_config(checkpoint.config),
-                checkpoint.dir,
-                default_prompt=args.default_prompt
-            )
-
 if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO, force=True)
     main(tyro.cli(Args))
-
-
-

@@ -181,3 +181,10 @@ cython_debug/
 
 # Debug
 debug/
+policy_records
+
+# Local-only FalconVLA cleanup artifacts (kept on disk, not tracked)
+FALCONVLA_CLEANUP_PLAN.md
+FALCONVLA_HANDOFF.md
+printer.py
+phase5_replay.py
