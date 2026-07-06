@@ -13,14 +13,13 @@ import flax.nnx as nnx
 from typing_extensions import override
 import tyro
 
+import openpi.models.falconvla_config as falconvla_config
 import openpi.models.model as _model
 import openpi.models.pi0_config as pi0_config
 import openpi.models.pi0_fast as pi0_fast
-import openpi.models.falconvla_config as falconvla_config
 import openpi.models.tokenizer as _tokenizer
 import openpi.policies.aloha_policy as aloha_policy
 import openpi.policies.droid_policy as droid_policy
-import openpi.policies.falconvla_policy as falconvla_policy
 import openpi.policies.libero_policy as libero_policy
 import openpi.shared.download as _download
 import openpi.shared.normalize as _normalize
@@ -289,7 +288,7 @@ class LeRobotAlohaDataConfig(DataConfigFactory):
 @dataclasses.dataclass(frozen=True)
 class LeRobotFalconVLADataConfig(DataConfigFactory):
     """Data configuration for FalconVLA with Aloha-compatible input/output."""
-    
+
     # If true, will convert joint dimensions to deltas with respect to the current state before passing to the model.
     # Gripper dimensions will remain in absolute values.
     use_delta_joint_actions: bool = True
@@ -315,10 +314,9 @@ class LeRobotFalconVLADataConfig(DataConfigFactory):
 
     @override
     def create(self, assets_dirs: pathlib.Path, model_config: _model.BaseModelConfig) -> DataConfig:
-        data_transforms = _transforms.Group(
-            inputs=[falconvla_policy.FalconVLAInputs()],
-            outputs=[falconvla_policy.FalconVLAOutputs()],
-        )
+        # FalconVLA does its own input decoding / (un)normalization inside `model.inference`,
+        # so no openpi input/output data transforms are applied for it.
+        data_transforms = _transforms.Group()
         if self.use_delta_joint_actions:
             delta_action_mask = _transforms.make_bool_mask(6, -1, 6, -1)
             data_transforms = data_transforms.push(
@@ -1218,7 +1216,6 @@ _CONFIGS = [
             unnorm_key="burger_270_episodes",
             action_dim=14,
             action_horizon=25,
-            
         ),
         data=LeRobotFalconVLADataConfig(
             assets=AssetsConfig(asset_id="trossen"),
@@ -1254,6 +1251,22 @@ _CONFIGS = [
     TrainConfig(
         name="FalconVLA-EE-AD16-H25-NP",
         model=falconvla_config.FalconVLAConfig(
+            # End-effector (Cartesian pose) actions -- verified against norm_stats.json: these
+            # action values sit near [0.3, 1.1] with quaternion-like components near +-1, unlike
+            # the joint-angle-space "translated_rlds" dataset (values up to ~2.6 rad).
+            unnorm_key="aloha_geometry_dataset_simple_single_arm_translated_eef_rlds",
+            action_dim=16,
+            action_horizon=25,
+            use_proprio=False,
+        ),
+        data=LeRobotFalconVLADataConfig(
+            assets=AssetsConfig(asset_id="trossen"),
+        ),
+        policy_metadata={"reset_pose": [0, -1.5, 1.5, 0, 0, 0]},
+    ),
+    TrainConfig(
+        name="FalconVLA-AD16-H25-NP",
+        model=falconvla_config.FalconVLAConfig(
             unnorm_key="aloha_geometry_dataset_simple_single_arm_translated_rlds",
             action_dim=16,
             action_horizon=25,
@@ -1264,47 +1277,35 @@ _CONFIGS = [
         ),
         policy_metadata={"reset_pose": [0, -1.5, 1.5, 0, 0, 0]},
     ),
-        TrainConfig(
-    name="FalconVLA-AD16-H25-NP",
-    model=falconvla_config.FalconVLAConfig(
-        unnorm_key="aloha_geometry_dataset_simple_single_arm_translated_rlds",
-        action_dim=16,
-        action_horizon=25,
-        use_proprio=False,
-    ),
-    data=LeRobotFalconVLADataConfig(
-        assets=AssetsConfig(asset_id="trossen"),
-    ),
-    policy_metadata={"reset_pose": [0, -1.5, 1.5, 0, 0, 0]},
+    TrainConfig(
+        name="FalconVLA-AD16-H25-NP-torch-compile",
+        model=falconvla_config.FalconVLAConfig(
+            unnorm_key="aloha_geometry_dataset_simple_single_arm_translated_rlds",
+            action_dim=16,
+            action_horizon=25,
+            use_proprio=False,
+        ),
+        data=LeRobotFalconVLADataConfig(
+            assets=AssetsConfig(asset_id="trossen"),
+        ),
+        policy_metadata={"reset_pose": [0, -1.5, 1.5, 0, 0, 0]},
     ),
     TrainConfig(
-    name="FalconVLA-AD16-H25-NP-torch-compile",
-    model=falconvla_config.FalconVLAConfig(
-        unnorm_key="aloha_geometry_dataset_simple_single_arm_translated_rlds",
-        action_dim=16,
-        action_horizon=25,
-        use_proprio=False,
-    ),
-    data=LeRobotFalconVLADataConfig(
-        assets=AssetsConfig(asset_id="trossen"),
-    ),
-    policy_metadata={"reset_pose": [0, -1.5, 1.5, 0, 0, 0]},
-    ),
-    TrainConfig(
-    name="FalconVLA-AD16-H25-P",
-    model=falconvla_config.FalconVLAConfig(
-        unnorm_key="aloha_geometry_dataset_simple_single_arm_translated_rlds",
-        action_dim=16,
-        action_horizon=25,
-        use_proprio=False,
-        # use_proprio_projector=True,
-        # proprio_dim=19,
-        # proprio_history_window=1,
-    ),
-    data=LeRobotFalconVLADataConfig(
-        assets=AssetsConfig(asset_id="trossen"),
-    ),
-    policy_metadata={"reset_pose": [0, -1.5, 1.5, 0, 0, 0]},
+        name="FalconVLA-AD16-H25-P",
+        model=falconvla_config.FalconVLAConfig(
+            # Matches the on-disk `FalconVLA-8B-ResNet-aloha-geometry-translated-16-p-film`
+            # checkpoint: proprio_mode="film" in its config.json, no `<prop*>` tokens in its
+            # tokenizer, and its predict_action takes a `proprio_inputs` tensor kwarg.
+            unnorm_key="aloha_geometry_dataset_simple_single_arm_translated_rlds",
+            action_dim=16,
+            action_horizon=25,
+            use_proprio=True,
+            proprio_mode="film",
+        ),
+        data=LeRobotFalconVLADataConfig(
+            assets=AssetsConfig(asset_id="trossen"),
+        ),
+        policy_metadata={"reset_pose": [0, -1.5, 1.5, 0, 0, 0]},
     ),
     # TrainConfig(
     # name="FalconVLA-AD16-H25",
@@ -1320,25 +1321,16 @@ _CONFIGS = [
     # policy_metadata={"reset_pose": [0, -1.5, 1.5, 0, 0, 0]},
     # ),
     TrainConfig(
-    name="FalconVLA-AD14-H50-NP",
-    model=falconvla_config.FalconVLAConfig(
-        unnorm_key="aidrc_cups_manipulation",
-        action_dim=14,
-        action_horizon=50,
-        use_proprio=False,
-    ),
-    data=LeRobotFalconVLADataConfig(
-        assets=AssetsConfig(asset_id="trossen"),
-    ),
-    policy_metadata={"reset_pose": [0, -1.5, 1.5, 0, 0, 0]},
-    ),
-    TrainConfig(
-        name="FalconVLA-AD14-H10-NP",
+        name="FalconVLA-AD14-H50-NP",
         model=falconvla_config.FalconVLAConfig(
-            unnorm_key="aidrc_cups_manipulation_14",
+            # No on-disk checkpoint currently matches this exact (unnorm_key, action_dim=14,
+            # action_horizon=50) combination -- the only "aidrc_cups_manipulation" checkpoint
+            # found under VLA_MODELS/ is action_dim=16, action_horizon=25. Kept as-is in case it
+            # targets an external/archived checkpoint; verify before serving with a new one.
+            unnorm_key="aidrc_cups_manipulation",
             action_dim=14,
-            action_horizon=10,
-            use_proprio=False
+            action_horizon=50,
+            use_proprio=False,
         ),
         data=LeRobotFalconVLADataConfig(
             assets=AssetsConfig(asset_id="trossen"),
@@ -1346,37 +1338,143 @@ _CONFIGS = [
         policy_metadata={"reset_pose": [0, -1.5, 1.5, 0, 0, 0]},
     ),
     TrainConfig(
-    name="FalconVLA-AD7-H25-NP",
-    model=falconvla_config.FalconVLAConfig(
-        unnorm_key="aloha_geometry_dataset_single_arm_rlds_right_truncated",
-        action_dim=7,
-        action_horizon=25,
-        use_proprio=False,
-    ),
-    data=LeRobotFalconVLADataConfig(
-        assets=AssetsConfig(asset_id="trossen"),
-    ),
-    policy_metadata={"reset_pose": [0, -1.5, 1.5, 0, 0, 0]},
+        name="FalconVLA-AD14-H10-NP",
+        model=falconvla_config.FalconVLAConfig(
+            unnorm_key="aidrc_cups_manipulation_14", action_dim=14, action_horizon=10, use_proprio=False
+        ),
+        data=LeRobotFalconVLADataConfig(
+            assets=AssetsConfig(asset_id="trossen"),
+        ),
+        policy_metadata={"reset_pose": [0, -1.5, 1.5, 0, 0, 0]},
     ),
     TrainConfig(
-    name="FalconVLA-AD7-H25",
-    model=falconvla_config.FalconVLAConfig(
-        unnorm_key="aloha_geometry_dataset_single_arm_rlds_right_truncated",
-        action_dim=7,
-        action_horizon=25,
-        use_proprio=True,
+        name="FalconVLA-AD7-H25-NP",
+        model=falconvla_config.FalconVLAConfig(
+            unnorm_key="aloha_geometry_dataset_single_arm_rlds_right_truncated",
+            action_dim=7,
+            action_horizon=25,
+            use_proprio=False,
+        ),
+        data=LeRobotFalconVLADataConfig(
+            assets=AssetsConfig(asset_id="trossen"),
+        ),
+        policy_metadata={"reset_pose": [0, -1.5, 1.5, 0, 0, 0]},
     ),
-    data=LeRobotFalconVLADataConfig(
-        assets=AssetsConfig(asset_id="trossen"),
+    TrainConfig(
+        name="FalconVLA-AD7-H25",
+        model=falconvla_config.FalconVLAConfig(
+            # No "-p" checkpoint exists yet under VLA_MODELS/ for this unnorm_key (only "-np"
+            # variants); this config is ready for whenever one is trained. Defaults to
+            # proprio_mode="tokens" following the AD14 "-p" checkpoint's convention -- confirm
+            # against the actual checkpoint's tokenizer/config.json once it exists.
+            unnorm_key="aloha_geometry_dataset_single_arm_rlds_right_truncated",
+            action_dim=7,
+            action_horizon=25,
+            use_proprio=True,
+        ),
+        data=LeRobotFalconVLADataConfig(
+            assets=AssetsConfig(asset_id="trossen"),
+        ),
+        policy_metadata={"reset_pose": [0, -1.5, 1.5, 0, 0, 0]},
     ),
-    policy_metadata={"reset_pose": [0, -1.5, 1.5, 0, 0, 0]},
+    TrainConfig(
+        name="FalconVLA-AD16-H25-Geometry-NP",
+        model=falconvla_config.FalconVLAConfig(
+            # unnorm_key="aloha_geometry_dataset_rlds" (8 on-disk checkpoints, all "-np"); had no
+            # TrainConfig before this audit.
+            unnorm_key="aloha_geometry_dataset_rlds",
+            action_dim=16,
+            action_horizon=25,
+            use_proprio=False,
+        ),
+        data=LeRobotFalconVLADataConfig(
+            assets=AssetsConfig(asset_id="trossen"),
+        ),
+        policy_metadata={"reset_pose": [0, -1.5, 1.5, 0, 0, 0]},
+    ),
+    TrainConfig(
+        name="FalconVLA-AD14-H25-Geometry-NP",
+        model=falconvla_config.FalconVLAConfig(
+            # unnorm_key="aloha_geometry_dataset_rlds" but action_dim=14 (2 on-disk checkpoints,
+            # both "-np"); distinct from the ad=16 config above -- same dataset key, different
+            # trained action dimensionality. Had no TrainConfig before this audit.
+            unnorm_key="aloha_geometry_dataset_rlds",
+            action_dim=14,
+            action_horizon=25,
+            use_proprio=False,
+        ),
+        data=LeRobotFalconVLADataConfig(
+            assets=AssetsConfig(asset_id="trossen"),
+        ),
+        policy_metadata={"reset_pose": [0, -1.5, 1.5, 0, 0, 0]},
+    ),
+    TrainConfig(
+        name="FalconVLA-AD16-H25-SingleArm-NP",
+        model=falconvla_config.FalconVLAConfig(
+            # unnorm_key="aloha_geometry_dataset_single_arm_rlds" (7 on-disk checkpoints, all
+            # "-np"); had no TrainConfig before this audit. Distinct from the "_translated_" and
+            # "_reach_" single-arm variants below/above.
+            unnorm_key="aloha_geometry_dataset_single_arm_rlds",
+            action_dim=16,
+            action_horizon=25,
+            use_proprio=False,
+        ),
+        data=LeRobotFalconVLADataConfig(
+            assets=AssetsConfig(asset_id="trossen"),
+        ),
+        policy_metadata={"reset_pose": [0, -1.5, 1.5, 0, 0, 0]},
+    ),
+    TrainConfig(
+        name="FalconVLA-AD16-H25-SimpleSingleArm-NP",
+        model=falconvla_config.FalconVLAConfig(
+            # unnorm_key="aloha_geometry_dataset_simple_single_arm_rlds" (3 on-disk checkpoints,
+            # all "-np"); had no TrainConfig before this audit.
+            unnorm_key="aloha_geometry_dataset_simple_single_arm_rlds",
+            action_dim=16,
+            action_horizon=25,
+            use_proprio=False,
+        ),
+        data=LeRobotFalconVLADataConfig(
+            assets=AssetsConfig(asset_id="trossen"),
+        ),
+        policy_metadata={"reset_pose": [0, -1.5, 1.5, 0, 0, 0]},
+    ),
+    TrainConfig(
+        name="FalconVLA-AD7-H25-Cups-NP",
+        model=falconvla_config.FalconVLAConfig(
+            # unnorm_key="aidrc_cups_manipulation_7" (2 on-disk checkpoints, both "-np"); had no
+            # TrainConfig before this audit. Distinct from "FalconVLA-AD7-H25(-NP)", which use the
+            # unrelated "aloha_geometry_dataset_single_arm_rlds_right_truncated" dataset.
+            unnorm_key="aidrc_cups_manipulation_7",
+            action_dim=7,
+            action_horizon=25,
+            use_proprio=False,
+        ),
+        data=LeRobotFalconVLADataConfig(
+            assets=AssetsConfig(asset_id="trossen"),
+        ),
+        policy_metadata={"reset_pose": [0, -1.5, 1.5, 0, 0, 0]},
+    ),
+    TrainConfig(
+        name="FalconVLA-AD16-H25-Cups-NP",
+        model=falconvla_config.FalconVLAConfig(
+            # unnorm_key="aidrc_cups_manipulation" (1 on-disk checkpoint, "-np", action_dim=16);
+            # had no TrainConfig before this audit. Distinct from "FalconVLA-AD14-H50-NP", which
+            # uses the same unnorm_key string but a different (currently unmatched) action_dim/
+            # action_horizon -- see the note on that config.
+            unnorm_key="aidrc_cups_manipulation",
+            action_dim=16,
+            action_horizon=25,
+            use_proprio=False,
+        ),
+        data=LeRobotFalconVLADataConfig(
+            assets=AssetsConfig(asset_id="trossen"),
+        ),
+        policy_metadata={"reset_pose": [0, -1.5, 1.5, 0, 0, 0]},
     ),
     TrainConfig(
         name="Pi0.5-P",
-        model=pi0_config.Pi0Config(
-            pi05=True,
-            action_dim=25
-            ),
+        model=pi0_config.Pi0Config(pi05=True, action_dim=25),
         data=LeRobotAlohaDataConfig(
             repo_id="aidrc_cups_manipulation",
             assets=AssetsConfig(
@@ -1415,7 +1513,6 @@ _CONFIGS = [
             action_dim=32,
         ),
     ),
-    
     #
     # RoboArena configs.
     #
