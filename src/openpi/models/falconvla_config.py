@@ -62,11 +62,11 @@ class FalconVLAConfig(_model.BaseModelConfig):
     # fixed seed is required for reproducible actions (mirrors the canonical FalconVLA server's
     # pin_global_seed). strict_determinism also forces deterministic cuDNN kernels + disables TF32.
     seed: int = 7
-    strict_determinism: bool = True
+    strict_determinism: bool = False
     # When True, reseed to `seed` before every inference so identical observations always yield
     # identical actions (deterministic controller). When False, the action head advances its RNG
     # each call, so repeated inference on the same observation samples slightly different actions.
-    deterministic_inference: bool = True
+    deterministic_inference: bool = False
 
     @property
     @override
