@@ -13,6 +13,7 @@ import flax.nnx as nnx
 from typing_extensions import override
 import tyro
 
+import openpi.models.falconvla_autoconfig as falconvla_autoconfig
 import openpi.models.falconvla_config as falconvla_config
 import openpi.models.model as _model
 import openpi.models.pi0_config as pi0_config
@@ -1536,3 +1537,29 @@ def get_config(config_name: str) -> TrainConfig:
         raise ValueError(f"Config '{config_name}' not found.{closest_str}")
 
     return _CONFIGS_DICT[config_name]
+
+
+def get_falconvla_train_config(
+    checkpoint_dir: str | pathlib.Path,
+    *,
+    name: str = "falconvla_auto",
+    exp_name: str = "falconvla_auto",
+    **model_overrides: Any,
+) -> TrainConfig:
+    """Build a `TrainConfig` for a FalconVLA checkpoint without a hand-written `_CONFIGS` entry.
+
+    `action_dim`, `action_horizon`, `unnorm_key`, and proprio settings are auto-detected from the
+    checkpoint directory itself (see `falconvla_autoconfig.detect_falconvla_config`). Pass e.g.
+    `unnorm_key=...` in `model_overrides` to force a value when detection is ambiguous, or to
+    override any other `FalconVLAConfig` field.
+
+    This is a standalone builder, not registered in `_CONFIGS` -- `get_config` is unaffected.
+    """
+    model = falconvla_autoconfig.detect_falconvla_config(checkpoint_dir, **model_overrides)
+    return TrainConfig(
+        name=name,
+        exp_name=exp_name,
+        model=model,
+        data=LeRobotFalconVLADataConfig(assets=AssetsConfig(asset_id="trossen")),
+        policy_metadata={"reset_pose": [0, -1.5, 1.5, 0, 0, 0]},
+    )

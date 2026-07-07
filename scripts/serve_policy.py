@@ -2,6 +2,7 @@ import dataclasses
 import enum
 import logging
 import socket
+from typing import Literal
 
 import tyro
 
@@ -44,6 +45,24 @@ class Default:
 
 
 @dataclasses.dataclass
+class AutoCheckpoint:
+    """Load a FalconVLA policy from a checkpoint directory, auto-detecting its config.
+
+    `action_dim`, `action_horizon`, `unnorm_key`, and proprio settings are read directly from the
+    checkpoint's own config.json / norm_stats.json / tokenizer files -- no matching `_CONFIGS`
+    entry needed. FalconVLA checkpoints only.
+    """
+
+    # FalconVLA checkpoint directory (e.g. a directory under VLA_MODELS/).
+    dir: str
+    # Overrides -- only needed when auto-detection is ambiguous (e.g. multiple norm_stats.json
+    # keys) or to force a non-default value.
+    unnorm_key: str | None = None
+    use_proprio: bool | None = None
+    proprio_mode: Literal["tokens", "film"] | None = None
+
+
+@dataclasses.dataclass
 class Args:
     """Arguments for the serve_policy script."""
 
@@ -58,7 +77,7 @@ class Args:
     record: bool = False
 
     # Specifies how to load the policy. If not provided, the default policy for the environment will be used.
-    policy: Checkpoint | Default = dataclasses.field(default_factory=Default)
+    policy: Checkpoint | AutoCheckpoint | Default = dataclasses.field(default_factory=Default)
 
 
 # Default checkpoints that should be used for each environment.
@@ -143,6 +162,21 @@ def create_policy(args: Args) -> _policy.Policy:
         case Checkpoint():
             return _policy_config.create_trained_policy(
                 _config.get_config(args.policy.config), args.policy.dir, default_prompt=args.default_prompt
+            )
+        case AutoCheckpoint():
+            overrides = {
+                k: v
+                for k, v in {
+                    "unnorm_key": args.policy.unnorm_key,
+                    "use_proprio": args.policy.use_proprio,
+                    "proprio_mode": args.policy.proprio_mode,
+                }.items()
+                if v is not None
+            }
+            return _policy_config.create_trained_policy(
+                _config.get_falconvla_train_config(args.policy.dir, **overrides),
+                args.policy.dir,
+                default_prompt=args.default_prompt,
             )
         case Default():
             return create_default_policy(args.env, default_prompt=args.default_prompt)
