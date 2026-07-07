@@ -34,10 +34,12 @@ dependencies = [
     "filelock>=3.16.1",
     "beartype==0.19.0",
     "treescope>=0.1.7",
-    "transformers==4.53.2",
+    "transformers",
     "rich>=14.0.0",
     "polars>=1.30.0",
     "json-numpy>=2.1.1",
+    "timm==1.0.27",
+    "accelerate==1.14.0",
 ]
 
 
@@ -70,6 +72,9 @@ override-dependencies = ["ml-dtypes==0.4.1", "tensorstore==0.1.74"]
 openpi-client = { workspace = true }
 lerobot = { git = "https://github.com/huggingface/lerobot", rev = "0cf864870cf29f4738d3ade893e6fd13fbd7cdb5" }
 dlimp = { git = "https://github.com/kvablack/dlimp", rev = "ad72ce3a9b414db2185bc0b38461d4101a65477a" }
+# Use the tiiuae fork (Falcon3-VL integration, falcon3_vlm_integration branch) instead of PyPI
+# transformers; matches the editable install scripts/docker/serve_policy.Dockerfile already uses.
+transformers = { path = "transformers-internal", editable = true }
 
 [tool.uv.workspace]
 members = ["packages/*"]
