@@ -41,8 +41,8 @@ const GROUPS = [
       disabledWhen:(c)=>c.async_inference,
       help:"Run a new policy inference every N control steps. Ignored with async inference (async queries every step)." },
     { key:"async_inference", label:"Async inference", type:"checkbox", def:false,
-      disabledWhen:(c)=>!c.smoothing || c.adapter === "ee",
-      help:"Run inference in a background thread. Requires smoothing on and Joint action space (EE async is unsupported)." },
+      disabledWhen:(c)=>!c.smoothing,
+      help:"Run inference in a background thread. Requires smoothing on. Works in both Joint and EE mode (IK runs in the worker thread)." },
   ]},
   { title: "Arms", fields: [
     { key:"use_left_arm_only", label:"Left arm only", type:"checkbox", def:false,
@@ -78,7 +78,7 @@ export function renderConfig(container) {
       <h2>${g.title}</h2>${g.fields.map(fieldHtml).join("")}</section>`).join("")
     + presetsHtml() + modeHtml();
   // Any field change can flip a dependent field's enabled state (e.g. async
-  // depends on smoothing + adapter), so re-evaluate on every change.
+  // depends on smoothing), so re-evaluate on every change.
   container.addEventListener("change", () => { updateEEVisibility(); updateDependencies(); });
   updateEEVisibility();
   updateDependencies();
