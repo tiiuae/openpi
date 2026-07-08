@@ -1,0 +1,61 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>GCP Checkpoint Downloader</title>
+  <link rel="stylesheet" href="/static/theme.css">
+</head>
+<body>
+  <header class="app-header">
+    <div class="app-title">GCP Checkpoint Downloader</div>
+    <div class="header-actions">
+      <span id="auth-chip" class="badge">checking auth…</span>
+    </div>
+  </header>
+
+  <main class="container">
+    <section class="card">
+      <h2>Source (GCS bucket)</h2>
+      <div class="input-browse">
+        <input type="text" id="bucket-input" placeholder="gs://bucket/prefix/">
+        <button class="btn-outline" id="btn-refresh">Refresh</button>
+      </div>
+      <div class="breadcrumb" id="breadcrumb"></div>
+      <div class="browser-entries gcs-tree-box" id="gcs-tree"></div>
+    </section>
+
+    <section class="card">
+      <h2>Destination (local directory)</h2>
+      <div class="input-browse">
+        <input type="text" id="dest-input" placeholder="/absolute/path">
+        <button class="btn-outline" id="btn-browse-dest">Browse…</button>
+      </div>
+      <button class="btn-primary" id="btn-download" disabled>Download selected</button>
+    </section>
+
+    <section class="card" id="progress" style="display:none">
+      <h2>Download progress</h2>
+      <div id="progress-list"></div>
+    </section>
+  </main>
+
+  <!-- Local destination-directory picker modal (structure copied from the
+       reference webapp's replay.html filebrowser modal). -->
+  <div class="modal-overlay" id="modal-localbrowser" style="display:none">
+    <div class="modal-box">
+      <div class="modal-titlebar">
+        Select destination folder
+        <button class="btn-close" id="btn-cancel-browser">×</button>
+      </div>
+      <div class="browser-path-bar"><span class="browser-path-text" id="browser-current-path"></span></div>
+      <div class="browser-entries" id="browser-entries"></div>
+      <div class="modal-footer">
+        <button class="btn-primary" id="btn-select-dir">Select this folder</button>
+      </div>
+    </div>
+  </div>
+
+  <script type="module" src="/static/js/app.js"></script>
+</body>
+</html>
