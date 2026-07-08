@@ -17,8 +17,12 @@ dev = [
 gcp-ckpt-downloader = "gcp_ckpt_downloader.__main__:main"
 
 [build-system]
-requires = ["hatchling"]
-build-backend = "hatchling.build"
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
 
-[tool.hatch.build.targets.wheel]
-packages = ["."]
+[tool.setuptools]
+package-dir = {"gcp_ckpt_downloader" = "."}
+packages = ["gcp_ckpt_downloader"]
+
+[tool.setuptools.package-data]
+gcp_ckpt_downloader = ["static/**"]
