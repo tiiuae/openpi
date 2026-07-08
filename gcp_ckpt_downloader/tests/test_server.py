@@ -199,6 +199,26 @@ def test_local_existing_rejects_relative_dest(client, monkeypatch):
     assert called == []
 
 
+def test_local_existing_expands_tilde_dest_before_calling_existing_names(client, monkeypatch, tmp_path):
+    # Regression: a hand-typed "~/foo" dest must reach existing_names already
+    # expanded to $HOME/foo, not as the raw "~/foo" string -- otherwise this
+    # overwrite check and the download's actual write location (see the
+    # POST /api/gcs/download regression test below) would silently disagree.
+    monkeypatch.setenv("HOME", str(tmp_path))
+    seen = {}
+
+    def fake_existing_names(dest, names):
+        seen["dest"] = dest
+        return []
+
+    monkeypatch.setattr(server.local_fs, "existing_names", fake_existing_names)
+
+    resp = client.get("/api/local/existing", params={"dest": "~/foo", "names": "a"})
+
+    assert resp.status_code == 200
+    assert seen["dest"] == str(tmp_path / "foo")
+
+
 # ---------------------------------------------------------------------------
 # POST /api/gcs/download
 # ---------------------------------------------------------------------------
@@ -222,6 +242,21 @@ def test_start_download_rejects_relative_dest_without_calling_store(client, fake
 
     assert resp.status_code == 400
     assert fake_store.create_calls == []
+
+
+def test_start_download_expands_tilde_dest_before_calling_store_create(client, fake_store, monkeypatch, tmp_path):
+    # Regression: store.create (os.makedirs + gcloud cp target, per
+    # download_store.py) must receive the same expanded path that
+    # /api/local/existing's overwrite check uses -- a raw "~/foo" would
+    # otherwise pass validation (expanduser().is_absolute() is True) but get
+    # used downstream as-is, creating a literal "~" dir under the server's
+    # CWD instead of $HOME/foo.
+    monkeypatch.setenv("HOME", str(tmp_path))
+
+    resp = client.post("/api/gcs/download", json={"dest": "~/foo", "items": []})
+
+    assert resp.status_code == 200
+    assert fake_store.create_calls == [(str(tmp_path / "foo"), [])]
 
 
 def test_start_download_returns_409_when_a_job_is_already_running(client, fake_store):

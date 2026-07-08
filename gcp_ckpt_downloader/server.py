@@ -45,10 +45,18 @@ def _validated_prefix(raw_prefix: str) -> str:
 
 def _validated_dest(raw_dest: str) -> str:
     """Require a non-empty, absolute local path -- there's no sensible
-    default destination to fall back to."""
+    default destination to fall back to.
+
+    Returns the `~`-expanded form (not the raw input) so every downstream
+    consumer (existing_names' overwrite check, DownloadStore's os.makedirs,
+    gcloud's cp destination) agrees on the same literal path -- a raw
+    "~/foo" would otherwise validate fine (expanduser().is_absolute() is
+    True) but get used downstream as-is, creating a literal "~" directory
+    relative to the server's CWD instead of $HOME/foo.
+    """
     if not raw_dest or not Path(raw_dest).expanduser().is_absolute():
         raise HTTPException(status_code=400, detail=f"dest must be an absolute path: {raw_dest!r}")
-    return raw_dest
+    return str(Path(raw_dest).expanduser())
 
 
 def create_app(store: download_store.DownloadStore | None = None) -> FastAPI:
