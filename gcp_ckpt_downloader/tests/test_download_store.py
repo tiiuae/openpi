@@ -73,7 +73,19 @@ def _make_fake_popen(order_log, script):
 # ---------------------------------------------------------------------------
 
 
-def test_create_returns_job_with_id_dest_and_queued_items(tmp_path):
+def test_create_returns_job_with_id_dest_and_queued_items(monkeypatch, tmp_path):
+    # This test only inspects create()'s synchronous return value, but
+    # create() still spawns a real background thread that would otherwise
+    # call the real subprocess.Popen -- an actual `gcloud storage cp` attempt
+    # against a fake bucket. Fake it out like every other test in this file
+    # so the suite stays fully off-network.
+    order_log: list[str] = []
+    script = {
+        "step_10000": (["ok\n"], 0),
+        "step_20000": (["ok\n"], 0),
+    }
+    monkeypatch.setattr(download_store.subprocess, "Popen", _make_fake_popen(order_log, script))
+
     store = DownloadStore()
 
     job = store.create(str(tmp_path), ITEMS)
