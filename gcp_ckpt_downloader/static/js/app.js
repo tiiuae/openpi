@@ -1,17 +1,27 @@
 // Controller: wires up the page on load, and owns the download button +
 // progress-polling flow. Browsing/selection state lives in gcs_browser.js;
 // the destination-picker modal lives in local_browser.js.
+//
+// #btn-download.disabled has exactly one writer: updateDownloadButtonState()
+// below, which is the single source of truth combining BOTH "is anything
+// selected" (getSelected(), owned by gcs_browser.js) and "is a job currently
+// running" (jobActive, owned here). gcs_browser.js only ever *notifies* this
+// module (via setOnSelectionChange) that the selection may have changed --
+// it never touches the DOM element itself, so a tree re-render (drill,
+// breadcrumb click, Refresh) can't accidentally re-enable Download mid-job.
 import { api, apiPost, escapeHtml } from "./api.js";
-import { initGcsBrowser, browse, getSelected } from "./gcs_browser.js";
+import { initGcsBrowser, browse, getSelected, setOnSelectionChange } from "./gcs_browser.js";
 import { setupLocalBrowser, openLocalBrowser } from "./local_browser.js";
 
 const $ = (id) => document.getElementById(id);
 
 let pollTimer = null;
+let jobActive = false;
 
 async function init() {
   setupLocalBrowser();
   initGcsBrowser();
+  setOnSelectionChange(updateDownloadButtonState);
 
   let bucket = "";
   try {
@@ -29,7 +39,12 @@ async function init() {
   $("btn-browse-dest").addEventListener("click", openLocalBrowser);
   $("btn-download").addEventListener("click", onDownloadClick);
 
+  updateDownloadButtonState();
   if (bucket) browse(bucket);
+}
+
+function updateDownloadButtonState() {
+  $("btn-download").disabled = jobActive || getSelected().length === 0;
 }
 
 async function loadAuth() {
@@ -61,27 +76,42 @@ async function onDownloadClick() {
     return;
   }
 
-  // Warn-per-item: list the specific selected folders flagged as already
-  // existing at the destination (the ⚠ badge rendered by gcs_browser.js),
-  // and let the user back out before overwriting anything.
-  const selectedNames = new Set(items.map((it) => it.name));
-  const overwriteNames = [...document.querySelectorAll("#gcs-tree .warn-badge")]
-    .filter((b) => b.style.display !== "none" && selectedNames.has(b.dataset.name))
-    .map((b) => b.dataset.name);
-
+  // Warn-per-item: re-check /api/local/existing against the FULL current
+  // selection, not just whatever folder happens to be rendered in #gcs-tree
+  // right now. The selection Map in gcs_browser.js survives drill in/out
+  // specifically so a user can pick items from multiple folders -- reading
+  // ⚠ badges out of the DOM here would silently miss warnings for anything
+  // selected in a previously-viewed folder, since renderTree() replaces
+  // #gcs-tree's innerHTML (and its badges) on every browse().
+  const overwriteNames = await namesThatExistAtDest(dest, items.map((it) => it.name));
   if (overwriteNames.length) {
     const ok = confirm(`These will be overwritten:\n${overwriteNames.join("\n")}\n\nContinue?`);
     if (!ok) return;
   }
 
-  $("btn-download").disabled = true;
+  jobActive = true;
+  updateDownloadButtonState();
   try {
     const job = await apiPost("/api/gcs/download", { dest, items });
     startPolling(job.id);
     renderProgress(job);
   } catch (e) {
+    jobActive = false;
+    updateDownloadButtonState();
     alert(`Failed to start download: ${e.message}`);
-    $("btn-download").disabled = getSelected().length === 0;
+  }
+}
+
+async function namesThatExistAtDest(dest, names) {
+  if (!names.length) return [];
+  try {
+    const r = await api(`/api/local/existing?dest=${encodeURIComponent(dest)}&names=${encodeURIComponent(names.join(","))}`);
+    return r.existing || [];
+  } catch (e) {
+    // Non-fatal, same as gcs_browser.js's checkExisting(): if the probe
+    // itself fails, fall back to no warning rather than blocking download.
+    console.error("existing-check before download failed:", e);
+    return [];
   }
 }
 
@@ -93,13 +123,16 @@ function startPolling(jobId) {
       renderProgress(job);
       if (job.state === "done" || job.state === "error") {
         stopPolling();
-        // Re-enable Download (gated on current selection) so the user can
+        // Job is no longer active: re-enable Download (still gated on
+        // current selection via updateDownloadButtonState) so the user can
         // retry/re-run without having to touch a checkbox first.
-        $("btn-download").disabled = getSelected().length === 0;
+        jobActive = false;
+        updateDownloadButtonState();
       }
     } catch (e) {
       stopPolling();
-      $("btn-download").disabled = getSelected().length === 0;
+      jobActive = false;
+      updateDownloadButtonState();
       const list = $("progress-list");
       list.innerHTML += `<div class="browser-msg err">Lost track of job: ${escapeHtml(e.message)}</div>`;
     }

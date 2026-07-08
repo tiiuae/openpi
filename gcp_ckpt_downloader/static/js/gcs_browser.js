@@ -1,6 +1,14 @@
 // Owns the GCS tree: browsing/drilling via /api/gcs/ls, the breadcrumb, the
-// checked-selection state (kept across drill-in/out), the "already exists at
-// destination" warning badges, and enabling/disabling the Download button.
+// checked-selection state (kept across drill-in/out), and the "already
+// exists at destination" warning badges.
+//
+// This module deliberately does NOT own #btn-download's `disabled` state:
+// that also depends on whether a download job is currently running, which
+// is state only app.js (the controller) knows about. Owning both "is
+// anything selected" and "is a job running" in two different places was a
+// real bug (see setOnSelectionChange below) -- so instead this module just
+// notifies app.js whenever the selection changes, and app.js is the single
+// place that writes to #btn-download.disabled.
 import { api, escapeHtml } from "./api.js";
 
 const $ = (id) => document.getElementById(id);
@@ -10,6 +18,16 @@ const $ = (id) => document.getElementById(id);
 const selected = new Map();
 
 let currentPrefix = null;
+
+// Callback invoked whenever the selection Set changes size/contents (a
+// checkbox toggled, or a re-render re-applied previously-checked state).
+// app.js registers one via setOnSelectionChange() to recompute
+// #btn-download.disabled from BOTH selection size and job-active state.
+let onSelectionChange = null;
+
+export function setOnSelectionChange(cb) {
+  onSelectionChange = cb;
+}
 
 export function initGcsBrowser() {
   // Re-check "exists at destination" badges whenever the dest path changes
@@ -100,19 +118,14 @@ function renderTree(r) {
     cb.addEventListener("change", () => {
       if (cb.checked) selected.set(cb.dataset.uri, cb.dataset.name);
       else selected.delete(cb.dataset.uri);
-      updateDownloadButton();
+      onSelectionChange?.();
     });
   });
-  updateDownloadButton();
+  onSelectionChange?.();
 }
 
 function rowUp(parentPrefix) {
   return `<div class="browser-item browser-up" data-prefix="${escapeHtml(parentPrefix)}"><span class="bi-icon">↑</span><span class="bi-name">..</span></div>`;
-}
-
-function updateDownloadButton() {
-  const btn = $("btn-download");
-  if (btn) btn.disabled = selected.size === 0;
 }
 
 async function checkExisting(names) {
