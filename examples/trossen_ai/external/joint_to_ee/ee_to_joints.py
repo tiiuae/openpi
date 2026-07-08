@@ -38,13 +38,14 @@ class _LockedKin:
 
 
 class EEToJointsConverter:
-    def __init__(self, kin, position_weight: float = 1.0, orientation_weight: float = 0.01,
-                 pos_tol_m: float = 1e-3, ik_max_iters: int = 50,
-                 max_joint_jump_deg: float | None = None):
+    def __init__(self, kin, position_weight: float = 1.0, orientation_weight: float = 0.01,  # may need to increase the orientation weight
+                 pos_tol_m: float = 1e-3, orientation_tol_deg: float = 2.0,
+                 ik_max_iters: int = 50, max_joint_jump_deg: float | None = None):
         self.kin = _LockedKin(kin)
         self.position_weight = position_weight
         self.orientation_weight = orientation_weight
         self.pos_tol_m = pos_tol_m
+        self.orientation_tol_rad = np.deg2rad(orientation_tol_deg)
         self.ik_max_iters = ik_max_iters
         # Branch-flip guard: if a single per-frame solve moves any revolute joint
         # more than this (deg) vs the previous frame, reject it and hold the last
@@ -71,6 +72,7 @@ class EEToJointsConverter:
         T, grip_m = pose8_to_arm_se3(pose8, mount_xyz)
         joints_deg = np.asarray(seed_deg6, dtype=np.float64).flatten()[:6]
         pos_err = np.inf
+        rot_err = np.inf
         for _ in range(self.ik_max_iters):
             joints_deg = self.kin.inverse_kinematics(
                 joints_deg,
@@ -81,12 +83,19 @@ class EEToJointsConverter:
             joints_deg = np.asarray(joints_deg, dtype=np.float64).flatten()[:6]
             if not np.all(np.isfinite(joints_deg)):
                 break
-            T_check = self.kin.forward_kinematics(joints_deg)
-            pos_err = float(np.linalg.norm(T_check[:3, 3] - T[:3, 3]))
-            if pos_err <= self.pos_tol_m:
+            T_check = self.kin.forward_kinematics(joints_deg)  # achieved end-effectors
+            pos_err = float(np.linalg.norm(T_check[:3, 3] - T[:3, 3])) 
+            # Angle between achieved and target rotation, via the trace of
+            # the relative rotation matrix R_err = R_check^T @ R_target.
+            R_err = T_check[:3, :3].T @ T[:3, :3]  # relative rotation needed to rotate from achieved orientation to target orientation
+            cos_angle = np.clip((np.trace(R_err) - 1.0) / 2.0, -1.0, 1.0)
+            rot_err = float(np.arccos(cos_angle))
+            if pos_err <= self.pos_tol_m and rot_err <= self.orientation_tol_rad:
                 break
         # hold last valid joints on non-convergence / unreachable target
-        if not np.all(np.isfinite(joints_deg)) or pos_err > self.pos_tol_m:
+        if (not np.all(np.isfinite(joints_deg))
+                or pos_err > self.pos_tol_m
+                or rot_err > self.orientation_tol_rad):
             return (np.asarray(fallback_rad6, dtype=np.float32), grip_m,
                     np.rad2deg(fallback_rad6), False)
         joints_rad = np.deg2rad(joints_deg).astype(np.float32)
