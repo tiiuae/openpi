@@ -150,6 +150,43 @@ def test_auth_status_no_active_account_when_auth_list_empty(monkeypatch):
     assert result["active_account"] is None
 
 
+def test_auth_status_picks_the_active_account_among_multiple_credentialed_accounts(monkeypatch):
+    # Regression test: a machine can have several `gcloud auth login` accounts
+    # credentialed at once (confirmed: 5 accounts on the real inference
+    # machine, only one marked ACTIVE). `gcloud auth list --format=value(account)`
+    # with no filter returns ALL of them in no guaranteed order, so naively
+    # taking the first line can report the wrong account. The fix must ask
+    # gcloud to filter server-side via `--filter=status:ACTIVE`.
+    all_credentialed_accounts = [
+        "alice@example.com",
+        "bob@example.com",
+        "carol.active@example.com",
+        "dave@example.com",
+        "eve@example.com",
+    ]
+    active_account = "carol.active@example.com"  # deliberately not accounts[0]
+    auth_calls = []
+
+    def fake_run(args, timeout=None):
+        if "auth" in args:
+            auth_calls.append(args)
+            if "--filter=status:ACTIVE" in args:
+                return 0, active_account + "\n", ""
+            # Without the filter, gcloud would hand back every credentialed
+            # account -- if the code regresses to accounts[0] here it gets
+            # "alice@example.com" instead, and the assertion below catches it.
+            return 0, "\n".join(all_credentialed_accounts) + "\n", ""
+        return 0, "", ""  # storage ls (can_list check) succeeds
+
+    monkeypatch.setattr(gcs, "_run", fake_run)
+    monkeypatch.setattr(pathlib.Path, "exists", lambda self: True)
+
+    result = gcs.auth_status()
+
+    assert result["active_account"] == active_account
+    assert auth_calls == [["gcloud", "auth", "list", "--filter=status:ACTIVE", "--format=value(account)"]]
+
+
 # ---------------------------------------------------------------------------
 # download_cmd
 # ---------------------------------------------------------------------------

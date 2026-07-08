@@ -90,7 +90,7 @@ def auth_status() -> dict:
     """Report whether gcloud is authenticated and can reach the bucket."""
     result: dict = {}
 
-    returncode, stdout, stderr = _run(["gcloud", "auth", "list", "--format=value(account)"])
+    returncode, stdout, stderr = _run(["gcloud", "auth", "list", "--filter=status:ACTIVE", "--format=value(account)"])
     accounts = [line.strip() for line in stdout.splitlines() if line.strip()]
     result["active_account"] = accounts[0] if accounts else None
     if returncode != 0 and stderr.strip():
