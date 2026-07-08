@@ -25,4 +25,9 @@ package-dir = {"gcp_ckpt_downloader" = "."}
 packages = ["gcp_ckpt_downloader"]
 
 [tool.setuptools.package-data]
-gcp_ckpt_downloader = ["static/**"]
+# "static/**" alone misses dotfiles (glob's standard hidden-file exclusion),
+# so also list static/.gitkeep explicitly (a literal, non-wildcard path is
+# not subject to that exclusion) -- this guarantees the static/ directory
+# itself always ships, even before Task 5 adds real (non-dot) frontend
+# files that "static/**" will pick up on its own.
+gcp_ckpt_downloader = ["static/**", "static/.gitkeep"]
