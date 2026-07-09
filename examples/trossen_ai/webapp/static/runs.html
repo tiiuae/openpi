@@ -29,16 +29,16 @@
       </h2>
       <div class="chart-cj-container"><canvas id="runs-chart-joint"></canvas></div>
     </section>
-    <section class="card">
-      <h2>Metrics</h2>
-      <div id="runs-metrics" class="runs-metrics"><em class="muted">Select runs above.</em></div>
-      <div class="chart-cj-container"><canvas id="runs-chart-rtt"></canvas></div>
-    </section>
     <section class="card" id="runs-ee-card" style="display:none">
       <h2>End-effector
         <select id="runs-ee-sel" class="btn-sm"></select>
       </h2>
       <div class="chart-cj-container"><canvas id="runs-chart-ee"></canvas></div>
+    </section>
+    <section class="card">
+      <h2>Metrics</h2>
+      <div id="runs-metrics" class="runs-metrics"><em class="muted">Select runs above.</em></div>
+      <div class="chart-cj-container"><canvas id="runs-chart-rtt"></canvas></div>
     </section>
     <section class="card">
       <h2>Smoothing Δ vs step</h2>
@@ -49,6 +49,6 @@
       <div class="chart-cj-container"><canvas id="runs-chart-overlap"></canvas></div>
     </section>
   </main>
-  <script type="module" src="/static/js/runs.js?v=run-delete"></script>
+  <script type="module" src="/static/js/runs.js?v=run-ee-before-metrics"></script>
 </body>
 </html>
