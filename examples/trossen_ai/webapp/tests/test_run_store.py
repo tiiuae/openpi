@@ -73,6 +73,23 @@ def test_set_rating_writes_file(tmp_path):
     assert store.get("r1")["rating"]["note"] == "ok"
 
 
+def test_delete_removes_run_dir(tmp_path):
+    _make_run(tmp_path, "r1")
+    store = RunStore(tmp_path)
+    store.delete("r1")
+    assert not (tmp_path / "r1").exists()
+    assert store.list() == []
+
+
+def test_delete_missing_run_raises_keyerror(tmp_path):
+    store = RunStore(tmp_path)
+    try:
+        store.delete("nope")
+    except KeyError:
+        return
+    assert False, "expected KeyError"
+
+
 def test_get_missing_run_raises_keyerror(tmp_path):
     store = RunStore(tmp_path)
     try:

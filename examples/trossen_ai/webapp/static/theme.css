@@ -684,12 +684,17 @@ table.kb kbd { background:#21262d; border-radius:4px; padding:1px 5px; color:var
 /* ── Compare runs view ── */
 .runs-main { max-width:1100px; margin:0 auto; padding:16px; display:grid; gap:14px; }
 .runs-list { display:grid; gap:4px; }
-.run-item { display:grid; grid-template-columns:24px 1.6fr 1.4fr repeat(3,1fr);
+.run-item { display:grid; grid-template-columns:minmax(0,1fr) auto;
   align-items:center; gap:8px; font-size:12px; padding:4px 6px; border-radius:6px; }
 .run-item:hover { background:var(--bg); }
-.run-id { font-family:monospace; color:var(--text); }
-.run-model { color:var(--muted); }
-.run-metric { color:var(--muted); text-align:right; }
+.run-select { display:grid; grid-template-columns:24px minmax(150px,1.6fr) minmax(110px,1.4fr) repeat(3,minmax(76px,1fr));
+  align-items:center; gap:8px; min-width:0; cursor:pointer; }
+.run-select input { cursor:pointer; }
+.run-id { font-family:monospace; color:var(--text); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.run-model { color:var(--muted); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.run-metric { color:var(--muted); text-align:right; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.run-delete { color:var(--err); }
+.run-delete:hover { background:var(--err); border-color:var(--err); color:#fff; }
 .runs-diff-wrap { overflow-x:auto; }
 table.runs-diff { border-collapse:collapse; font-size:12px; width:100%; }
 table.runs-diff th, table.runs-diff td { border:1px solid var(--border);
@@ -704,3 +709,8 @@ table.runs-diff tr.diff td:first-child { font-weight:700; }
 .runs-metrics { display:flex; flex-direction:column; gap:6px; margin-bottom:10px; }
 .runs-metric-row { display:flex; gap:14px; font:12px var(--font); color:var(--muted); }
 .runs-metric-row b { color:var(--text); min-width:120px; }
+
+@media (max-width: 760px) {
+  .run-select { grid-template-columns:24px minmax(0,1fr); }
+  .run-model, .run-metric { display:none; }
+}

@@ -151,6 +151,14 @@ def create_app(presets_dir: str | Path | None = None, runner_factory=None,
             raise HTTPException(status_code=404, detail="run not found")
         return {"ok": True}
 
+    @app.delete("/api/runs/{run_id}")
+    def api_delete_run(run_id: str):
+        try:
+            run_store.delete(run_id)
+        except (KeyError, ValueError):
+            raise HTTPException(status_code=404, detail="run not found")
+        return {"ok": True}
+
     @app.get("/api/files")
     def files(path: str | None = None):
         from webapp.files_api import list_directory

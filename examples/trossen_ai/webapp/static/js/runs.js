@@ -5,40 +5,72 @@ const $ = (id) => document.getElementById(id);
 const selected = new Set();
 let deltaChart = null, overlapChart = null, jointChart = null, rttChart = null, eeChart = null;
 
+const ESCAPE_HTML = {
+  "&": "&amp;",
+  "<": "&lt;",
+  ">": "&gt;",
+  '"': "&quot;",
+  "'": "&#39;",
+};
+
+function escapeHtml(value) {
+  return String(value ?? "").replace(/[&<>"']/g, ch => ESCAPE_HTML[ch]);
+}
+
 async function loadList() {
   const runs = await (await fetch("/api/runs")).json();
   const box = $("runs-list");
   if (!runs.length) { box.innerHTML = '<em class="muted">No runs recorded yet.</em>'; return; }
-  box.innerHTML = runs.map(r => `
-    <label class="run-item">
-      <input type="checkbox" value="${r.run_id}">
-      <span class="run-id">${r.run_id}</span>
-      <span class="run-model">${r.model_name || "—"}</span>
-      <span class="run-metric">${r.steps ?? "—"} steps</span>
-      <span class="run-metric">${r.end_reason}</span>
-      <span class="run-metric">${r.rating ? r.rating.success : "unrated"}</span>
-    </label>`).join("");
+  box.innerHTML = runs.map(r => {
+    const id = String(r.run_id);
+    return `
+      <div class="run-item">
+        <label class="run-select">
+          <input type="checkbox" value="${escapeHtml(id)}" ${selected.has(id) ? "checked" : ""}>
+          <span class="run-id">${escapeHtml(id)}</span>
+          <span class="run-model">${escapeHtml(r.model_name || "—")}</span>
+          <span class="run-metric">${escapeHtml(r.steps ?? "—")} steps</span>
+          <span class="run-metric">${escapeHtml(r.end_reason)}</span>
+          <span class="run-metric">${escapeHtml(r.rating ? r.rating.success : "unrated")}</span>
+        </label>
+        <button type="button" class="btn-sm run-delete" data-run-id="${escapeHtml(id)}">Delete</button>
+      </div>`;
+  }).join("");
   box.querySelectorAll("input[type=checkbox]").forEach(cb =>
     cb.addEventListener("change", () => {
       cb.checked ? selected.add(cb.value) : selected.delete(cb.value);
       refresh();
     }));
+  box.querySelectorAll(".run-delete").forEach(btn =>
+    btn.addEventListener("click", () => deleteRun(btn.dataset.runId)));
 
   const sel = $("runs-joint-sel");
   if (sel && !sel.options.length) {
-    sel.innerHTML = JOINT_NAMES_14.map((n, i) => `<option value="${i}">${n}</option>`).join("");
+    sel.innerHTML = JOINT_NAMES_14.map((n, i) => `<option value="${i}">${escapeHtml(n)}</option>`).join("");
     sel.addEventListener("change", refresh);
   }
 
   const esel = $("runs-ee-sel");
   if (esel && !esel.options.length) {
-    esel.innerHTML = EE_NAMES_16.map((n, i) => `<option value="${i}">${n}</option>`).join("");
+    esel.innerHTML = EE_NAMES_16.map((n, i) => `<option value="${i}">${escapeHtml(n)}</option>`).join("");
     esel.addEventListener("change", refresh);
   }
 }
 
+async function deleteRun(id) {
+  if (!id || !window.confirm(`Delete run ${id}? This cannot be undone.`)) return;
+  const res = await fetch(`/api/runs/${encodeURIComponent(id)}`, { method: "DELETE" });
+  if (!res.ok) {
+    window.alert(`Could not delete run ${id}.`);
+    return;
+  }
+  selected.delete(id);
+  await loadList();
+  await refresh();
+}
+
 async function fetchRun(id) {
-  return (await fetch(`/api/runs/${id}?events=1`)).json();
+  return (await fetch(`/api/runs/${encodeURIComponent(id)}?events=1`)).json();
 }
 
 function configDiff(runs) {
@@ -48,10 +80,11 @@ function configDiff(runs) {
   const rows = [...keys].sort().map(k => {
     const vals = runs.map(r => String((r.manifest.config || {})[k] ?? ""));
     const differ = new Set(vals).size > 1;
-    return `<tr class="${differ ? "diff" : ""}"><td>${k}</td>${vals.map(v => `<td>${v}</td>`).join("")}</tr>`;
+    return `<tr class="${differ ? "diff" : ""}"><td>${escapeHtml(k)}</td>${
+      vals.map(v => `<td>${escapeHtml(v)}</td>`).join("")}</tr>`;
   }).join("");
   return `<table class="runs-diff"><thead><tr><th>key</th>${
-    runs.map(r => `<th>${r.id}</th>`).join("")}</tr></thead><tbody>${rows}</tbody></table>`;
+    runs.map(r => `<th>${escapeHtml(r.id)}</th>`).join("")}</tr></thead><tbody>${rows}</tbody></table>`;
 }
 
 // From an events array, series of {x:step, y:value}. delta from action events
@@ -131,7 +164,7 @@ async function refresh() {
   $("runs-metrics").innerHTML = runs.map(r => {
     const m = metricsSummary(r.events);
     const f = (v, d) => v == null ? "—" : v.toFixed(d);
-    return `<div class="runs-metric-row"><b>${r.id}</b>
+    return `<div class="runs-metric-row"><b>${escapeHtml(r.id)}</b>
       <span>RTT ${f(m.rtt, 1)} ms</span>
       <span>${f(m.hz, 1)} Hz</span>
       <span>overlap ${f(m.overlap, 2)}</span></div>`;

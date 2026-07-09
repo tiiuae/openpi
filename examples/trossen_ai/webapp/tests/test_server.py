@@ -258,10 +258,16 @@ def test_runs_api_list_get_and_rating(tmp_path):
     assert r.status_code == 200
     assert _json.loads((d / "rating.json").read_text())["success"] == "yes"
 
+    r = client.delete("/api/runs/2026-07-02-090000")
+    assert r.status_code == 200
+    assert not d.exists()
+    assert client.get("/api/runs/2026-07-02-090000").status_code == 404
+
 
 def test_runs_api_missing_run_404(tmp_path):
     client = TestClient(create_app(runs_dir=tmp_path))
     assert client.get("/api/runs/does-not-exist").status_code == 404
+    assert client.delete("/api/runs/does-not-exist").status_code == 404
 
 
 def test_runs_page_served():

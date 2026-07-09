@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import re
+import shutil
 import time
 from pathlib import Path
 
@@ -92,3 +93,9 @@ class RunStore:
         payload = dict(rating or {})
         payload["rated_at"] = time.time()
         (d / "rating.json").write_text(json.dumps(payload, indent=2))
+
+    def delete(self, run_id: str) -> None:
+        d = self._run_path(run_id)
+        if d.is_symlink() or not d.is_dir() or not (d / "manifest.json").exists():
+            raise KeyError(run_id)
+        shutil.rmtree(d)
