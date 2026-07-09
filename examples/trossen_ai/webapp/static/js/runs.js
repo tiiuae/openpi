@@ -140,7 +140,6 @@ async function refresh() {
     $("runs-metrics").innerHTML = '<em class="muted">Select runs above.</em>';
     for (const c of [deltaChart, overlapChart, jointChart, rttChart, eeChart]) { if (c) c.destroy(); }
     deltaChart = overlapChart = jointChart = rttChart = eeChart = null;
-    const eeCard = $("runs-ee-card"); if (eeCard) eeCard.style.display = "none";
     return;
   }
   const runs = await Promise.all(ids.map(async id => ({ id, ...(await fetchRun(id)) })));
@@ -173,14 +172,10 @@ async function refresh() {
   const eeRuns = runs.filter(r => hasEE(r.events));
   const eeCard = $("runs-ee-card");
   if (eeChart) { eeChart.destroy(); eeChart = null; }
-  if (eeRuns.length) {
-    eeCard.style.display = "";
-    const eeDim = Number($("runs-ee-sel").value || 0);
-    const eeData = eeRuns.map(r => ({ label: r.id, points: eeSeries(r.events, eeDim) }));
-    eeChart = makeSeriesChart($("runs-chart-ee"), eeData);
-  } else {
-    eeCard.style.display = "none";
-  }
+  if (eeCard) eeCard.style.display = "";
+  const eeDim = Number($("runs-ee-sel").value || 0);
+  const eeData = eeRuns.map(r => ({ label: r.id, points: eeSeries(r.events, eeDim) }));
+  eeChart = makeSeriesChart($("runs-chart-ee"), eeData);
 }
 
 loadList();
