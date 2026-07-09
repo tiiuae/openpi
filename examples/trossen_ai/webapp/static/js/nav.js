@@ -1,11 +1,11 @@
 // webapp/static/js/nav.js
-// Single source of truth for the top navigation. Ordered links with a visual
-// separator between the common pair (Eval, Compare) and the rarely-used pair
-// (Replay, Teleop). Active link is marked by pathname.
+import { setupFeedbackButton } from "./feedback.js?v=feedback-modal";
+
+// Single source of truth for the top navigation. Active link is marked by
+// pathname; visual separators are rendered between links.
 const LINKS = [
   { href: "/", label: "Eval" },
   { href: "/runs", label: "Compare" },
-  { sep: true },
   { href: "/replay", label: "Replay" },
   { href: "/teleop", label: "Teleop" },
 ];
@@ -14,12 +14,13 @@ export function renderNav(container) {
   const path = location.pathname;
   container.innerHTML =
     `<strong style="color:var(--text);margin-right:16px">Trossen Control</strong>` +
-    LINKS.map(l => {
-      if (l.sep) return `<span class="nav-sep">|</span>`;
+    LINKS.map((l, i) => {
       const active = l.href === "/" ? path === "/" : path.startsWith(l.href);
-      return `<a href="${l.href}"${active ? ' class="active"' : ""}>${l.label}</a>`;
+      const sep = i > 0 ? `<span class="nav-sep">|</span>` : "";
+      return `${sep}<a href="${l.href}"${active ? ' class="active"' : ""}>${l.label}</a>`;
     }).join("");
 }
 
 const el = document.querySelector(".app-nav");
 if (el) renderNav(el);
+setupFeedbackButton();

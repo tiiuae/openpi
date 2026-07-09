@@ -3,7 +3,6 @@ import { renderConfig, readConfig, setDefaults } from "./config.js";
 import { makeJointCharts } from "./charts.js";
 import { setupLogs } from "./logs.js";
 import { setupControls, setSessionActive } from "./controls.js";
-import { renderFeedback } from "./feedback.js";
 import { setupSmoothing } from "./smoothing.js";
 import { onRunStatus } from "./runlog.js";
 
@@ -16,7 +15,6 @@ document.addEventListener("DOMContentLoaded", () => {
   setDefaults();
   setupLogs();
   setupControls();
-  renderFeedback($("feedback-card"));
 
   const smoothing = setupSmoothing($("smoothing-box"));
   setInterval(() => smoothing.update(), 200);

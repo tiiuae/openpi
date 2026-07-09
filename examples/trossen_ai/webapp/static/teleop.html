@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Trossen Control — Teleop</title>
-  <link rel="stylesheet" href="/static/theme.css">
+  <link rel="stylesheet" href="/static/theme.css?v=feedback-modal">
   <link rel="icon" type="image/png" href="/static/robot-arm.png">
   <script type="importmap">
   {
@@ -19,42 +19,55 @@
 <body>
   <header class="app-header">
     <div class="app-nav"></div>
-    <script type="module" src="/static/js/nav.js"></script>
-    <div class="header-actions">
-      <span class="badge" id="badge-session">idle</span>
-      <span class="badge" id="badge-arm">arm: left</span>
-      <span class="badge" id="badge-pad">no gamepad</span>
-    </div>
+    <script type="module" src="/static/js/nav.js?v=feedback-button"></script>
   </header>
 
   <div class="live-grid">
     <aside id="config-col">
-      <section class="card"><h2>Teleop</h2>
-        <div class="field-inline"><label>Mode</label>
-          <select id="cf_mode">
-            <option value="detached">Detached — 3D only (no robot)</option>
-            <option value="test">Test — cameras, no motion</option>
-            <option value="autonomous">Autonomous — real motion</option>
-          </select></div>
-        <div class="field-inline"><label>Control rate (Hz)</label>
-          <input type="number" id="cf_control_freq" value="25" min="1" step="1"></div>
-        <div class="field-inline"><label>Max linear (m/s)</label>
-          <input type="number" id="cf_max_lin" value="0.05" step="0.01" min="0"></div>
-        <div class="field-inline"><label>Max angular (rad/s)</label>
-          <input type="number" id="cf_max_ang" value="0.5" step="0.1" min="0"></div>
-        <div class="field-inline"><label>Gripper rate (1/s)</label>
-          <input type="number" id="cf_grip_rate" value="0.5" step="0.1" min="0"></div>
-        <div class="field-inline"><label>Deadzone</label>
-          <input type="number" id="cf_deadzone" value="0.1" step="0.05" min="0" max="0.9"></div>
-        <div class="field-inline"><label>IK orientation weight</label>
-          <input type="number" id="cf_ik_orientation_weight" value="0.01" step="0.01" min="0"></div>
-        <div class="field-inline"><label>IK position tol (m)</label>
-          <input type="number" id="cf_ik_pos_tol_m" value="0.001" step="0.001" min="0"></div>
-        <div class="run-controls">
-          <button class="btn-primary" id="btn-start">Start Teleop</button>
-          <button class="btn-outline" id="btn-switch">Switch arm</button>
-          <button class="btn-outline" id="btn-stop">Stop</button>
-          <button class="btn-danger" id="btn-estop">E-STOP</button></div>
+      <section class="card teleop-card"><h2>Teleop</h2>
+        <div class="status-strip teleop-status-strip">
+          <span class="badge" id="badge-session">idle</span>
+          <span class="badge" id="badge-arm">arm: left</span>
+          <span class="badge" id="badge-pad">no gamepad</span>
+        </div>
+        <div class="teleop-config-group">
+          <span class="field-hint">Session</span>
+          <div class="field-inline"><label>Mode</label>
+            <select id="cf_mode">
+              <option value="detached">Detached — 3D only (no robot)</option>
+              <option value="test">Test — cameras, no motion</option>
+              <option value="autonomous">Autonomous — real motion</option>
+            </select></div>
+        </div>
+        <div class="teleop-config-group">
+          <span class="field-hint">Motion</span>
+          <div class="field-inline"><label>Control rate (Hz)</label>
+            <input type="number" id="cf_control_freq" value="25" min="1" step="1"></div>
+          <div class="field-inline"><label>Max linear (m/s)</label>
+            <input type="number" id="cf_max_lin" value="0.05" step="0.01" min="0"></div>
+          <div class="field-inline"><label>Max angular (rad/s)</label>
+            <input type="number" id="cf_max_ang" value="0.5" step="0.1" min="0"></div>
+          <div class="field-inline"><label>Gripper rate (1/s)</label>
+            <input type="number" id="cf_grip_rate" value="0.5" step="0.1" min="0"></div>
+          <div class="field-inline"><label>Deadzone</label>
+            <input type="number" id="cf_deadzone" value="0.1" step="0.05" min="0" max="0.9"></div>
+        </div>
+        <div class="teleop-config-group">
+          <span class="field-hint">IK</span>
+          <div class="field-inline"><label>IK orientation weight</label>
+            <input type="number" id="cf_ik_orientation_weight" value="0.01" step="0.01" min="0"></div>
+          <div class="field-inline"><label>IK position tol (m)</label>
+            <input type="number" id="cf_ik_pos_tol_m" value="0.001" step="0.001" min="0"></div>
+        </div>
+        <div class="teleop-action-group">
+          <span class="field-hint">Controls</span>
+          <div class="teleop-run-controls">
+            <button class="btn-primary" id="btn-start">Start Teleop</button>
+            <button class="btn-outline" id="btn-switch">Switch arm</button>
+            <button class="btn-outline" id="btn-stop">Stop</button>
+            <button class="btn-danger" id="btn-estop">E-STOP</button>
+          </div>
+        </div>
       </section>
       <section class="card"><h2>Key bindings</h2>
         <div id="keybindings"></div></section>

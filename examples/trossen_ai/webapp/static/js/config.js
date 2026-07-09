@@ -122,6 +122,10 @@ function modeHtml() {
       <select id="mode-select"><option value="test">Dry run — no robot</option><option value="autonomous">Run on real robot</option></select></div>
     <div class="run-action-group">
       <span class="field-hint">Evaluation</span>
+      <div class="status-strip">
+        <span class="badge" id="badge-session">idle</span>
+        <span class="badge" id="badge-rtt">rtt</span>
+      </div>
       <div class="run-controls">
         <button class="btn-primary" id="btn-start">Start Live</button>
         <button class="btn-outline" id="btn-stop">Stop</button>

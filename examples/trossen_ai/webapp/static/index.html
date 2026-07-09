@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Trossen Control — Live</title>
-  <link rel="stylesheet" href="/static/theme.css?v=run-card-mode-left-2">
+  <link rel="stylesheet" href="/static/theme.css?v=feedback-modal">
   <link rel="icon" type="image/png" href="/static/robot-arm.png">
   <script src="/static/vendor/chart.umd.min.js"></script>
   <script src="/static/vendor/chartjs-plugin-zoom.min.js"></script>
@@ -12,11 +12,7 @@
 <body>
   <header class="app-header">
     <div class="app-nav"></div>
-    <script type="module" src="/static/js/nav.js"></script>
-    <div class="header-actions">
-      <span class="badge" id="badge-rtt">rtt</span>
-      <span class="badge" id="badge-session">idle</span>
-    </div>
+    <script type="module" src="/static/js/nav.js?v=feedback-button"></script>
   </header>
 
   <div class="live-grid">
@@ -30,10 +26,9 @@
         <div class="log-header"><h2>Logs</h2><button class="btn-sm" id="btn-clear-log">Clear</button></div>
         <div class="log-panel" id="log-box"></div>
       </section>
-      <section class="card" id="feedback-card"><!-- feedback form injected by feedback.js --></section>
     </main>
   </div>
 
-  <script type="module" src="/static/js/live.js"></script>
+  <script type="module" src="/static/js/live.js?v=feedback-modal"></script>
 </body>
 </html>

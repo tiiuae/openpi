@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Trossen Control — Replay</title>
-  <link rel="stylesheet" href="/static/theme.css">
+  <link rel="stylesheet" href="/static/theme.css?v=feedback-modal">
   <link rel="icon" type="image/png" href="/static/robot-arm.png">
   <script src="/static/vendor/chart.umd.min.js"></script>
   <script src="/static/vendor/chartjs-plugin-zoom.min.js"></script>
@@ -21,43 +21,63 @@
 <body>
   <header class="app-header">
     <div class="app-nav"></div>
-    <script type="module" src="/static/js/nav.js"></script>
-    <div class="header-actions">
-      <span class="badge" id="badge-session">idle</span>
-      <button class="btn-outline" id="btn-home">Home</button>
-      <button class="btn-outline" id="btn-sleep">Sleep</button>
-    </div>
+    <script type="module" src="/static/js/nav.js?v=feedback-button"></script>
   </header>
 
-  <div class="live-grid">
-    <aside id="config-col">
-      <section class="card"><h2>Dataset</h2>
-        <div class="input-browse"><input id="dataset_dir" type="text" placeholder="dataset directory">
+  <div class="live-grid replay-grid">
+    <aside id="config-col" class="replay-sidebar">
+      <section class="card replay-dataset-card"><h2>Dataset</h2>
+        <div class="input-browse replay-path-row"><input id="dataset_dir" type="text" placeholder="dataset directory">
           <button class="btn-icon" id="btn-browse-dataset">📁</button></div>
-        <div class="field-inline"><label>Episode</label><select id="episode-select"></select></div>
-        <div class="field-inline"><label>Mode</label>
-          <select id="mode-select"><option value="test">Dry run — preview only (no robot)</option><option value="autonomous">Run on real robot</option></select></div>
-        <div class="run-controls">
+        <div class="replay-field-stack">
+          <div class="field-inline"><label>Episode</label><select id="episode-select"></select></div>
+          <div class="field-inline"><label>Mode</label>
+            <select id="mode-select"><option value="test">Dry run — preview only</option><option value="autonomous">Run on real robot</option></select></div>
+        </div>
+        <div class="replay-action-group">
+          <span class="field-hint">Preview</span>
           <button class="btn-primary" id="btn-preview">Preview</button>
-          <button class="btn-primary" id="btn-replay">Replay Episode</button>
-          <button class="btn-outline" id="btn-stop">Stop</button>
-          <button class="btn-danger" id="btn-estop">E-STOP</button></div>
+        </div>
+        <div class="replay-action-group">
+          <span class="field-hint">Hardware replay</span>
+          <div class="status-strip">
+            <span class="badge" id="badge-session">idle</span>
+          </div>
+          <div class="replay-run-controls">
+            <button class="btn-primary" id="btn-replay">Replay Episode</button>
+            <button class="btn-outline" id="btn-stop">Stop</button>
+            <button class="btn-danger" id="btn-estop">E-STOP</button>
+          </div>
+        </div>
+        <div class="replay-action-group">
+          <span class="field-hint">Robot pose</span>
+          <div class="replay-pose-controls">
+            <button class="btn-outline" id="btn-home">Home</button>
+            <button class="btn-outline" id="btn-sleep">Sleep</button>
+          </div>
+        </div>
       </section>
-      <section class="card"><h2>Replay config</h2>
-        <div class="field-inline"><label>Control rate (Hz)</label>
-          <input type="number" id="cf_control_freq" value="0" min="0" step="1" title="0 = use the episode's recorded fps"></div>
-        <div class="field-inline"><label>Max joint speed (rad/s)</label>
-          <input type="number" id="cf_max_joint_speed" value="3.0" step="0.5" min="0" title="Per-joint velocity cap; spikes above this are flagged. 0 disables."></div>
-        <div class="field-inline"><label>IK orientation weight</label>
-          <input type="number" id="cf_ik_orientation_weight" value="0.01" step="0.01" min="0" title="How tightly IK tracks recorded EE orientation vs position. Low values let the wrist drift/flip (aggressive joints while EE stays smooth) — raise toward 1.0 to constrain it."></div>
-        <div class="field-inline"><label>IK position tol (m)</label>
-          <input type="number" id="cf_ik_pos_tol_m" value="0.001" step="0.001" min="0" title="Acceptable IK position error in metres."></div>
-        <div class="field-inline"><label>Goal-time multiplier</label>
-          <input type="number" id="cf_min_time_to_move_multiplier" value="10.0" step="0.5" min="0" title="Autonomous only. Driver goal_time = multiplier / loop rate. Larger = smoother/laggier. 10.0 removes small per-frame joint shake."></div>
-        <div class="field-inline"><label>Driver loop rate (Hz)</label>
-          <input type="number" id="cf_loop_rate" value="30" step="1" min="1" title="Autonomous only. Driver loop rate."></div>
-        <div class="field-inline"><label>IK max joint jump (deg)</label>
-          <input type="number" id="cf_ik_max_joint_jump_deg" value="45" step="5" min="0" title="Reject any single IK solve whose joint angle jumps more than this vs the previous frame (a branch flip) and hold the last good pose instead. 0 disables. Catches chaotic end/mid-episode flips that orientation weight can't."></div>
+      <section class="card" id="replay-config-card"><h2>Replay config</h2>
+        <div class="replay-config-group">
+          <span class="field-hint">Timing</span>
+          <div class="field-inline"><label>Control rate (Hz)</label>
+            <input type="number" id="cf_control_freq" value="0" min="0" step="1" title="0 = use the episode's recorded fps"></div>
+          <div class="field-inline"><label>Goal-time multiplier</label>
+            <input type="number" id="cf_min_time_to_move_multiplier" value="10.0" step="0.5" min="0" title="Autonomous only. Driver goal_time = multiplier / loop rate. Larger = smoother/laggier. 10.0 removes small per-frame joint shake."></div>
+          <div class="field-inline"><label>Driver loop rate (Hz)</label>
+            <input type="number" id="cf_loop_rate" value="30" step="1" min="1" title="Autonomous only. Driver loop rate."></div>
+        </div>
+        <div class="replay-config-group">
+          <span class="field-hint">IK / safety</span>
+          <div class="field-inline"><label>Max joint speed (rad/s)</label>
+            <input type="number" id="cf_max_joint_speed" value="3.0" step="0.5" min="0" title="Per-joint velocity cap; spikes above this are flagged. 0 disables."></div>
+          <div class="field-inline"><label>IK orientation weight</label>
+            <input type="number" id="cf_ik_orientation_weight" value="0.01" step="0.01" min="0" title="How tightly IK tracks recorded EE orientation vs position. Low values let the wrist drift/flip (aggressive joints while EE stays smooth) — raise toward 1.0 to constrain it."></div>
+          <div class="field-inline"><label>IK position tol (m)</label>
+            <input type="number" id="cf_ik_pos_tol_m" value="0.001" step="0.001" min="0" title="Acceptable IK position error in metres."></div>
+          <div class="field-inline"><label>IK max joint jump (deg)</label>
+            <input type="number" id="cf_ik_max_joint_jump_deg" value="45" step="5" min="0" title="Reject any single IK solve whose joint angle jumps more than this vs the previous frame (a branch flip) and hold the last good pose instead. 0 disables. Catches chaotic end/mid-episode flips that orientation weight can't."></div>
+        </div>
       </section>
     </aside>
     <main class="live-main">
@@ -94,7 +114,6 @@
       </section>
       <section class="card"><div class="log-header"><h2>Logs</h2><button class="btn-sm" id="btn-clear-log">Clear</button></div>
         <div class="log-panel" id="log-box"></div></section>
-      <section class="card" id="feedback-card"></section>
     </main>
   </div>
 
@@ -122,6 +141,6 @@
       </div>
     </div>
   </div>
-  <script type="module" src="/static/js/replay.js"></script>
+  <script type="module" src="/static/js/replay.js?v=feedback-modal"></script>
 </body>
 </html>

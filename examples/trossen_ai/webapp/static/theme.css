@@ -157,54 +157,20 @@ select option      { background: var(--bg-card); }
 
 #config-col section[data-group] .field-inline {
     display: grid;
-    grid-template-columns: minmax(0, 1fr) 154px;
-    align-items: center;
-    column-gap: 8px;
+    grid-template-columns: 1fr;
+    align-items: start;
+    gap: 4px;
+    margin-bottom: 10px;
 }
 
 #config-col section[data-group] .field-inline > label {
     min-width: 0;
+    text-align: left;
 }
 
 #config-col section[data-group] .field-inline > input,
 #config-col section[data-group] .field-inline > select {
     width: 100%;
-}
-
-#feedback-card .field-row {
-    display: flex;
-    align-items: flex-start;
-    gap: 8px;
-    margin-bottom: 8px;
-    padding-top: 0;
-}
-
-#feedback-card .field-row > label {
-    color: var(--muted);
-    flex-shrink: 0;
-    font-size: 12px;
-    min-width: 116px;
-    text-align: right;
-}
-
-#feedback-card #fb-text {
-    background: var(--bg);
-    border: 1px solid var(--border);
-    border-radius: 4px;
-    color: var(--text);
-    flex: 1;
-    font-family: var(--font);
-    font-size: 12px;
-    min-height: 180px;
-    min-width: 0;
-    outline: none;
-    padding: 5px 8px;
-    resize: vertical;
-    width: auto !important;
-}
-
-#feedback-card #fb-text:focus {
-    border-color: var(--blue);
 }
 
 .input-browse         { display: flex; gap: 6px; }
@@ -651,6 +617,73 @@ button {
     white-space: nowrap;
 }
 
+.status-strip {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    margin-bottom: 10px;
+}
+
+.teleop-status-strip {
+    border-bottom: 1px solid var(--border);
+    padding-bottom: 10px;
+}
+
+.teleop-card {
+    display: flex;
+    flex-direction: column;
+}
+
+.teleop-config-group,
+.teleop-action-group {
+    border-top: 1px solid var(--border);
+    margin-top: 12px;
+    padding-top: 10px;
+}
+
+.teleop-card .field-hint {
+    display: block;
+    margin-bottom: 7px;
+    text-transform: uppercase;
+}
+
+.teleop-card .field-inline {
+    display: grid;
+    grid-template-columns: 1fr;
+    align-items: start;
+    gap: 4px;
+    margin-bottom: 8px;
+}
+
+.teleop-card .field-inline:last-child {
+    margin-bottom: 0;
+}
+
+.teleop-card .field-inline > label {
+    min-width: 0;
+    text-align: left;
+}
+
+.teleop-card .field-inline > input,
+.teleop-card .field-inline > select {
+    width: 100%;
+}
+
+.teleop-run-controls {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 8px;
+}
+
+.teleop-run-controls #btn-start,
+.teleop-run-controls #btn-switch {
+    grid-column: 1 / -1;
+}
+
+.teleop-run-controls button {
+    min-height: 32px;
+}
+
 /* ── Scrollbars ──────────────────────────────────────────────── */
 
 ::-webkit-scrollbar          { width: 7px; height: 7px; }
@@ -667,10 +700,191 @@ button {
 .nav-sep { color: var(--border); margin: 0 10px; user-select: none; }
 .header-actions { display:flex; gap:8px; align-items:center; }
 
+.feedback-trigger {
+  padding: 4px 10px;
+}
+
+.feedback-modal-box {
+  width: min(460px, 93vw);
+}
+
+.feedback-modal-body {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 14px 16px 16px;
+}
+
+.feedback-modal-body .field-inline {
+  display: grid;
+  grid-template-columns: 1fr;
+  align-items: start;
+  gap: 4px;
+  margin-bottom: 0;
+}
+
+.feedback-modal-body .field-inline > label,
+.feedback-modal-body .field-col > label {
+  color: var(--muted);
+  font-size: 12px;
+  min-width: 0;
+  text-align: left;
+}
+
+.feedback-modal-body .field-col {
+  margin: 0;
+}
+
+.feedback-modal-body textarea {
+  min-height: 150px;
+}
+
+.feedback-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+}
+
+.feedback-actions .run-status {
+  margin-right: auto;
+}
+
 /* ── Live page layout: config column + stacked cameras→charts→logs ─ */
 .live-grid { display:grid; grid-template-columns:320px minmax(0,1fr); gap:14px; padding:16px; }
 .live-main { display:flex; flex-direction:column; gap:14px; min-width:0; }
 @media (max-width:900px){ .live-grid{ grid-template-columns:1fr; } }
+
+/* Replay sidebar */
+.replay-grid {
+  grid-template-columns:400px minmax(0,1fr);
+}
+
+.replay-dataset-card,
+#replay-config-card {
+  display:flex;
+  flex-direction:column;
+}
+
+.replay-path-row {
+  display:grid;
+  grid-template-columns:minmax(0,1fr) 46px;
+  gap:8px;
+  margin-bottom:12px;
+}
+
+.replay-path-row input,
+.replay-path-row .btn-icon {
+  min-height:36px;
+}
+
+.replay-path-row .btn-icon {
+  display:flex;
+  align-items:center;
+  justify-content:center;
+}
+
+.replay-field-stack {
+  display:flex;
+  flex-direction:column;
+  gap:8px;
+}
+
+.replay-field-stack .field-inline {
+  display:grid;
+  grid-template-columns:1fr;
+  align-items:start;
+  gap:4px;
+  margin-bottom:0;
+}
+
+#replay-config-card .field-inline {
+  display:grid;
+  grid-template-columns:1fr;
+  align-items:start;
+  gap:4px;
+  margin-bottom:0;
+}
+
+.replay-field-stack .field-inline > label {
+  min-width:0;
+  text-align:left;
+}
+
+#replay-config-card .field-inline > label {
+  min-width:0;
+  text-align:left;
+}
+
+.replay-field-stack .field-inline > select,
+#replay-config-card .field-inline > input {
+  width:100%;
+}
+
+.replay-action-group,
+.replay-config-group {
+  border-top:1px solid var(--border);
+  margin-top:12px;
+  padding-top:10px;
+}
+
+.replay-action-group .field-hint,
+.replay-config-group .field-hint {
+  display:block;
+  margin-bottom:7px;
+  text-transform:uppercase;
+}
+
+.replay-action-group > #btn-preview {
+  width:100%;
+  min-height:32px;
+}
+
+.replay-run-controls {
+  display:grid;
+  grid-template-columns:1fr 1fr;
+  gap:8px;
+}
+
+.replay-run-controls #btn-replay {
+  grid-column:1 / -1;
+}
+
+.replay-run-controls button {
+  min-height:32px;
+}
+
+.replay-pose-controls {
+  display:grid;
+  grid-template-columns:1fr 1fr;
+  gap:8px;
+}
+
+.replay-pose-controls button {
+  min-height:32px;
+}
+
+.replay-config-group {
+  display:flex;
+  flex-direction:column;
+  gap:8px;
+}
+
+@media (max-width:900px){
+  .replay-grid{ grid-template-columns:1fr; }
+}
+
+@media (max-width:520px){
+  .replay-field-stack .field-inline,
+  #replay-config-card .field-inline {
+    grid-template-columns:1fr;
+    gap:4px;
+  }
+  .replay-field-stack .field-inline > label,
+  #replay-config-card .field-inline > label {
+    text-align:left;
+  }
+}
 
 /* ── Cameras strip ────────────────────────────────────────────── */
 .cameras-strip { display:flex; gap:8px; flex-wrap:wrap; }

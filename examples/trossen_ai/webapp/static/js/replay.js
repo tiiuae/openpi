@@ -3,7 +3,6 @@ import { connect, send, onMessage, onOpen } from "./ws.js";
 import { setupFileBrowser, openFileBrowser } from "./filebrowser.js";
 import { setupLogs } from "./logs.js";
 import { setupControls } from "./controls.js";
-import { renderFeedback } from "./feedback.js";
 import { UrdfView } from "./urdf_view.js";
 import { buildTrajectoryCharts, Transport } from "./trajectory.js";
 import { JOINT_NAMES_14 } from "./charts.js";
@@ -19,7 +18,6 @@ document.addEventListener("DOMContentLoaded", () => {
   setupFileBrowser();
   setupLogs();
   setupControls();
-  renderFeedback($("feedback-card"));
 
   try {
     view = new UrdfView($("urdf-canvas"));
