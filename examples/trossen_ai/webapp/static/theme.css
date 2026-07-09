@@ -149,6 +149,64 @@ select:focus { border-color: var(--blue); }
 input[type=number] { width: auto; }
 select option      { background: var(--bg-card); }
 
+#config-col {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+}
+
+#config-col section[data-group] .field-inline {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) 154px;
+    align-items: center;
+    column-gap: 8px;
+}
+
+#config-col section[data-group] .field-inline > label {
+    min-width: 0;
+}
+
+#config-col section[data-group] .field-inline > input,
+#config-col section[data-group] .field-inline > select {
+    width: 100%;
+}
+
+#feedback-card .field-row {
+    display: flex;
+    align-items: flex-start;
+    gap: 8px;
+    margin-bottom: 8px;
+    padding-top: 0;
+}
+
+#feedback-card .field-row > label {
+    color: var(--muted);
+    flex-shrink: 0;
+    font-size: 12px;
+    min-width: 116px;
+    text-align: right;
+}
+
+#feedback-card #fb-text {
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    color: var(--text);
+    flex: 1;
+    font-family: var(--font);
+    font-size: 12px;
+    min-height: 180px;
+    min-width: 0;
+    outline: none;
+    padding: 5px 8px;
+    resize: vertical;
+    width: auto !important;
+}
+
+#feedback-card #fb-text:focus {
+    border-color: var(--blue);
+}
+
 .input-browse         { display: flex; gap: 6px; }
 .input-browse input   { flex: 1; }
 
@@ -370,6 +428,55 @@ button {
     align-items: center;
     gap: 8px;
     flex-wrap: wrap;
+}
+
+.run-card .run-mode-row {
+    display: grid;
+    grid-template-columns: 20px minmax(0, 1fr);
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 12px;
+}
+
+.run-card .run-mode-row > label {
+    color: var(--muted);
+    font-size: 12px;
+    text-align: right;
+}
+
+.run-card .run-mode-row > select {
+    width: 100%;
+}
+
+.run-card .run-action-group {
+    border-top: 1px solid var(--border);
+    padding-top: 10px;
+}
+
+.run-card .run-action-group + .run-action-group {
+    margin-top: 10px;
+}
+
+.run-card .field-hint {
+    display: block;
+    margin-bottom: 6px;
+    text-transform: uppercase;
+}
+
+.run-card .run-controls {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 8px;
+}
+
+.run-card .run-controls #btn-start {
+    grid-column: 1 / -1;
+}
+
+.run-card .pose-controls {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 8px;
 }
 
 .run-status         { font-size: 12px; color: var(--muted); margin-left: 4px; }

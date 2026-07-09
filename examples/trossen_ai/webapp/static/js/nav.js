@@ -1,9 +1,9 @@
 // webapp/static/js/nav.js
 // Single source of truth for the top navigation. Ordered links with a visual
-// separator between the common pair (Live, Compare) and the rarely-used pair
+// separator between the common pair (Eval, Compare) and the rarely-used pair
 // (Replay, Teleop). Active link is marked by pathname.
 const LINKS = [
-  { href: "/", label: "Live" },
+  { href: "/", label: "Eval" },
   { href: "/runs", label: "Compare" },
   { sep: true },
   { href: "/replay", label: "Replay" },

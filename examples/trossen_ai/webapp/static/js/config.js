@@ -117,13 +117,23 @@ function fieldHtml(f) {
 }
 
 function modeHtml() {
-  return `<section class="card"><h2>Run</h2>
-    <div class="field-inline"><label>Mode</label>
+  return `<section class="card run-card"><h2>Run</h2>
+    <div class="run-mode-row"><label>Mode</label>
       <select id="mode-select"><option value="test">Dry run — no robot</option><option value="autonomous">Run on real robot</option></select></div>
-    <div class="run-controls">
-      <button class="btn-primary" id="btn-start">Start Live</button>
-      <button class="btn-outline" id="btn-stop">Stop</button>
-      <button class="btn-danger" id="btn-estop">E-STOP</button>
+    <div class="run-action-group">
+      <span class="field-hint">Evaluation</span>
+      <div class="run-controls">
+        <button class="btn-primary" id="btn-start">Start Live</button>
+        <button class="btn-outline" id="btn-stop">Stop</button>
+        <button class="btn-danger" id="btn-estop">E-STOP</button>
+      </div>
+    </div>
+    <div class="run-action-group">
+      <span class="field-hint">Robot pose</span>
+      <div class="pose-controls">
+        <button class="btn-outline" id="btn-home">Home</button>
+        <button class="btn-outline" id="btn-sleep">Sleep</button>
+      </div>
     </div></section>`;
 }
 
