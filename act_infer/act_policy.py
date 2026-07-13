@@ -19,6 +19,9 @@ This adapter:
     (the ResNet backbone is size-agnostic but was trained at a fixed scale, so
     matching it matters),
   * runs `model.predict_action(state, stack, denormalize=True)`.
+  * zero-pads `state` to the checkpoint's `state_dim` when the robot sends fewer dims
+    (e.g. 14 joint positions → 19-dim training state), and trims model actions back to
+    `robot_action_dim` (default 14) for the client.
 
 NOTE on ordering: `state` and the returned `actions` are in whatever joint order
 the RLDS dataset used at training time. The robot client must send state — and
@@ -28,10 +31,13 @@ permutation here silently produces garbage motion.
 
 from __future__ import annotations
 
-from typing import Dict, List
+import logging
+from typing import Dict, List, Optional
 
 import numpy as np
 from PIL import Image
+
+logger = logging.getLogger(__name__)
 
 
 def _to_hwc_uint8(img: np.ndarray) -> np.ndarray:
@@ -59,14 +65,43 @@ class ActPolicy:
         camera_map: Dict[str, str],
         image_height: int = 480,
         image_width: int = 640,
+        robot_action_dim: Optional[int] = 14,
     ):
         self.model = model
         self.camera_names = list(camera_names)          # model's expected cameras, in order
         self.camera_map = dict(camera_map)              # model_cam -> robot_cam key
         self.size = (image_height, image_width)
+        self._model_state_dim = int(model.config.state_dim)
+        self._model_action_dim = int(model.config.action_dim)
+        self.robot_action_dim = robot_action_dim
         missing = [c for c in self.camera_names if c not in self.camera_map]
         if missing:
             raise ValueError(f"camera_map is missing model cameras: {missing}")
+
+    def _pad_state_to_model(self, state: np.ndarray) -> np.ndarray:
+        """Zero-pad robot proprio when the client sends fewer dims than training state_dim."""
+        state = np.asarray(state, dtype=np.float32).reshape(-1)
+        if state.shape[0] < self._model_state_dim:
+            pad_count = self._model_state_dim - state.shape[0]
+            logger.debug(
+                "zero-padding state from %d to model state_dim=%d (+%d zeros)",
+                state.shape[0],
+                self._model_state_dim,
+                pad_count,
+            )
+            state = np.pad(state, (0, pad_count))
+        elif state.shape[0] > self._model_state_dim:
+            raise ValueError(
+                f"observation state has {state.shape[0]} dims but model expects state_dim={self._model_state_dim}"
+            )
+        return state
+
+    def _trim_actions_for_robot(self, actions: np.ndarray) -> np.ndarray:
+        """Return only the leading robot dims when the model predicts a wider action vector."""
+        actions = np.asarray(actions, dtype=np.float32)
+        if self.robot_action_dim is not None and actions.shape[-1] > self.robot_action_dim:
+            actions = actions[..., : self.robot_action_dim]
+        return actions
 
     def _build_stack(self, images: Dict[str, np.ndarray]) -> np.ndarray:
         h, w = self.size
@@ -85,13 +120,14 @@ class ActPolicy:
         return np.stack(frames, axis=0)                 # (K, H, W, 3) uint8
 
     def infer(self, obs: Dict) -> Dict:
-        state = np.asarray(obs["state"], dtype=np.float32).reshape(-1)
+        state = self._pad_state_to_model(obs["state"])
         images = obs.get("images", obs)                 # tolerate flat dicts too
         stack = self._build_stack(images)
         actions = self.model.predict_action(state, stack, denormalize=True)
         if hasattr(actions, "detach"):
             actions = actions.detach().cpu().numpy()
-        return {"actions": np.asarray(actions, dtype=np.float32)}
+        actions = self._trim_actions_for_robot(actions)
+        return {"actions": actions}
 
     def reset(self) -> None:
         pass

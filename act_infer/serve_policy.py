@@ -72,15 +72,32 @@ def main():
     )
     ap.add_argument("--image_height", type=int, default=480)
     ap.add_argument("--image_width", type=int, default=640)
+    ap.add_argument(
+        "--robot_action_dim",
+        type=int,
+        default=14,
+        help="Action dims the robot client uses (default 14). Shorter incoming state is "
+        "zero-padded to the checkpoint's state_dim; model outputs are trimmed to this.",
+    )
     ap.add_argument("--device", default="cuda")
     args = ap.parse_args()
 
     device = args.device if torch.cuda.is_available() else "cpu"
     model = load_model(args.hf_ckpt, device)
     camera_names = list(model.config.camera_names)
+    state_dim = int(model.config.state_dim)
     action_dim = int(model.config.action_dim)
     chunk = int(model.config.chunk_size)
-    logging.info(f"loaded ACT: cameras={camera_names} action_dim={action_dim} chunk={chunk} device={device}")
+    logging.info(
+        f"loaded ACT: cameras={camera_names} state_dim={state_dim} action_dim={action_dim} "
+        f"chunk={chunk} robot_action_dim={args.robot_action_dim} device={device}"
+    )
+    if args.robot_action_dim < state_dim:
+        logging.info(
+            "robot client sends %d-dim state; server will zero-pad to checkpoint state_dim=%d",
+            args.robot_action_dim,
+            state_dim,
+        )
 
     camera_map = parse_camera_map(args.camera_map)
     policy = ActPolicy(
@@ -89,12 +106,15 @@ def main():
         camera_map=camera_map,
         image_height=args.image_height,
         image_width=args.image_width,
+        robot_action_dim=args.robot_action_dim,
     )
     logging.info(f"camera_map (model->robot): {camera_map}")
 
     metadata = {
         "policy": "act",
-        "action_dim": action_dim,
+        "state_dim": state_dim,
+        "action_dim": args.robot_action_dim,
+        "model_action_dim": action_dim,
         "chunk_size": chunk,
         "camera_names": camera_names,
     }
