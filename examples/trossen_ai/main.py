@@ -102,6 +102,12 @@ class TrossenOpenPIBridge:
         self.action_dim = len(self.robot._joint_ft)  # 7 joints per arm * 2 arms
         self.ensemble = make_ensemble(ensemble_type)
 
+        # Log the robot's joint feature order ONCE — this MUST match the training dataset's
+        # joint order or every action is applied to the wrong joint (orients but won't
+        # descend is a classic symptom of a left/right or within-arm permutation).
+        _joint_order = list(self.robot._joint_ft.keys())
+        logger.info("robot joint order (%d): %s", self.action_dim, _joint_order)
+
         if async_inference and self.ensemble is None:
             raise ValueError("--async_inference requires an ensemble (ensemble_type cannot be 'none')")
         self.async_inference = async_inference
@@ -229,6 +235,15 @@ class TrossenOpenPIBridge:
                             self.ensemble.add_chunk(self.episode_step, self.current_action_chunk)
                         self.action_chunk_idx = 0
                         logger.info(f"Received action chunk: {self.current_action_chunk.shape}")
+                        if self.episode_step == 0:
+                            _names = list(self.robot._joint_ft.keys())
+                            _first = self.current_action_chunk[0]
+                            _cur = observation["state"]
+                            _delta = _first - _cur
+                            logger.info("first action (joint targets): %s", np.array2string(_first, precision=4, max_line_width=200))
+                            logger.info("current state             : %s", np.array2string(_cur, precision=4, max_line_width=200))
+                            logger.info("delta (target - current)  : %s", np.array2string(_delta, precision=4, max_line_width=200))
+                            logger.info("joint names               : %s", _names)
 
                     if self.ensemble is not None:
                         a_t = self.ensemble.get_action(self.episode_step)

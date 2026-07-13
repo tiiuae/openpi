@@ -19,14 +19,25 @@ This adapter:
     (the ResNet backbone is size-agnostic but was trained at a fixed scale, so
     matching it matters),
   * runs `model.predict_action(state, stack, denormalize=True)`.
-  * zero-pads `state` to the checkpoint's `state_dim` when the robot sends fewer dims
-    (e.g. 14 joint positions → 19-dim training state), and trims model actions back to
-    `robot_action_dim` (default 14) for the client.
+  * prepares `state` for the model: pins static dims (qpos_std below threshold) and
+    any extra dims beyond what the robot sends to the training mean, so a single-arm
+    checkpoint stays in-distribution when served to a bimanual robot; trims model
+    actions back to `robot_action_dim` (default 14) for the client.
 
 NOTE on ordering: `state` and the returned `actions` are in whatever joint order
 the RLDS dataset used at training time. The robot client must send state — and
 apply actions — in that SAME order. Verify this against your dataset spec; a
 permutation here silently produces garbage motion.
+
+NOTE on static proprio (single-arm checkpoints): some checkpoints were collected
+with one arm held static (e.g. a right-arm-only dataset → left arm dims 0-6 have
+qpos_std clamped at the 0.01 floor). At deploy the physical static arm sits at an
+arbitrary pose; on a near-degenerate [q01..q99] range that live value normalizes
+to a saturated ±N — a value the model never saw — which corrupts the conditioning
+for the WHOLE state and makes the policy orient-but-not-descend. To stay
+in-distribution we pin any state dim whose qpos_std < `static_state_threshold`
+to its training qpos_mean before the model normalizes. Extra dims beyond what the
+robot sends are likewise filled with the training mean (not zeros).
 """
 
 from __future__ import annotations
@@ -66,6 +77,7 @@ class ActPolicy:
         image_height: int = 480,
         image_width: int = 640,
         robot_action_dim: Optional[int] = 14,
+        static_state_threshold: float = 0.03,
     ):
         self.model = model
         self.camera_names = list(camera_names)          # model's expected cameras, in order
@@ -78,22 +90,32 @@ class ActPolicy:
         if missing:
             raise ValueError(f"camera_map is missing model cameras: {missing}")
 
-    def _pad_state_to_model(self, state: np.ndarray) -> np.ndarray:
-        """Zero-pad robot proprio when the client sends fewer dims than training state_dim."""
-        state = np.asarray(state, dtype=np.float32).reshape(-1)
-        if state.shape[0] < self._model_state_dim:
-            pad_count = self._model_state_dim - state.shape[0]
-            logger.debug(
-                "zero-padding state from %d to model state_dim=%d (+%d zeros)",
-                state.shape[0],
-                self._model_state_dim,
-                pad_count,
-            )
-            state = np.pad(state, (0, pad_count))
-        elif state.shape[0] > self._model_state_dim:
+        # Training norm stats (numpy, on CPU) — used to pin static dims and pad extras.
+        self._state_mean = np.asarray(model.qpos_mean.detach().cpu().numpy(), dtype=np.float32)
+        self._state_std = np.asarray(model.qpos_std.detach().cpu().numpy(), dtype=np.float32)
+        # A state dim is "static" if its training std is below threshold (clamped at the
+        # 0.01 floor → that joint/feature never moved in collection). Pin those to the
+        # training mean so the model sees in-distribution conditioning at deploy time.
+        self._static_mask = self._state_std < float(static_state_threshold)
+        self._static_threshold = float(static_state_threshold)
+        self._infer_count = 0
+
+    def _prepare_state(self, raw_state: np.ndarray) -> np.ndarray:
+        """Build a full state_dim vector for the model.
+
+        Starts from the training mean (so static + extra dims are in-distribution) and
+        overwrites the ACTIVE dims (std >= threshold, within the robot's sent range) with
+        the live proprio. The model normalizes internally, so static/extra dims → 0.
+        """
+        raw = np.asarray(raw_state, dtype=np.float32).reshape(-1)
+        if raw.shape[0] > self._model_state_dim:
             raise ValueError(
-                f"observation state has {state.shape[0]} dims but model expects state_dim={self._model_state_dim}"
+                f"observation state has {raw.shape[0]} dims but model expects state_dim={self._model_state_dim}"
             )
+        state = self._state_mean.copy()
+        n = min(raw.shape[0], self._model_state_dim)
+        active_idxs = np.where(~self._static_mask[:n])[0]
+        state[active_idxs] = raw[active_idxs]
         return state
 
     def _trim_actions_for_robot(self, actions: np.ndarray) -> np.ndarray:
@@ -102,6 +124,37 @@ class ActPolicy:
         if self.robot_action_dim is not None and actions.shape[-1] > self.robot_action_dim:
             actions = actions[..., : self.robot_action_dim]
         return actions
+
+    @staticmethod
+    def _fmt_row(arr: np.ndarray) -> str:
+        return np.array2string(np.asarray(arr), precision=4, max_line_width=120, suppress_small=True)
+
+    def _log_inference(self, raw_state, prepared_state, raw_actions, trimmed_actions):
+        static_dims = np.where(self._static_mask)[0].tolist()
+        active_dims = [i for i in range(self._model_state_dim) if not self._static_mask[i]]
+        level = logging.INFO if self._infer_count == 0 else logging.DEBUG
+        if not logger.isEnabledFor(level):
+            return
+        logger.log(level, "ACT infer #%d", self._infer_count)
+        logger.log(level, "  raw state (%d): %s", raw_state.shape[0], self._fmt_row(raw_state))
+        logger.log(level, "  prepared state (%d): %s", prepared_state.shape[0], self._fmt_row(prepared_state))
+        logger.log(
+            level,
+            "  pinned dims (static/padded, →training mean): %s",
+            static_dims if static_dims else "none",
+        )
+        logger.log(level, "  active dims (live proprio): %s", active_dims if active_dims else "none")
+        # Per-dim span across the chunk = how much the model wants to move each joint.
+        # Large span on the active arm dims (e.g. 8,9,10) => model plans a descent.
+        # Span ~0 on a dim => model holds it (static or near-static).
+        ra = np.asarray(raw_actions)
+        ta = np.asarray(trimmed_actions)
+        logger.log(level, "  raw action %s  span: %s", ra.shape, self._fmt_row(ra.max(0) - ra.min(0)))
+        logger.log(level, "  raw action            min: %s", self._fmt_row(ra.min(0)))
+        logger.log(level, "  raw action            max: %s", self._fmt_row(ra.max(0)))
+        logger.log(level, "  trimmed action %s  span: %s", ta.shape, self._fmt_row(ta.max(0) - ta.min(0)))
+        logger.log(level, "  trimmed action        min: %s", self._fmt_row(ta.min(0)))
+        logger.log(level, "  trimmed action        max: %s", self._fmt_row(ta.max(0)))
 
     def _build_stack(self, images: Dict[str, np.ndarray]) -> np.ndarray:
         h, w = self.size
@@ -120,14 +173,18 @@ class ActPolicy:
         return np.stack(frames, axis=0)                 # (K, H, W, 3) uint8
 
     def infer(self, obs: Dict) -> Dict:
-        state = self._pad_state_to_model(obs["state"])
+        raw_state = np.asarray(obs["state"], dtype=np.float32).reshape(-1)
+        state = self._prepare_state(raw_state)
         images = obs.get("images", obs)                 # tolerate flat dicts too
         stack = self._build_stack(images)
         actions = self.model.predict_action(state, stack, denormalize=True)
         if hasattr(actions, "detach"):
             actions = actions.detach().cpu().numpy()
-        actions = self._trim_actions_for_robot(actions)
-        return {"actions": actions}
+        raw_actions = np.asarray(actions, dtype=np.float32)
+        trimmed = self._trim_actions_for_robot(raw_actions)
+        self._log_inference(raw_state, state, raw_actions, trimmed)
+        self._infer_count += 1
+        return {"actions": trimmed}
 
     def reset(self) -> None:
-        pass
+        self._infer_count = 0

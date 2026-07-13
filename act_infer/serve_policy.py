@@ -76,8 +76,15 @@ def main():
         "--robot_action_dim",
         type=int,
         default=14,
-        help="Action dims the robot client uses (default 14). Shorter incoming state is "
-        "zero-padded to the checkpoint's state_dim; model outputs are trimmed to this.",
+        help="Action dims the robot client uses (default 14). Model outputs are trimmed to this.",
+    )
+    ap.add_argument(
+        "--static_state_threshold",
+        type=float,
+        default=0.03,
+        help="State dims with training qpos_std below this are pinned to the training mean "
+        "(single-arm checkpoints: pins the static arm + near-constant extras). Set large "
+        "(e.g. 999) to disable pinning.",
     )
     ap.add_argument("--device", default="cuda")
     args = ap.parse_args()
@@ -92,12 +99,6 @@ def main():
         f"loaded ACT: cameras={camera_names} state_dim={state_dim} action_dim={action_dim} "
         f"chunk={chunk} robot_action_dim={args.robot_action_dim} device={device}"
     )
-    if args.robot_action_dim < state_dim:
-        logging.info(
-            "robot client sends %d-dim state; server will zero-pad to checkpoint state_dim=%d",
-            args.robot_action_dim,
-            state_dim,
-        )
 
     camera_map = parse_camera_map(args.camera_map)
     policy = ActPolicy(
@@ -107,8 +108,24 @@ def main():
         image_height=args.image_height,
         image_width=args.image_width,
         robot_action_dim=args.robot_action_dim,
+        static_state_threshold=args.static_state_threshold,
     )
     logging.info(f"camera_map (model->robot): {camera_map}")
+    static_dims = [i for i, m in enumerate(policy._static_mask) if m]
+    active_dims = [i for i, m in enumerate(policy._static_mask) if not m]
+    logging.info(
+        "state pinning (threshold=%.4f): static/padded dims → training mean: %s",
+        args.static_state_threshold,
+        static_dims if static_dims else "none",
+    )
+    logging.info("state pinning: active dims (live proprio): %s", active_dims)
+    if args.robot_action_dim < state_dim and not static_dims:
+        logging.warning(
+            "robot sends %d-dim state but checkpoint state_dim=%d and NO dims are pinned — "
+            "extra state dims will be filled with the training mean.",
+            args.robot_action_dim,
+            state_dim,
+        )
 
     metadata = {
         "policy": "act",
