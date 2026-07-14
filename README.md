@@ -306,6 +306,12 @@ JAX and PyTorch implementations handle precision as follows:
 
 With torch.compile, inference speed is comparable between JAX and PyTorch.
 
+## FalconVLA (fork-specific)
+
+This fork adds FalconVLA, an in-process PyTorch VLA baseline, served through the same websocket
+policy interface as pi0/pi05. See [docs/falconvla.md](docs/falconvla.md) for how to serve a
+checkpoint (explicit or auto-detected config) and how to launch the server without `uv run`.
+
 ## Troubleshooting
 
 We will collect common issues and their solutions here. If you encounter an issue, please check here first. If you can't find a solution, please file an issue on the repo (see [here](CONTRIBUTING.md) for guidelines).

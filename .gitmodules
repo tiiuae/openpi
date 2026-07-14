@@ -4,3 +4,23 @@
 [submodule "third_party/libero"]
 	path = third_party/libero
 	url = https://github.com/Lifelong-Robot-Learning/LIBERO.git
+[submodule "transformers-internal"]
+	path = transformers-internal
+	url = https://github.com/tiiuae/transformers-internal.git
+	branch = falcon3_vlm_integration
+[submodule "act"]
+	path = act
+	url = https://github.com/tonyzhaozh/act.git
+[submodule "CogACT"]
+	path = CogACT
+	url = https://github.com/tiiuae/CogACT-internal.git
+[submodule "openvla"]
+	path = openvla
+	url = https://github.com/tiiuae/openvla-internal.git
+[submodule "openvla-oft"]
+	path = openvla-oft
+	url = https://github.com/tiiuae/openvla-oft-internal.git
+[submodule "starVLA-internal"]
+	path = starVLA-internal
+	url = https://github.com/tiiuae/starVLA-internal.git
+	branch = main

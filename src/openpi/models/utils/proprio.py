@@ -45,6 +45,9 @@ def normalize_proprio(proprio: np.ndarray, norm_stats: Dict[str, Any]) -> np.nda
     else:
         raise ValueError("Unsupported action/proprio normalization type detected!")
 
+    target_dim = proprio_low.shape[0]
+    if proprio.shape[0] < target_dim:
+        proprio = np.concatenate([proprio, np.zeros(target_dim - proprio.shape[0], dtype=proprio.dtype)])
     normalized_proprio = np.clip(
         np.where(
             mask,

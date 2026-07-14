@@ -43,6 +43,20 @@ def create_trained_policy(
         presence of "model.safensors" in the checkpoint directory.
     """
     repack_transforms = repack_transforms or transforms.Group()
+
+    # FalconVLA loads and runs differently (an in-process HuggingFace model that owns its own
+    # (un)normalization), so it is built by a dedicated path rather than the standard loader.
+    if train_config.model.model_type is _model.ModelType.FALCONVLA:
+        return create_falconvla_policy(
+            train_config,
+            checkpoint_dir,
+            repack_transforms=repack_transforms,
+            sample_kwargs=sample_kwargs,
+            default_prompt=default_prompt,
+            norm_stats=norm_stats,
+            pytorch_device=pytorch_device,
+        )
+
     checkpoint_dir = download.maybe_download(str(checkpoint_dir))
 
     # Check if this is a PyTorch model by looking for model.safetensors
@@ -53,20 +67,10 @@ def create_trained_policy(
     if is_pytorch:
         model = train_config.model.load_pytorch(train_config, weight_path)
         model.paligemma_with_expert.to_bfloat16_for_selected_params("bfloat16")
-    elif "falconvla" in checkpoint_dir.stem.split("-")[0].lower():
-        return create_falconvla_policy(
-            train_config,
-            checkpoint_dir, 
-            repack_transforms = repack_transforms, 
-            sample_kwargs = sample_kwargs, 
-            default_prompt = default_prompt, 
-            norm_stats = norm_stats, 
-            pytorch_device = pytorch_device)
-
     else:
         model = train_config.model.load(_model.restore_params(checkpoint_dir / "params", dtype=jnp.bfloat16))
     data_config = train_config.data.create(train_config.assets_dirs, train_config.model)
-    if norm_stats is None and not("falconvla" in checkpoint_dir.stem.split("-")[0].lower()):
+    if norm_stats is None:
         # We are loading the norm stats from the checkpoint instead of the config assets dir to make sure
         # that the policy is using the same normalization stats as the original training process.
         if data_config.asset_id is None:
@@ -104,8 +108,6 @@ def create_trained_policy(
     )
 
 
-
-
 def create_falconvla_policy(
     train_config: _config.TrainConfig,
     checkpoint_dir: pathlib.Path | str,
@@ -127,42 +129,29 @@ def create_falconvla_policy(
         norm_stats: The norm stats to use for the policy.
         pytorch_device: Device to use for PyTorch models.
     """
-    from openpi.policies.falconvla_policy import FalconVLAPolicy
-    
-    repack_transforms = repack_transforms or transforms.Group()
-    checkpoint_dir = download.maybe_download(str(checkpoint_dir))
-    
-    # Load FalconVLA model
     from openpi.models.falconvla import FalconVLA
+    from openpi.policies.falconvla_policy import FalconVLAPolicy
+
+    # FalconVLA bypasses openpi's transform pipeline (the HF checkpoint owns tokenization and
+    # (un)normalization), so repack_transforms / sample_kwargs / norm_stats are accepted for
+    # call-site parity but not used.
+    del repack_transforms, sample_kwargs, norm_stats
+
+    checkpoint_dir = download.maybe_download(str(checkpoint_dir))
     model = FalconVLA(train_config.model, checkpoint_dir=checkpoint_dir)
-    
-    data_config = train_config.data.create(train_config.assets_dirs, train_config.model)
-    
+
     # Determine device
     if pytorch_device is None:
         try:
             import torch
+
             pytorch_device = "cuda" if torch.cuda.is_available() else "cpu"
         except ImportError:
             pytorch_device = "cpu"
-    
+
     return FalconVLAPolicy(
         model,
-        transforms=[
-            *repack_transforms.inputs,
-            transforms.InjectDefaultPrompt(default_prompt),
-            *data_config.data_transforms.inputs,
-            transforms.Normalize(norm_stats, use_quantiles=data_config.use_quantile_norm),
-            *data_config.model_transforms.inputs,
-        ],
-        output_transforms=[
-            *data_config.model_transforms.outputs,
-            transforms.Unnormalize(norm_stats, use_quantiles=data_config.use_quantile_norm),
-            *data_config.data_transforms.outputs,
-            *repack_transforms.outputs,
-        ],
-        sample_kwargs=sample_kwargs,
+        default_prompt=default_prompt,
         metadata=train_config.policy_metadata,
         pytorch_device=pytorch_device,
     )
-
