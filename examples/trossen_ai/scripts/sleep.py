@@ -28,7 +28,7 @@ robot = make_robot_from_config(
 
 robot.connect()
 
-joint_features = list(robot._joint_ft.keys())
+joint_features = list(robot._joint_ft.keys())  # noqa
 joint_pos_keys = [k for k in robot.get_observation() if k.endswith(".pos")]
 current_pose = np.array([robot.get_observation()[k] for k in joint_pos_keys])
 

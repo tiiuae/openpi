@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Compare Runs — Trossen</title>
+  <link rel="stylesheet" href="/static/theme.css?v=feedback-modal">
+  <link rel="icon" type="image/png" href="/static/robot-arm.png">
+  <script src="/static/vendor/chart.umd.min.js"></script>
+  <script src="/static/vendor/chartjs-plugin-zoom.min.js"></script>
+</head>
+<body>
+  <header class="app-header">
+    <div class="app-nav"></div>
+    <script type="module" src="/static/js/nav.js?v=feedback-button"></script>
+  </header>
+  <main class="runs-main">
+    <section class="card">
+      <h2>Runs <span class="muted">(pick 1+ to compare)</span></h2>
+      <div id="runs-list" class="runs-list">Loading…</div>
+    </section>
+    <section class="card">
+      <h2>Config diff</h2>
+      <div id="runs-diff" class="runs-diff-wrap"><em class="muted">Select runs above.</em></div>
+    </section>
+    <section class="card">
+      <h2>Joint traces
+        <select id="runs-joint-sel" class="btn-sm"></select>
+      </h2>
+      <div class="chart-cj-container"><canvas id="runs-chart-joint"></canvas></div>
+    </section>
+    <section class="card" id="runs-ee-card">
+      <h2>End-effector
+        <select id="runs-ee-sel" class="btn-sm"></select>
+      </h2>
+      <div class="chart-cj-container"><canvas id="runs-chart-ee"></canvas></div>
+    </section>
+    <section class="card">
+      <h2>Metrics</h2>
+      <div id="runs-metrics" class="runs-metrics"><em class="muted">Select runs above.</em></div>
+      <div class="chart-cj-container"><canvas id="runs-chart-rtt"></canvas></div>
+    </section>
+    <section class="card">
+      <h2>Smoothing Δ vs step</h2>
+      <div class="chart-cj-container"><canvas id="runs-chart-delta"></canvas></div>
+    </section>
+    <section class="card">
+      <h2>Overlap depth vs step</h2>
+      <div class="chart-cj-container"><canvas id="runs-chart-overlap"></canvas></div>
+    </section>
+  </main>
+  <script type="module" src="/static/js/runs.js?v=run-ee-always-visible"></script>
+</body>
+</html>

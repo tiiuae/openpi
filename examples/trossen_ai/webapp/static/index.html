@@ -1,0 +1,34 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Trossen Control — Live</title>
+  <link rel="stylesheet" href="/static/theme.css?v=feedback-modal">
+  <link rel="icon" type="image/png" href="/static/robot-arm.png">
+  <script src="/static/vendor/chart.umd.min.js"></script>
+  <script src="/static/vendor/chartjs-plugin-zoom.min.js"></script>
+</head>
+<body>
+  <header class="app-header">
+    <div class="app-nav"></div>
+    <script type="module" src="/static/js/nav.js?v=feedback-button"></script>
+  </header>
+
+  <div class="live-grid">
+    <aside id="config-col"><!-- config cards injected by config.js --></aside>
+    <main class="live-main">
+      <section class="card"><h2>Cameras</h2><div class="cameras-strip" id="images-box"></div></section>
+      <section class="card"><h2>Actions</h2><div class="charts-grid" id="charts-box"></div>
+        <div class="section-label">Metrics</div><div id="metrics-box"></div></section>
+      <section class="card"><h2>Action Smoothing</h2><div id="smoothing-box"></div></section>
+      <section class="card">
+        <div class="log-header"><h2>Logs</h2><button class="btn-sm" id="btn-clear-log">Clear</button></div>
+        <div class="log-panel" id="log-box"></div>
+      </section>
+    </main>
+  </div>
+
+  <script type="module" src="/static/js/live.js?v=feedback-modal"></script>
+</body>
+</html>

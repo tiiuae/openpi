@@ -3,6 +3,15 @@ examples/trossen_ai/action_logs*
 
 # Data directories.
 assets/
+
+# Local replay datasets (large; copied in by hand).
+converted_to_EE/
+
+# Web app saved config presets.
+examples/trossen_ai/webapp/presets/
+
+# Recorded Live experiment runs (data, not source).
+examples/trossen_ai/webapp/runs/
 checkpoints/
 data/
 wandb/
@@ -175,16 +184,17 @@ cython_debug/
 #  option (not recommended) you can uncomment the following to ignore the entire idea folder.
 #.idea/
 
-
 # VSCode
 .vscode/
 
 # Debug
 debug/
 policy_records
-
 # Local-only FalconVLA cleanup artifacts (kept on disk, not tracked)
 FALCONVLA_CLEANUP_PLAN.md
 FALCONVLA_HANDOFF.md
 printer.py
 phase5_replay.py
+# Debugging directories.
+examples/trossen_ai/debug
+get_inspired*

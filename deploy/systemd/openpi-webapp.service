@@ -1,0 +1,25 @@
+[Unit]
+Description=OpenPI web app and checkpoint inference child
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=%h/openpi/examples/trossen_ai
+Environment=PYTHONUNBUFFERED=1
+Environment=OPENPI_CHECKPOINT_ROOT=/home/ibrahim/storage/VLA_MODELS
+Environment=OPENPI_REPO_ROOT=%h/openpi
+Environment=OPENPI_INFERENCE_PYTHON=%h/openpi/.venv/bin/python
+Environment=OPENPI_INFERENCE_HOST=127.0.0.1
+Environment=OPENPI_HEALTH_HOST=127.0.0.1
+Environment=OPENPI_INFERENCE_PORT=8800
+Environment=OPENPI_MANAGER_LOCK=%t/openpi-model-manager-8800.lock
+ExecStart=%h/openpi/examples/trossen_ai/.venv/bin/python -m uvicorn webapp.server:app --host 127.0.0.1 --port 8000 --workers 1 --lifespan on
+Restart=on-failure
+RestartSec=3
+TimeoutStopSec=90
+KillMode=mixed
+SendSIGKILL=yes
+
+[Install]
+WantedBy=default.target

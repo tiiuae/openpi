@@ -1,7 +1,6 @@
 import dataclasses
 import enum
 import logging
-import socket
 from typing import Literal
 
 import tyro
@@ -71,6 +70,9 @@ class Args:
 
     default_prompt: str | None = None
 
+    # Interface to bind the policy server to. Managed web-app children use
+    # 127.0.0.1; the default preserves the existing standalone CLI behavior.
+    host: str = "0.0.0.0"
     # Port to serve the policy on.
     port: int = 8800
     # Record the policy's behavior for debugging.
@@ -190,13 +192,11 @@ def main(args: Args) -> None:
     if args.record:
         policy = _policy.PolicyRecorder(policy, "policy_records")
 
-    hostname = socket.gethostname()
-    local_ip = socket.gethostbyname(hostname)
-    logging.info("Creating server (host: %s, ip: %s)", hostname, local_ip)
+    logging.info("Creating server on %s:%d", args.host, args.port)
 
     server = websocket_policy_server.WebsocketPolicyServer(
         policy=policy,
-        host="0.0.0.0",
+        host=args.host,
         port=args.port,
         metadata=policy_metadata,
     )
