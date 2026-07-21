@@ -38,8 +38,14 @@ def _manager(request: Request) -> ModelProcessManager:
 
 
 def _require_idle_robot_session(request: Request) -> None:
+    gateway = getattr(request.app.state, "robot_gateway", None)
+    if gateway is not None and gateway.blocks_model_change():
+        raise HTTPException(
+            status_code=409,
+            detail="Stop the remote robot session before starting or stopping a checkpoint",
+        )
     session = getattr(request.app.state, "session_manager", None)
-    if session is not None and session.is_running():
+    if gateway is None and session is not None and session.is_running():
         raise HTTPException(
             status_code=409,
             detail="Stop the active robot session before starting or stopping a checkpoint",

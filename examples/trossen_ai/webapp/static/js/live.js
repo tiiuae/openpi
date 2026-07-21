@@ -5,6 +5,7 @@ import { setupLogs } from "./logs.js";
 import { setupControls, setSessionActive } from "./controls.js";
 import { setupSmoothing } from "./smoothing.js";
 import { onRunStatus } from "./runlog.js";
+import { setupModelServing } from "./model_serving.js";
 
 const $ = (id) => document.getElementById(id);
 let jointCharts = null;
@@ -15,6 +16,7 @@ document.addEventListener("DOMContentLoaded", () => {
   setDefaults();
   setupLogs();
   setupControls();
+  setupModelServing($("config-col"));
 
   const smoothing = setupSmoothing($("smoothing-box"));
   setInterval(() => smoothing.update(), 200);

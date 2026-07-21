@@ -9,8 +9,8 @@ from __future__ import annotations
 
 import json
 import logging
-import time
 from pathlib import Path
+import time
 
 import numpy as np
 
@@ -169,6 +169,54 @@ class RecordingSink:
                 except Exception:  # noqa: BLE001
                     logger.exception("RecordingSink: manifest rewrite failed")
         self._put({"type": "status", "kind": kind, "payload": payload})
+
+    def ingest_event(self, event: dict) -> None:
+        """Record one already-serialized QueueSink event from Laptop B.
+
+        Remote gateway telemetry already contains the raw action paired with each
+        blended action, so ingest it directly instead of trying to reconstruct a
+        full prediction chunk on Machine A.  Camera previews remain intentionally
+        excluded, matching ``on_images``.
+        """
+
+        event_type = event.get("type")
+        if event_type in {"gateway", "gateway_state", "metrics", "images"}:
+            return
+        if event_type == "action":
+            action = np.asarray(event.get("action", []), dtype=float).flatten()
+            raw_value = event.get("raw")
+            if raw_value is not None:
+                raw = np.asarray(raw_value, dtype=float).flatten()
+                if raw.shape == action.shape:
+                    self._deltas.append(float(np.linalg.norm(action - raw)))
+            self._steps += 1
+            try:
+                self._action_ts.append(float(event["ts"]))
+            except (KeyError, TypeError, ValueError):
+                pass
+        elif event_type == "inference":
+            try:
+                self._rtts.append(float(event["rtt_ms"]))
+            except (KeyError, TypeError, ValueError):
+                pass
+        elif event_type == "overlap":
+            try:
+                self._overlaps.append(int(event["count"]))
+            except (KeyError, TypeError, ValueError):
+                pass
+        elif event_type == "status":
+            kind = str(event.get("kind", "unknown"))
+            payload = event.get("payload")
+            payload = dict(payload) if isinstance(payload, dict) else {}
+            self._last_status = (kind, payload)
+            if kind == "model":
+                self._model = payload
+                if not self._disabled:
+                    try:
+                        self._write_manifest()
+                    except Exception:  # noqa: BLE001
+                        logger.exception("RecordingSink: manifest rewrite failed")
+        self._put(dict(event))
 
     def _end_reason(self) -> str:
         if self._last_status is None:

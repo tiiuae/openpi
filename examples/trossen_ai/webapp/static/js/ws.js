@@ -10,7 +10,8 @@ export function onMessage(type, fn) { (handlers[type] || (handlers[type] = [])).
 export function onOpen(fn) { onOpenCb = fn; }
 
 export function connect() {
-  ws = new WebSocket(`ws://${location.host}/ws/telemetry`);
+  const scheme = location.protocol === "https:" ? "wss" : "ws";
+  ws = new WebSocket(`${scheme}://${location.host}/ws/telemetry`);
   ws.onopen = () => onOpenCb();
   ws.onmessage = (e) => {
     const evt = JSON.parse(e.data);

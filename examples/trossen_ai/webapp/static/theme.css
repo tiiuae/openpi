@@ -196,6 +196,7 @@ button {
 
 .btn-outline              { background: transparent; color: var(--text); border-color: var(--border); }
 .btn-outline:hover        { background: var(--bg-hover); }
+.btn-outline:disabled     { opacity: .45; cursor: not-allowed; background: transparent; }
 
 .btn-danger               { background: var(--err); color: #fff; border-color: var(--err); }
 .btn-danger:hover         { background: #e03e36; }
@@ -208,6 +209,7 @@ button {
     font-size: 11px;
 }
 .btn-sm:hover { color: var(--text); }
+.btn-sm:disabled { opacity: .45; cursor: not-allowed; }
 
 .btn-icon {
     background: var(--bg-hover);
@@ -450,6 +452,38 @@ button {
 .run-status.err     { color: var(--err); }
 .run-status.running { color: var(--blue); }
 
+.model-status-strip {
+    align-items: baseline;
+}
+
+.checkpoint-select-row {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 6px;
+}
+
+.checkpoint-select-row select {
+    min-width: 0;
+    width: 100%;
+}
+
+.model-serving-card .run-controls {
+    grid-template-columns: 1fr;
+}
+
+.model-status-detail {
+    flex: 1;
+    min-width: 0;
+    margin-left: 0;
+    overflow-wrap: anywhere;
+}
+
+.model-serving-error {
+    padding: 0;
+    margin-top: 8px;
+    overflow-wrap: anywhere;
+}
+
 /* ── Log ─────────────────────────────────────────────────────── */
 
 .log-header {
@@ -615,6 +649,24 @@ button {
     color: var(--muted);
     border: 1px solid var(--border);
     white-space: nowrap;
+}
+
+.badge.ok {
+    color: var(--ok);
+    border-color: rgba(63,185,80,.4);
+    background: rgba(63,185,80,.1);
+}
+
+.badge.bad {
+    color: var(--err);
+    border-color: rgba(248,81,73,.4);
+    background: rgba(248,81,73,.1);
+}
+
+.badge.busy {
+    color: var(--blue);
+    border-color: rgba(74,158,255,.4);
+    background: rgba(74,158,255,.1);
 }
 
 .status-strip {

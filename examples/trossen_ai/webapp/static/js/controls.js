@@ -7,15 +7,40 @@ function badge(id, text, cls) { const b = $(id); if (b) { b.textContent = text; 
 // Single source of truth for whether a session is active. Toggles which
 // buttons are clickable so you can't double-start or stop nothing.
 let sessionActive = false;
+let liveStartBlocked = false;
+const sessionActiveListeners = new Set();
+
 export function setSessionActive(active) {
+  const changed = sessionActive !== active;
   sessionActive = active;
+  updateSessionControls();
+  if (changed) sessionActiveListeners.forEach((listener) => listener(active));
+}
+
+export function onSessionActiveChange(listener) {
+  sessionActiveListeners.add(listener);
+  listener(sessionActive);
+  return () => sessionActiveListeners.delete(listener);
+}
+
+// Block Eval while a managed child exists but is not ready. External
+// policy-server workflows remain available when no managed child is running.
+export function setLiveStartBlocked(blocked) {
+  liveStartBlocked = blocked;
+  updateSessionControls();
+}
+
+function updateSessionControls() {
   const start = $("btn-start"), stop = $("btn-stop");
-  if (start) start.disabled = active;
-  if (stop) stop.disabled = !active;
+  if (start) start.disabled = sessionActive || liveStartBlocked;
+  if (stop) stop.disabled = !sessionActive;
   // Home/Sleep/Replay also occupy the single session slot, so disable them
   // while a session runs (Stop + E-STOP stay enabled). Preview is off-robot,
   // so it stays clickable.
-  ["btn-home", "btn-sleep", "btn-replay"].forEach((id) => { const b = $(id); if (b) b.disabled = active; });
+  ["btn-home", "btn-sleep", "btn-replay"].forEach((id) => {
+    const button = $(id);
+    if (button) button.disabled = sessionActive;
+  });
 }
 
 export function setupControls() {

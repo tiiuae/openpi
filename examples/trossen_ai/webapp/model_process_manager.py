@@ -32,7 +32,7 @@ import urllib.request
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_CHECKPOINT_ROOT = Path("/home/ibrahim/storage/VLA_MODELS")
+DEFAULT_CHECKPOINT_ROOT = Path("/home")
 _PROCESSOR_MARKERS = {
     "processor_config.json",
     "preprocessor_config.json",
@@ -785,12 +785,18 @@ class ModelProcessManager:
 
     @staticmethod
     def _has_checkpoint_files(candidate: Path) -> bool:
-        return (
-            (candidate / "config.json").is_file()
-            and (candidate / "norm_stats.json").is_file()
-            and any((candidate / marker).is_file() for marker in _PROCESSOR_MARKERS)
-            and ModelProcessManager._has_complete_weights(candidate)
-        )
+        try:
+            return (
+                (candidate / "config.json").is_file()
+                and (candidate / "norm_stats.json").is_file()
+                and any((candidate / marker).is_file() for marker in _PROCESSOR_MARKERS)
+                and ModelProcessManager._has_complete_weights(candidate)
+            )
+        except OSError:
+            # A broad root such as /home can contain user directories that the
+            # web service is not allowed to inspect. Treat those directories as
+            # non-checkpoints and let discovery continue into readable paths.
+            return False
 
     @staticmethod
     def _has_complete_weights(candidate: Path) -> bool:

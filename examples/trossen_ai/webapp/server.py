@@ -28,7 +28,11 @@ from webapp.metrics import Metrics
 from webapp.model_process_manager import ModelProcessManager
 from webapp.recording import RecordingSink
 from webapp.recording import TeeSink
+from webapp.robot_gateway_client import RobotCommandRejectedError
+from webapp.robot_gateway_client import RobotGatewayClient
+from webapp.robot_gateway_client import RobotGatewayError
 from webapp.run_store import RunStore
+from webapp.runner_factory import make_web_runner
 from webapp.session import SessionManager
 from webapp.telemetry import QueueSink
 
@@ -38,6 +42,7 @@ URDF_FILE = URDF_PKG_DIR / "urdf" / "generated" / "mobile_ai.urdf"
 
 logger = logging.getLogger(__name__)
 ModelManagerFactory = Callable[[], ModelProcessManager]
+RobotGatewayFactory = Callable[[], RobotGatewayClient | None]
 
 
 def create_app(
@@ -46,6 +51,7 @@ def create_app(
     feedback_dir: str | Path | None = None,
     runs_dir: str | Path | None = None,
     model_manager_factory: ModelManagerFactory | None = None,
+    robot_gateway_factory: RobotGatewayFactory | None = None,
 ) -> FastAPI:
     if presets_dir is None:
         presets_dir = Path(__file__).parent / "presets"
@@ -54,25 +60,7 @@ def create_app(
     if runs_dir is None:
         runs_dir = Path(__file__).parent / "runs"
     if runner_factory is None:
-        # Defer the robot-only import until a session actually starts, so the
-        # REST/WebSocket layer (and the tests) work off-robot where
-        # lerobot_robot_trossen is absent.
-        def runner_factory(kind, config, sink):
-            if kind == "sleep":
-                from webapp.movers import SleepRunner
-
-                return SleepRunner(kind, config, sink)
-            if kind == "home":
-                from webapp.movers import HomeRunner
-
-                return HomeRunner(kind, config, sink)
-            if kind == "teleop":
-                from webapp.teleop_runner import TeleopRunner
-
-                return TeleopRunner(kind, config, sink)
-            from webapp.runners import make_runner
-
-            return make_runner(kind, config, sink)
+        runner_factory = make_web_runner
 
     store = ConfigStore(presets_dir)
     session = SessionManager(runner_factory)
@@ -81,6 +69,8 @@ def create_app(
     run_store = RunStore(runs_dir)
     if model_manager_factory is None:
         model_manager_factory = ModelProcessManager.from_environment
+    if robot_gateway_factory is None:
+        robot_gateway_factory = RobotGatewayClient.from_environment
 
     def _cleanup_on_shutdown(manager: ModelProcessManager) -> None:
         session_stopped = False
@@ -107,17 +97,29 @@ def create_app(
     @asynccontextmanager
     async def lifespan(app: FastAPI):
         manager = model_manager_factory()
+        gateway = robot_gateway_factory()
         app.state.model_manager = manager
+        app.state.robot_gateway = gateway
+        if gateway is not None:
+            await gateway.start()
         try:
             yield
         finally:
+            # Closing the remote controller socket makes Laptop B stop locally;
+            # do this before stopping inference so the robot is not left waiting
+            # on a policy child that Machine A has already removed.
+            if gateway is not None:
+                await gateway.close()
             await asyncio.to_thread(_cleanup_on_shutdown, manager)
             app.state.model_manager = None
+            app.state.robot_gateway = None
 
     app = FastAPI(title="Trossen Control", lifespan=lifespan)
     app.state.session_manager = session
     app.state.lifecycle_lock = lifecycle_lock
     app.state.model_manager = None
+    app.state.robot_gateway = None
+    app.state.browser_controller_lock = asyncio.Lock()
     app.include_router(model_api.router)
 
     app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
@@ -152,8 +154,10 @@ def create_app(
     @app.get("/api/health")
     def health():
         manager = app.state.model_manager
+        gateway = app.state.robot_gateway
         return {
-            "session_running": session.is_running(),
+            "session_running": gateway.is_running() if gateway is not None else session.is_running(),
+            "robot_gateway": gateway.snapshot() if gateway is not None else {"mode": "local"},
             "model": manager.status() if manager is not None else {"state": "unavailable"},
         }
 
@@ -262,8 +266,147 @@ def create_app(
             logger.warning("episode_trajectory failed: %s", exc)
             raise HTTPException(status_code=400, detail=f"{type(exc).__name__}: {exc}")
 
+    @asynccontextmanager
+    async def remote_lifecycle_operation():
+        # model_api uses this same threading lock from a worker thread.  Polling
+        # non-blockingly keeps the FastAPI event loop responsive while a model
+        # start/stop operation finishes.
+        while not lifecycle_lock.acquire(blocking=False):
+            await asyncio.sleep(0.05)
+        try:
+            yield
+        finally:
+            lifecycle_lock.release()
+
+    async def remote_telemetry_ws(ws: WebSocket, gateway: RobotGatewayClient) -> None:
+        """Proxy one browser controller to the persistent Laptop B gateway."""
+
+        await ws.accept()
+        controller_lock = app.state.browser_controller_lock
+        if controller_lock.locked():
+            await ws.send_json(
+                {
+                    "type": "status",
+                    "kind": "error",
+                    "payload": {"message": "Another browser is controlling the robot"},
+                }
+            )
+            await ws.close(code=1013)
+            return
+
+        await controller_lock.acquire()
+        events = gateway.subscribe()
+        metrics = Metrics()
+        send_lock = asyncio.Lock()
+        recorder: RecordingSink | None = None
+
+        async def send_json(event: dict) -> None:
+            async with send_lock:
+                await ws.send_json(event)
+
+        def new_run_id() -> str:
+            import datetime as _dt
+
+            stamp = _dt.datetime.now().strftime("%Y-%m-%d-%H%M%S")
+            run_id, number = stamp, 1
+            while (runs_dir / run_id).exists():
+                run_id = f"{stamp}-{number}"
+                number += 1
+            return run_id
+
+        def close_recorder() -> None:
+            nonlocal recorder
+            if recorder is not None:
+                recorder.close()
+                recorder = None
+
+        async def pump_gateway_events() -> None:
+            nonlocal recorder
+            while True:
+                event = await events.get()
+                if event.get("type") == "inference":
+                    metrics.add_rtt(event["rtt_ms"])
+                elif event.get("type") == "action":
+                    metrics.add_action(event["ts"], event["action"])
+                if recorder is not None:
+                    recorder.ingest_event(event)
+                if event.get("type") == "status" and event.get("kind") in {
+                    "stopped",
+                    "error",
+                    "connect_failed",
+                }:
+                    close_recorder()
+                await send_json(event)
+
+        async def metrics_tick() -> None:
+            while True:
+                await asyncio.sleep(0.5)
+                await send_json({"type": "metrics", **metrics.snapshot()})
+
+        event_task = asyncio.create_task(pump_gateway_events())
+        metrics_task = asyncio.create_task(metrics_tick())
+        try:
+            while True:
+                command = await ws.receive_json()
+                action = command.get("action")
+                logger.info("Remote robot command: %s", action)
+                if action not in {"start_live", "go_home", "go_sleep", "stop", "estop"}:
+                    await send_json(
+                        {
+                            "type": "status",
+                            "kind": "error",
+                            "payload": {
+                                "message": f"{action!r} is not supported by the remote robot gateway"
+                            },
+                        }
+                    )
+                    continue
+
+                try:
+                    async with remote_lifecycle_operation():
+                        ack = await gateway.send_command(
+                            action,
+                            config=command.get("config") if action in {"start_live", "go_home", "go_sleep"} else None,
+                        )
+                except RobotCommandRejectedError as exc:
+                    await send_json(
+                        {"type": "status", "kind": "error", "payload": {"message": str(exc)}}
+                    )
+                    continue
+                except RobotGatewayError as exc:
+                    # The command is never retried.  Dropping the controller lease
+                    # makes Laptop B stop locally if an ACK was lost after execution.
+                    await send_json(
+                        {"type": "status", "kind": "error", "payload": {"message": str(exc)}}
+                    )
+                    await gateway.stop_and_drop_controller()
+                    continue
+
+                if action == "start_live" and ack.get("state", {}).get("session") != "idle":
+                    close_recorder()
+                    run_id = new_run_id()
+                    recorder = RecordingSink(runs_dir / run_id, run_id=run_id, config=command.get("config", {}))
+                    run_started = {"type": "status", "kind": "run_started", "payload": {"run_id": run_id}}
+                    recorder.ingest_event(run_started)
+                    await send_json(run_started)
+        except WebSocketDisconnect:
+            logger.warning("Browser controller disconnected; stopping remote robot session")
+        finally:
+            event_task.cancel()
+            metrics_task.cancel()
+            await asyncio.gather(event_task, metrics_task, return_exceptions=True)
+            gateway.unsubscribe(events)
+            close_recorder()
+            await gateway.stop_and_drop_controller()
+            controller_lock.release()
+
     @app.websocket("/ws/telemetry")
     async def telemetry_ws(ws: WebSocket):
+        gateway = app.state.robot_gateway
+        if gateway is not None:
+            await remote_telemetry_ws(ws, gateway)
+            return
+
         await ws.accept()
         # Bounded: QueueSink drops the oldest event when full, so a fast control
         # loop can't build a backlog that lags the live chart behind the robot.

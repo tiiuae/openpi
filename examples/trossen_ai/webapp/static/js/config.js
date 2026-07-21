@@ -2,7 +2,7 @@ import { api, apiPost } from "./api.js";
 
 const GROUPS = [
   { title: "Connection", fields: [
-    { key:"policy_host", label:"Policy server host", type:"text", def:"192.168.50.174",
+    { key:"policy_host", label:"Policy server host", type:"text", def:"127.0.0.1",
       help:"IP/hostname of the OpenPI policy server." },
     { key:"policy_port", label:"Policy server port", type:"number", def:8800,
       help:"TCP port the policy server listens on." },
