@@ -109,19 +109,25 @@ Machine reaches it through the SSH tunnel below.
 
 Run this step on the HP Machine, not on the Aloha Laptop. The SSH tunnel is a
 foreground process and is intentionally not managed by systemd for this setup.
-One SSH connection provides both directions: HP port `8001` reaches the Aloha
-gateway, and Aloha port `8800` reaches HP inference.
+A complete SSH connection provides both directions: HP port `8001` reaches the
+Aloha gateway, and Aloha port `8800` reaches HP inference. When an existing
+connection supplies only the local `8001` forward, use the separate mandatory
+reverse-forward command below.
+
+Both directions are mandatory. A successful request to HP port `8001` proves
+only that the local `-L` path reaches the Aloha gateway; it does **not** prove
+that the reverse `-R` path from the Aloha Laptop to HP inference exists.
 
 First check whether a working tunnel already owns HP port `8001`:
 
 ```bash
 curl -fsS --max-time 5 http://127.0.0.1:8001/healthz
 ss -ltnp 'sport = :8001'
-pgrep -af 'ssh.*8001'
+pgrep -af 'ssh'
 ```
 
-If the health check reports `"gateway":"ready"`, reuse that tunnel and skip the
-next command. Otherwise, start one tunnel on the HP Machine:
+If the health check does not report `"gateway":"ready"`, start one complete
+bidirectional tunnel on the HP Machine:
 
 ```bash
 ssh -NT \
@@ -133,24 +139,55 @@ ssh -NT \
   edgeai@192.168.50.219
 ```
 
-Enter the SSH password when prompted and leave this terminal open. No output
-after login is normal. If SSH reports `Address already in use`, another process
-already owns HP port `8001`; inspect the commands above instead of starting a
-second tunnel. In another HP terminal, verify the new local listener before
-starting the web app:
+If the health check already reports `"gateway":"ready"`, reuse its existing
+local `8001` forward, but do not skip the reverse path. In a separate HP
+terminal, it is mandatory to start the missing `8800` reverse-forward. Do
+**not** add `-L 127.0.0.1:8001:127.0.0.1:8001` to this command: the healthy
+existing tunnel already owns HP port `8001`, and trying to bind it again makes
+SSH exit before it creates the required reverse-forward.
+
+```bash
+ssh -NT \
+  -o ExitOnForwardFailure=yes \
+  -o ServerAliveInterval=10 \
+  -o ServerAliveCountMax=3 \
+  -R 127.0.0.1:8800:127.0.0.1:8800 \
+  edgeai@192.168.50.219
+```
+
+Enter the SSH password when prompted and leave every tunnel terminal open. No
+output after login is normal. If the complete tunnel reports `Address already
+in use`, another process already owns HP port `8001`; inspect the commands above
+and use the reverse-only command with the healthy existing local forward. If
+the reverse-only command reports `remote port forwarding failed`, another SSH
+session already owns Aloha port `8800`; identify that session rather than
+starting a duplicate.
+
+In another HP terminal, verify the local gateway path before starting the web
+app:
 
 ```bash
 curl -fsS --max-time 5 http://127.0.0.1:8001/healthz
 ```
 
 The response must report `"ok":true` and `"gateway":"ready"`. Press `Ctrl+C`
-in the SSH terminal to stop only the tunnel; the Aloha gateway service continues
-running.
+in an SSH terminal to stop only that tunnel; the Aloha gateway service
+continues running.
+
+Also verify on the Aloha Laptop that the mandatory reverse-forward is listening:
+
+```bash
+sudo ss -ltnp 'sport = :8800'
+```
+
+The output must contain a `LISTEN` entry for `127.0.0.1:8800`. Do not start the
+web app until both the HP `8001` health check and the Aloha `8800` listener check
+succeed.
 
 ## 3. Start the web app manually on the HP Machine
 
-Keep the SSH terminal from step 2 open. In a different HP terminal, change to
-the Trossen directory and run this exact one-line command:
+Keep every SSH tunnel terminal from step 2 open. In a different HP terminal,
+change to the Trossen directory and run this exact one-line command:
 
 ```bash
 cd /home/saleha/openpi/examples/trossen_ai
@@ -219,8 +256,9 @@ systemctl --user list-units --type=service --all | grep -i openpi
 ```
 
 - On the Aloha Laptop, `8001` should be owned by the one robot-gateway service.
-- On the HP Machine, `8001` should be owned by the one SSH tunnel and `8081` by
-  one manual web-app Uvicorn process.
+- On the HP Machine, `8001` should be owned by one SSH tunnel and `8081` by one
+  manual web-app Uvicorn process. A separate reverse-only SSH process is also
+  expected when the existing `8001` tunnel does not include `-R 8800`.
 - HP port `8800` is normally absent until a checkpoint is being served.
 
 If the expected owner is already healthy, there is nothing to fix: reuse or
@@ -254,7 +292,7 @@ sudo ss -ltnp | grep -E ':(8081|8001|8800)\b'
 1. Click **Stop** in the web app and wait for the session to become idle.
 2. Click **Stop serving** and wait for the model to stop.
 3. Press `Ctrl+C` in the manually started HP web-app terminal.
-4. Press `Ctrl+C` in the manually started SSH-tunnel terminal.
+4. Press `Ctrl+C` in every manually started SSH-tunnel terminal.
 5. Stop the Aloha gateway only if the robot gateway should be shut down:
    `systemctl --user stop openpi-robot-gateway.service`.
 
