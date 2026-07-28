@@ -31,12 +31,14 @@ from lerobot_robot_trossen.config_bi_widowxai_follower import BiWidowXAIFollower
 import numpy as np
 from openpi_client import websocket_client_policy
 from PIL import Image
+from realsense_settings import apply_realsense_settings
 from scipy.interpolate import PchipInterpolator
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
 
 DEFAULT_TRAINING_SIZE = (224, 224)
+DEFAULT_REALSENSE_SETTINGS = Path(__file__).parent / "realsense_settings.json"
 
 
 class TrossenOpenPIBridge:
@@ -78,18 +80,22 @@ class TrossenOpenPIBridge:
             min_time_to_move_multiplier=3.0,
             loop_rate=30,
             cameras={
-                "cam_high": OpenCVCameraConfig(index_or_path=Path("/dev/video16"), width=640, height=480, fps=30),
+                "cam_high": OpenCVCameraConfig(index_or_path=Path("/dev/video40"), width=640, height=480, fps=30),
                 # "cam_low": RealSenseCameraConfig(
                 #     serial_number_or_name="130322272628", width=640, height=480, fps=30, use_depth=False
                 # ),
                 "cam_right_wrist": OpenCVCameraConfig(
-                    index_or_path=Path("/dev/video10"), width=640, height=480, fps=30
+                    index_or_path=Path("/dev/video41"), width=640, height=480, fps=30
                 ),
-                "cam_left_wrist": OpenCVCameraConfig(index_or_path=Path("/dev/video4"), width=640, height=480, fps=30),
+                "cam_left_wrist": OpenCVCameraConfig(index_or_path=Path("/dev/video42"), width=640, height=480, fps=30),
             },
         )
         self.robot = make_robot_from_config(robot_config)
         self.robot.connect()
+
+        # Push the recorded exposure/gain/white balance onto the cameras so inference sees the
+        # same image the policy was trained on, instead of whatever auto-exposure settles on.
+        apply_realsense_settings(DEFAULT_REALSENSE_SETTINGS)
 
         self.current_action_chunk = None
         self.action_chunk_idx = 0
