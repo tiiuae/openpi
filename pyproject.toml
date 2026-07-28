@@ -67,6 +67,12 @@ allow-direct-references = true
 
 [tool.uv]
 override-dependencies = ["ml-dtypes==0.4.1", "tensorstore==0.1.74"]
+# lerobot depends on an unpinned `av`. PyPI's index lists NO binary wheels for av 14.3.0 or
+# 14.4.0 (sdist only), so resolving to either forces a source build of PyAV, which requires
+# ffmpeg 7 + pkg-config -- the CUDA 12.2 / Ubuntu 22.04 base in
+# scripts/docker/serve_policy.Dockerfile has ffmpeg 4.4, so that build cannot succeed.
+# 14.2.0 is the nearest release that still publishes cp311 manylinux wheels.
+constraint-dependencies = ["av==14.2.0"]
 
 [tool.uv.sources]
 openpi-client = { workspace = true }
