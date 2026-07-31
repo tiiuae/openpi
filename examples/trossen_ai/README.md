@@ -186,6 +186,60 @@ uv run main.py --mode autonomous --task_prompt "grab red cube"
 
 The client will connect to the policy server and perform the specified task using the trained model.
 
+### Changing the instruction while the robot is running (`--async_inference`)
+
+With `--async_inference` the client also reads your keyboard while the episode runs, so you don't have to
+restart it to change the task. Type a line and press Enter:
+
+- **any free text** → becomes the new task instruction sent to the policy. The ensemble still holds chunks
+  predicted for the previous instruction, so the change blends in over the next ~`action_chunk_size` steps.
+- **empty line (Enter alone)** → goes back to the `--task_prompt` the client was started with.
+
+A few phrases are intercepted as **keyword commands** instead. Each one pauses the policy, runs a canned
+open-loop motion, and then waits — the arm stays still until you type an instruction to hand control back:
+
+| Command | Effect |
+| --- | --- |
+| `home`, `go home`, `return to the home position` | both arms to Trossen's staged/home pose |
+| `home left`, `home right` | one arm home |
+| `sleep`, `go to sleep`, `rest`, `park` | home first, then fold both arms down to the zero pose |
+| `sleep left`, `sleep right` | one arm to the sleep pose |
+| `open`, `close`, `open gripper`, `close the grippers` | both grippers |
+| `open left`, `close right gripper` | one gripper |
+| `twist`, `twist wrist`, `twist the wrist left and right` | rotate both wrists left and right |
+| `twist left`, `twist right wrist` | one wrist |
+| `wave`, `wave left`, `wiggle right`, `shake left arm` | small "I'm alive" base movement |
+| `quit`, `exit`, `shut down`, `disconnect` | end the episode, park the arms, close the cameras and exit |
+| `help`, `?` | print this list |
+
+`quit` is the clean way out: it stops the control loop, then `robot.disconnect()` parks both arms (staged pose,
+then all joints to zero) and releases every camera. Ctrl+C now takes the same path, and if an arm fails to
+disconnect the cameras are released anyway — otherwise the next run finds the devices busy.
+
+Matching is on the **whole line** (after dropping filler words like "the"/"to"/"arm"), never on substrings, so
+real instructions such as `close the drawer` or `move the arm to the left` still reach the policy. That is also
+why there is no `move left` command — it collides with the default prompt.
+
+The input line is **pinned to the bottom of the terminal** (rich `Live`), so log records scroll above it and a
+half-typed instruction is never scrolled away. It also shows what the policy is doing:
+
+```
+▶ running · 25 Hz · task: 'pick up the blue cup'
+❯ open gri
+```
+```
+⏸ paused · arm holding position · type an instruction to resume
+❯
+```
+
+Ctrl+C still stops the client. Per-step logging is off by default (it made the terminal unusable for typing) —
+the control rate goes to the status line instead. Pass `--debug` for the per-step stream. When stdout is not a
+terminal (piped to a file, `nohup`, systemd) the client falls back to plain line-buffered input and logs a
+control-rate summary every 5 s instead.
+
+Commands for an arm disabled by `--use_left_arm_only` / `--use_right_arm_only` are refused rather than
+re-targeted. Targets are clamped to the joint limits reported by the arm driver, and the motions are defined
+in `scripted_motions.py` if you want to change amplitudes or durations.
 
 You can change the cameras and arm ip address in the script `examples/trossen_ai/main.py` by editing
 

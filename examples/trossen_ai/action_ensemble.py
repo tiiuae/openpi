@@ -328,12 +328,15 @@ class AsyncPolicyWorker:
         self._pending: tuple | None = None  # (obs_dict, query_step)
         self._lock = threading.Lock()
         self._first_result = threading.Event()
+        self._need_first = True
+        self._generation = 0
         self._running = False
         self._thread: threading.Thread | None = None
 
     def start(self) -> None:
         self._running = True
         self._first_result.clear()
+        self._need_first = True
         self._thread = threading.Thread(target=self._loop, daemon=True, name="policy-worker")
         self._thread.start()
 
@@ -348,15 +351,31 @@ class AsyncPolicyWorker:
         with self._lock:
             self._pending = (obs, query_step)
 
+    def flush(self) -> None:
+        """Drop the pending observation and discard any in-flight inference.
+
+        Call this whenever the control loop stops trusting predictions already
+        in flight — the operator took the arm over with a scripted motion, or
+        the task instruction changed. Without it, a chunk requested under the
+        old instruction/pose lands in the ensemble seconds later and is blended
+        into the new behaviour. ``wait_for_first()`` is re-armed, so the caller
+        can block for a genuinely fresh chunk before moving again.
+        """
+        with self._lock:
+            self._pending = None
+            self._generation += 1
+            self._need_first = True
+        self._first_result.clear()
+
     def wait_for_first(self, timeout: float = 30.0) -> bool:
         """Block until the first inference chunk has been added to the ensemble."""
         return self._first_result.wait(timeout=timeout)
 
     def _loop(self) -> None:
-        first = True
         while self._running:
             with self._lock:
                 item = self._pending
+                generation = self._generation
                 if item is not None:
                     self._pending = None  # consume
             if item is None:
@@ -366,9 +385,13 @@ class AsyncPolicyWorker:
             try:
                 response = self._client.infer(obs)
                 chunk = np.asarray(response["actions"])[:, : self._action_dim]
-                self._ensemble.add_chunk(query_step, chunk)
+                with self._lock:
+                    if generation != self._generation:
+                        continue  # flushed while this inference was running — drop it
+                    self._ensemble.add_chunk(query_step, chunk)
+                    first = self._need_first
+                    self._need_first = False
                 if first:
                     self._first_result.set()
-                    first = False
             except Exception:
                 logger.exception("AsyncPolicyWorker: inference error")

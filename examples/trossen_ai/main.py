@@ -18,8 +18,8 @@ Usage:
 
 import argparse
 import logging
-import time
 from pathlib import Path
+import time
 
 from action_ensemble import ActionLogger
 from action_ensemble import AsyncPolicyWorker
@@ -33,12 +33,23 @@ from openpi_client import websocket_client_policy
 from PIL import Image
 from realsense_settings import apply_realsense_settings
 from scipy.interpolate import PchipInterpolator
+from scripted_motions import ARMS
+from scripted_motions import BIMANUAL_DIM
+from scripted_motions import HELP_ROWS
+from scripted_motions import ScriptedMotions
+from scripted_motions import parse_command
+import terminal_ui
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
 
 DEFAULT_TRAINING_SIZE = (224, 224)
 DEFAULT_REALSENSE_SETTINGS = Path(__file__).parent / "realsense_settings.json"
+# How often the control loop logs its rate when there is no pinned status line.
+# Anything faster competes with the operator typing instructions into the terminal.
+RATE_SUMMARY_PERIOD_S = 5.0
+# The pinned status line costs no log lines, so it can refresh briskly.
+RATE_STATUS_PERIOD_S = 1.0
 
 
 class TrossenOpenPIBridge:
@@ -100,6 +111,11 @@ class TrossenOpenPIBridge:
         self.current_action_chunk = None
         self.action_chunk_idx = 0
 
+        self._rate_window: list[float] = []
+        self._last_rate_log = time.perf_counter()
+        self._last_action: np.ndarray | None = None
+        self._prompt_listener: terminal_ui.BasePromptListener | None = None
+
         self.action_chunk_size = action_chunk_size
         self.episode_step = 0
         self.is_running = False
@@ -120,6 +136,25 @@ class TrossenOpenPIBridge:
         self.use_left_arm_only = use_left_arm_only
         self.use_right_arm_only = use_right_arm_only
 
+        # Keyword-triggered canned motions (home / grippers / wrist twist / wave).
+        # They assume the 14-dim bimanual layout, so they stay off for anything else.
+        if self.action_dim == BIMANUAL_DIM:
+            enabled_arms = ARMS
+            if use_left_arm_only:
+                enabled_arms = ("left",)
+            elif use_right_arm_only:
+                enabled_arms = ("right",)
+            self.motions = ScriptedMotions(
+                get_pose=self._read_joint_pose,
+                send_pose=self._send_scripted_pose,
+                control_frequency=control_frequency,
+                joint_limits=self._read_joint_limits(),
+                enabled_arms=enabled_arms,
+            )
+        else:
+            self.motions = None
+            logger.warning("action_dim is %d, not %d — keyword motions disabled", self.action_dim, BIMANUAL_DIM)
+
         # Gripper channels are near-binary, so temporal averaging makes them mushy and
         # laggy. When an ensemble is active we bypass it for the gripper dims and use the
         # latest raw prediction instead (joints stay smoothed). For a 14-dim bimanual
@@ -131,6 +166,75 @@ class TrossenOpenPIBridge:
             self.gripper_indices = [6, 13]
         else:
             self.gripper_indices = []
+
+    def _log_rate_summary(self, loop_s: float) -> None:
+        """Report the control rate without one line per control step.
+
+        With the pinned UI the rate goes to the status line, which costs no log
+        lines at all. Otherwise it is logged at most once every
+        RATE_SUMMARY_PERIOD_S — per-step logging makes the terminal unusable for
+        typing instructions.
+        """
+        # A step that ran a blocking ramp or scripted motion took seconds, not
+        # milliseconds — keeping it would wreck the average for the whole window.
+        if loop_s < 5 * self.dt:
+            self._rate_window.append(loop_s)
+        pinned = self._prompt_listener is not None and self._prompt_listener.pinned
+        period = RATE_STATUS_PERIOD_S if pinned else RATE_SUMMARY_PERIOD_S
+        now = time.perf_counter()
+        if now - self._last_rate_log < period or not self._rate_window:
+            return
+        mean_s = sum(self._rate_window) / len(self._rate_window)
+        if pinned:
+            self._prompt_listener.set_rate(1 / mean_s)
+        else:
+            message = f"step {self.episode_step}: {mean_s * 1e3:.1f}ms/step ({1 / mean_s:.0f} Hz avg)"
+            if self.test_mode == "test" and self._last_action is not None:
+                action = np.array2string(self._last_action, precision=3, max_line_width=np.inf, suppress_small=True)
+                message += f" | TEST MODE, last action: {action}"
+            logger.info(message)
+        self._reset_rate_window()
+
+    def _reset_rate_window(self) -> None:
+        """Drop collected timings. Called after a blocking move so the multi-second
+        ramp doesn't get averaged into the control rate."""
+        self._rate_window.clear()
+        self._last_rate_log = time.perf_counter()
+
+    def _read_joint_pose(self) -> np.ndarray:
+        """Current measured joint pose, in the same order as `robot._joint_ft`."""
+        observation = self.robot.get_observation()
+        return np.array([v for k, v in observation.items() if k.endswith(".pos")])
+
+    def _read_joint_limits(self) -> np.ndarray | None:
+        """Per-joint [min, max] straight from the driver, so scripted motions can
+        clamp instead of hardcoding a gripper stroke that varies per end effector."""
+        try:
+            limits = [
+                (joint.position_min, joint.position_max)
+                for arm in (self.robot.left_arm, self.robot.right_arm)
+                for joint in arm.driver.get_joint_limits()
+            ]
+            array = np.array(limits, dtype=float)
+            if array.shape != (self.action_dim, 2):
+                raise ValueError(f"expected ({self.action_dim}, 2) limits, got {array.shape}")
+        except Exception:
+            logger.warning("Could not read joint limits from the driver — using fallback values", exc_info=True)
+            return None
+        return array
+
+    def _send_scripted_pose(self, pose: np.ndarray):
+        """Send one pose from a scripted motion.
+
+        Bypasses execute_action()'s arm freezing on purpose: the operator asked
+        for this motion explicitly, and ScriptedMotions already refuses commands
+        for an arm disabled by --use_left_arm_only / --use_right_arm_only.
+        """
+        if self.test_mode == "test":
+            logger.debug(f"TEST MODE: Would send scripted pose: {pose}")
+            return
+        joint_features = list(self.robot._joint_ft.keys())
+        self.robot.send_action({k: pose[i] for i, k in enumerate(joint_features)})
 
     def execute_action(self, action: np.ndarray):
         """Execute action on the arm."""
@@ -145,7 +249,10 @@ class TrossenOpenPIBridge:
                 full_action[7:] = self._frozen_arm_pose[7:]
 
         if self.test_mode == "test":
-            logger.info(f"TEST MODE: Would execute action: {full_action}")
+            # Per-step, so it stays at DEBUG — at 25 Hz it buries the log (and any
+            # instruction you are typing). Run with --debug to see every action.
+            logger.debug(f"TEST MODE: Would execute action: {full_action}")
+            self._last_action = full_action
             return
         if self.test_mode == "autonomous":
             joint_features = list(self.robot._joint_ft.keys())
@@ -177,8 +284,7 @@ class TrossenOpenPIBridge:
         We use PCHIP interpolation for smooth trajectory generation and give it enough time to reach the position to prevent
         jumps and triggering safety stops (velocity limits)."""
 
-        joint_pos_keys = [k for k in self.robot.get_observation().keys() if k.endswith(".pos")]
-        self._frozen_arm_pose = np.array([self.robot.get_observation()[k] for k in joint_pos_keys])
+        self._frozen_arm_pose = self._read_joint_pose()
         # Example stage_pose for bimanual WidowX arms.
         # Each value corresponds to a joint position (in radians) for the 14 joints:
         # [left_joint_0, left_joint_1, left_joint_2, left_joint_3, left_joint_4, left_joint_5, left_left_carriage_joint,
@@ -193,10 +299,15 @@ class TrossenOpenPIBridge:
         end_time = start_time + timepoints[-1]
 
         while time.time() < end_time:
-            loop_start_time = time.time()
-            current_time = loop_start_time - start_time
+            loop_start_time = time.perf_counter()
+            current_time = time.time() - start_time
             positions = interpolator_position(current_time)
             self.execute_action(positions)
+            # Rate-limit to the control frequency: without this the ramp hammers the
+            # driver as fast as the loop spins, which now happens on every resume.
+            remaining = self.dt - (time.perf_counter() - loop_start_time)
+            if remaining > 0:
+                time.sleep(remaining)
 
     def run_episode(self, task_prompt: str = "look down"):
         """Run a single episode of policy execution."""
@@ -216,14 +327,70 @@ class TrossenOpenPIBridge:
             _joint_pos_keys = [k for k in _obs.keys() if k.endswith(".pos")]
             self._frozen_arm_pose = np.array([_obs[k] for k in _joint_pos_keys])
 
+        prompt_listener = None
+        paused = False
         if self.async_inference:
             self._policy_worker.start()
+            if self.motions is not None:
+                terminal_ui.print_help(HELP_ROWS)
+            prompt_listener = terminal_ui.make_prompt_listener(task_prompt)
+            prompt_listener.start()
+        self._prompt_listener = prompt_listener
 
         try:
             while self.is_running and self.episode_step < self.max_steps:
                 start_loop_time = time.perf_counter()
 
                 if self.async_inference:
+                    # Pick up whatever was typed on stdin since the last step: either
+                    # a keyword command (scripted motion, pauses the policy) or a new
+                    # task instruction.
+                    typed = prompt_listener.poll() if prompt_listener is not None else None
+                    if typed is not None:
+                        command = parse_command(typed) if self.motions is not None else None
+                        if command is not None and command.name == "quit":
+                            # Leave the loop so the finally below stops the worker and
+                            # listener; cleanup() then parks the arms and closes the
+                            # cameras through robot.disconnect().
+                            logger.info("Quit requested — shutting down")
+                            self.is_running = False
+                            break
+                        if command is not None and command.name == "help":
+                            terminal_ui.print_help(HELP_ROWS)
+                        elif command is not None:
+                            if command.moves_arm:
+                                # Stop feeding policy actions before driving the arm
+                                # ourselves, and throw away predictions made for the
+                                # pose/instruction the motion is about to invalidate.
+                                paused = True
+                                self.ensemble.reset()
+                                self._policy_worker.flush()
+                            prompt_listener.set_paused(paused)
+                            self.motions.run(command)
+                            self._reset_rate_window()
+                            if paused:
+                                logger.info("Policy paused — type an instruction (Enter alone = default) to resume")
+                        else:
+                            task_prompt = typed
+                            prompt_listener.set_task(task_prompt)
+                            logger.info(f"Task instruction: '{task_prompt}'")
+                            if paused:
+                                # Ensemble was cleared on pause, so treat this like a
+                                # fresh episode: block for a new chunk, then ramp to it
+                                # from wherever the scripted motion left the arm.
+                                logger.info("Resuming policy")
+                                paused = False
+                                is_first_step = True
+                                prompt_listener.set_paused(paused)
+                            # Not paused: the ensemble still holds chunks for the old
+                            # instruction, so the switch blends in over the next
+                            # ~action_chunk_size steps instead of resetting (a reset
+                            # would leave get_action() empty and drive the arm to zeros).
+
+                    if paused:
+                        time.sleep(0.05)
+                        continue
+
                     # Submit fresh observation every step — non-blocking
                     obs = self._build_observation(self.robot.get_observation(), task_prompt)
                     self._policy_worker.submit(obs, self.episode_step)
@@ -274,6 +441,7 @@ class TrossenOpenPIBridge:
                     logger.info("Moving to start position to avoid large jumps...")
                     self.move_to_start_position(a_t, duration=5.0)
                     is_first_step = False
+                    self._reset_rate_window()
                 else:
                     self.execute_action(a_t)
 
@@ -284,11 +452,16 @@ class TrossenOpenPIBridge:
                 if self.dt - dt_s > 0:
                     time.sleep(self.dt - dt_s)
                 loop_s = time.perf_counter() - start_loop_time
-                logger.info(f"time: {loop_s * 1e3:.2f}ms ({1 / loop_s:.0f} Hz)")
+                # One line per control step is 25 lines/s — it drowns the log and
+                # scrolls away whatever you are typing. Summarise instead.
+                logger.debug(f"time: {loop_s * 1e3:.2f}ms ({1 / loop_s:.0f} Hz)")
+                self._log_rate_summary(loop_s)
 
         finally:
             if self.async_inference:
                 self._policy_worker.stop()
+            if prompt_listener is not None:
+                prompt_listener.stop()
             if self.action_logger is not None:
                 self.action_logger.save(tag=f"episode_{self.episode_step}steps")
 
@@ -301,9 +474,23 @@ class TrossenOpenPIBridge:
         self.run_episode(task_prompt=task_prompt)
 
     def cleanup(self):
-        """Clean up resources."""
+        """Disconnect the arms and release the cameras.
+
+        robot.disconnect() parks both arms (staged pose, then all joints to zero)
+        before closing the cameras — but it closes them *after* the arms, so a
+        failing arm would otherwise leave the cameras held open and the next run
+        unable to grab them.
+        """
         logger.info("Cleaning up...")
-        self.robot.disconnect()
+        try:
+            self.robot.disconnect()
+        except Exception:
+            logger.exception("Robot disconnect failed — releasing cameras directly")
+            for name, camera in self.robot.cameras.items():
+                try:
+                    camera.disconnect()
+                except Exception:
+                    logger.warning("Could not release camera %s", name, exc_info=True)
 
 
 if __name__ == "__main__":
@@ -357,7 +544,15 @@ if __name__ == "__main__":
         help="Also temporally ensemble the gripper channels. By default the gripper uses "
         "the latest raw prediction to avoid mushy/laggy open-close behaviour.",
     )
+    parser.add_argument(
+        "--debug",
+        action="store_true",
+        help="Log every control step (per-step timing and, in test mode, every action). "
+        "Off by default because the stream makes typing instructions impossible.",
+    )
     args = parser.parse_args()
+
+    terminal_ui.setup_logging(debug=args.debug)
 
     bridge = TrossenOpenPIBridge(
         policy_server_host=args.policy_host,
@@ -376,6 +571,11 @@ if __name__ == "__main__":
         raw_gripper=not args.ensemble_gripper,
     )
 
-    bridge.autonomous_mode(task_prompt=args.task_prompt)
-
-    bridge.cleanup()
+    try:
+        bridge.autonomous_mode(task_prompt=args.task_prompt)
+    except KeyboardInterrupt:
+        logger.info("Interrupted — shutting down")
+    finally:
+        # Ctrl+C and crashes must still park the arms and release the cameras,
+        # otherwise the next run finds the devices busy.
+        bridge.cleanup()
