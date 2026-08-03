@@ -1,4 +1,5 @@
 import logging
+import threading
 import time
 
 from action_fallback import HoldLastAction
@@ -80,6 +81,8 @@ class TrossenOpenPIBridge:
 
         self.current_action_chunk = None
         self.action_chunk_idx = 0
+        self._prompt_lock = threading.Lock()
+        self._task_prompt: str | None = None
 
         self.action_chunk_size = action_chunk_size
         self.episode_step = 0
@@ -89,8 +92,10 @@ class TrossenOpenPIBridge:
         self.action_dim = len(self.robot._joint_ft)  # 7 joints per arm * 2 arms # noqa
         self.state_dim = self.adapter.state_dim
         self.ensemble = make_ensemble(
-            smoothing, decay=smoothing_decay,
-            method=smoothing_method, cogact_mode=cogact_mode,
+            smoothing,
+            decay=smoothing_decay,
+            method=smoothing_method,
+            cogact_mode=cogact_mode,
         )
 
         if async_inference and self.ensemble is None:
@@ -176,7 +181,9 @@ class TrossenOpenPIBridge:
                     from robot_control import send_action_smooth  # noqa
 
                     send_action_smooth(
-                        self.robot, full_action, self.dt,
+                        self.robot,
+                        full_action,
+                        self.dt,
                         feedforward_velocity=ff_vel,
                         goal_time=self.min_time_to_move_multiplier * self.dt,
                     )
@@ -205,6 +212,15 @@ class TrossenOpenPIBridge:
             images[cam] = np.transpose(image_rgb, (2, 0, 1))
         return {"state": state, "images": images, "prompt": task_prompt}
 
+    def update_prompt(self, task_prompt: str) -> None:
+        """Change the instruction used by subsequent policy requests."""
+        with self._prompt_lock:
+            self._task_prompt = task_prompt
+
+    def _current_prompt(self) -> str:
+        with self._prompt_lock:
+            return self._task_prompt or ""
+
     def _emit_cameras(self, observation_dict: dict) -> None:
         """Push the current camera frames to the telemetry sink for the live UI.
 
@@ -212,6 +228,7 @@ class TrossenOpenPIBridge:
         live feed; QueueSink throttles the actual send by wall-clock interval.
         """
         from camera_utils import encode_camera_jpegs
+
         cameras = list(self.robot._cameras_ft.keys())  # noqa
         self.sink.on_images(encode_camera_jpegs(observation_dict, cameras), time.time())
 
@@ -263,7 +280,11 @@ class TrossenOpenPIBridge:
 
     def run_episode(self, task_prompt: str = "look down"):
         """Run a single episode of policy execution."""
-        logger.info(f"Starting episode with prompt: '{task_prompt}'")
+        with self._prompt_lock:
+            if self._task_prompt is None:
+                self._task_prompt = task_prompt
+            initial_prompt = self._task_prompt
+        logger.info(f"Starting episode with prompt: '{initial_prompt}'")
         self.episode_step = 0
         self.action_chunk_idx = 0
         self.current_action_chunk = None
@@ -293,7 +314,7 @@ class TrossenOpenPIBridge:
                     # Submit fresh observation every step — non-blocking
                     obs_raw = self.robot.get_observation()
                     self._emit_cameras(obs_raw)  # live feed every step (throttled in sink)
-                    obs = self._build_observation(obs_raw, task_prompt)
+                    obs = self._build_observation(obs_raw, self._current_prompt())
                     current_joints14 = extract_joints(obs_raw)
                     self._policy_worker.submit(obs, self.episode_step, current_joints14)
                     if is_first_step:
@@ -316,7 +337,7 @@ class TrossenOpenPIBridge:
                     if self.current_action_chunk is None or self.action_chunk_idx >= self.rate_of_inference:
                         if not self.is_running:  # Stop arrived; don't block on a new infer
                             break
-                        observation = self._build_observation(obs_raw, task_prompt)
+                        observation = self._build_observation(obs_raw, self._current_prompt())
                         logger.info(f"Step {self.episode_step}: Requesting new action chunk")
                         _t0 = time.perf_counter()
                         response = self.policy_client.infer(observation)

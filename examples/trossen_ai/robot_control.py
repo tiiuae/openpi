@@ -10,6 +10,7 @@ smooth-streaming motion used by the autonomous control loop, operating on full
 from __future__ import annotations
 
 import logging
+import os
 from pathlib import Path
 import time
 
@@ -138,15 +139,33 @@ def build_stationary_robot(
 
     cameras = {}
     if with_cameras:
+        from realsense_settings import apply_realsense_settings  # noqa
+
+        apply_realsense_settings(Path(__file__).with_name("realsense_settings.json"))
         cameras = {
-            "cam_high": OpenCVCameraConfig(index_or_path=Path("/dev/video16"), width=640, height=480, fps=30),
-            "cam_right_wrist": OpenCVCameraConfig(index_or_path=Path("/dev/video10"), width=640, height=480, fps=30),
-            "cam_left_wrist": OpenCVCameraConfig(index_or_path=Path("/dev/video4"), width=640, height=480, fps=30),
+            "cam_high": OpenCVCameraConfig(
+                index_or_path=Path(os.environ.get("TROSSEN_CAMERA_HIGH", "/dev/video40")),
+                width=640,
+                height=480,
+                fps=30,
+            ),
+            "cam_right_wrist": OpenCVCameraConfig(
+                index_or_path=Path(os.environ.get("TROSSEN_CAMERA_RIGHT_WRIST", "/dev/video41")),
+                width=640,
+                height=480,
+                fps=30,
+            ),
+            "cam_left_wrist": OpenCVCameraConfig(
+                index_or_path=Path(os.environ.get("TROSSEN_CAMERA_LEFT_WRIST", "/dev/video42")),
+                width=640,
+                height=480,
+                fps=30,
+            ),
         }
     robot_config = BiWidowXAIFollowerRobotConfig(
         id="bimanual_follower",
-        left_arm_ip_address="192.168.1.5",
-        right_arm_ip_address="192.168.1.4",
+        left_arm_ip_address=os.environ.get("TROSSEN_LEFT_ARM_IP", "192.168.1.5"),
+        right_arm_ip_address=os.environ.get("TROSSEN_RIGHT_ARM_IP", "192.168.1.4"),
         min_time_to_move_multiplier=min_time_to_move_multiplier,
         loop_rate=loop_rate,
         cameras=cameras,

@@ -9,9 +9,11 @@ so a session can be cancelled even while still connecting.
 `config` is the dict produced by the web form. Constructors forward only the
 keys they use; unknown keys are ignored.
 """
+
 from __future__ import annotations
 
 import logging
+import threading
 
 from policy_connect import ConnectStopped, ConnectTimeout, wait_for_policy_server
 
@@ -27,6 +29,9 @@ class LiveRunner:
         self._stopped = False
         self._estop = False
         self._bridge = None
+        self._prompt_lock = threading.Lock()
+        self._task_prompt = str(config.get("task_prompt", ""))
+        self._interactive = bool(config.get("interactive", False))
 
     def _make_bridge(self, config: dict):
         # Imported lazily so this module loads off-robot.
@@ -90,7 +95,9 @@ class LiveRunner:
             self._sink.on_status("stopped", {"reason": "cancelled"})
             return
 
-        self._bridge = self._make_bridge(cfg)
+        bridge = self._make_bridge(cfg)
+        with self._prompt_lock:
+            self._bridge = bridge
         # Capture the policy server's identity for the run log. Best-effort: the
         # server may not expose a name, so never let this block the run.
         try:
@@ -99,7 +106,9 @@ class LiveRunner:
         except Exception:
             logger.debug("policy server metadata unavailable", exc_info=True)
         try:
-            self._bridge.run_episode(task_prompt=cfg.get("task_prompt", ""))
+            if self._interactive:
+                self._sink.on_status("started", {"kind": "live", "interactive": True})
+            self._bridge.run_episode(task_prompt=self._task_prompt)
             # E-STOP requested during the run: run_episode has now fully exited
             # (is_running=False), so the control loop is no longer touching the
             # arm. Run the sleep ramp HERE, on the session thread — never on the
@@ -121,6 +130,16 @@ class LiveRunner:
         self._stopped = True
         if self._bridge is not None:
             self._bridge.is_running = False
+
+    def update_prompt(self, task_prompt: str) -> None:
+        if not self._interactive:
+            raise RuntimeError("Prompt updates require an Interactive episode")
+        with self._prompt_lock:
+            self._task_prompt = task_prompt
+            bridge = self._bridge
+            if bridge is not None:
+                bridge.update_prompt(task_prompt)
+        logger.info("Task instruction updated: %r", task_prompt)
 
     def estop(self) -> None:
         # Signal only; the sleep move + cleanup happen on the session thread in
@@ -201,7 +220,9 @@ class ReplayRunner:
         # arm under dense per-frame replay. Plain send_action (with the goal-time
         # multiplier above) is the smooth path for replay.
         self._controller = RobotController(
-            robot, control_frequency=control_freq, test_mode=mode,
+            robot,
+            control_frequency=control_freq,
+            test_mode=mode,
             smooth_streaming=False,
         )
         try:

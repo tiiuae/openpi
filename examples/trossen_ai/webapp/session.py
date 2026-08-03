@@ -4,6 +4,7 @@ The runner factory is injected so the hardware-bound runners (bridge / replay)
 can be swapped for fakes in tests. A Runner must expose run() (blocking),
 stop(), and estop().
 """
+
 from __future__ import annotations
 
 import logging
@@ -40,10 +41,23 @@ class SessionManager:
             self._stop_requested = False
             self._runner = None
             self._thread = threading.Thread(
-                target=self._run, args=(kind, config, sink),
-                daemon=True, name=f"session-{kind}",
+                target=self._run,
+                args=(kind, config, sink),
+                daemon=True,
+                name=f"session-{kind}",
             )
             self._thread.start()
+
+    def update_prompt(self, task_prompt: str) -> None:
+        """Update the active interactive runner without restarting its thread."""
+        with self._lock:
+            runner, thread = self._runner, self._thread
+            if thread is None or not thread.is_alive():
+                raise RuntimeError("No live episode is running")
+            update = getattr(runner, "update_prompt", None) if runner is not None else None
+        if update is None:
+            raise RuntimeError("The active session cannot accept prompt updates yet")
+        update(task_prompt)
 
     def _run(self, kind: str, config: dict, sink) -> None:
         # Forward all Python logging to the browser for the whole session so the
@@ -102,8 +116,7 @@ class SessionManager:
                 # makes start() raise "already running" until the orphan finishes
                 # its blocking call, runs cleanup, and releases the hardware.
                 logger.warning(
-                    "Session thread did not stop within %ss; still running, "
-                    "holding hardware until it exits",
+                    "Session thread did not stop within %ss; still running, holding hardware until it exits",
                     timeout,
                 )
                 return
@@ -122,8 +135,7 @@ class SessionManager:
                 # See stop(): keep refs so a still-running thread keeps the
                 # session marked busy until it releases the hardware.
                 logger.warning(
-                    "Session thread did not stop within %ss; still running, "
-                    "holding hardware until it exits",
+                    "Session thread did not stop within %ss; still running, holding hardware until it exits",
                     timeout,
                 )
                 return
