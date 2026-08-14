@@ -101,6 +101,11 @@ def _build_phrase_table() -> dict[str, Command]:
         "twist wrist right left",
     )
     add(Command("wave", ARMS), "wave", "wiggle", "shake")
+    # Freeze in place: takes the pause path (policy stopped, ensemble flushed)
+    # but performs no motion, so the arm keeps its current pose instead of
+    # driving home. "stop" belongs here so a spoken stop can never reach the
+    # policy as a task instruction.
+    add(Command("hold", ARMS), "hold", "hold on", "hang on", "freeze", "pause", "stop", "wait")
     add(Command("help", ()), "help", "?", "commands")
 
     for arm in ARMS:
@@ -135,6 +140,7 @@ HELP_ROWS = (
     ("twist | twist wrist", "rotate both wrists left and right"),
     ("twist left | twist right", "one wrist"),
     ("wave | wiggle right | shake left", "small 'I'm alive' base movement"),
+    ("hold | freeze | stop | wait", "pause the policy; the arm freezes in place"),
     ("quit | exit | disconnect", "park the arms, close the cameras and exit"),
     ("help | ?", "this list"),
 )
@@ -219,6 +225,10 @@ class ScriptedMotions:
             self.twist_wrist(arms)
         elif command.name == "wave":
             self.wave(arms)
+        elif command.name == "hold":
+            # No motion on purpose: the caller has already paused the policy and
+            # flushed the ensemble, and the arm holds its last commanded pose.
+            pass
         else:
             logger.error("Unknown scripted motion '%s'", command.name)
             return False
