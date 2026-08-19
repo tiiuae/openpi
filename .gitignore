@@ -188,3 +188,9 @@ FALCONVLA_CLEANUP_PLAN.md
 FALCONVLA_HANDOFF.md
 printer.py
 phase5_replay.py
+dataset/*
+
+# Trossen webapp local session data (feedback notes, presets, run recordings)
+examples/trossen_ai/webapp/feedback/
+examples/trossen_ai/webapp/presets/
+examples/trossen_ai/webapp/runs/
