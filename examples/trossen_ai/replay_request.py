@@ -12,6 +12,9 @@ Usage:
     # Override the prompt stored in the file:
     python replay_request.py --input captured_request.msgpack \
         --task_prompt "place the cup on the table"
+
+    # Or type the prompt interactively before sending:
+    python replay_request.py --input captured_request.msgpack --interactive
 """
 
 import argparse
@@ -22,9 +25,42 @@ from typing import Optional
 import numpy as np
 import websockets.sync.client
 
-from pprint import pprint
+try:
+    from openpi_client import msgpack_numpy
+except ImportError:
+    # Standalone fallback so this script can be shipped without the openpi_client
+    # package — only `msgpack`, `numpy`, and `websockets` are required.
+    import functools
 
-from openpi_client import msgpack_numpy
+    import msgpack
+
+    class msgpack_numpy:  # noqa: N801
+        @staticmethod
+        def _pack_array(obj):
+            if isinstance(obj, (np.ndarray, np.generic)) and obj.dtype.kind in ("V", "O", "c"):
+                raise ValueError(f"Unsupported dtype: {obj.dtype}")
+            if isinstance(obj, np.ndarray):
+                return {
+                    b"__ndarray__": True,
+                    b"data": obj.tobytes(),
+                    b"dtype": obj.dtype.str,
+                    b"shape": obj.shape,
+                }
+            if isinstance(obj, np.generic):
+                return {b"__npgeneric__": True, b"data": obj.item(), b"dtype": obj.dtype.str}
+            return obj
+
+        @staticmethod
+        def _unpack_array(obj):
+            if b"__ndarray__" in obj:
+                return np.ndarray(buffer=obj[b"data"], dtype=np.dtype(obj[b"dtype"]), shape=obj[b"shape"])
+            if b"__npgeneric__" in obj:
+                return np.dtype(obj[b"dtype"]).type(obj[b"data"])
+            return obj
+
+        Packer = functools.partial(msgpack.Packer, default=_pack_array.__func__)
+        packb = staticmethod(functools.partial(msgpack.packb, default=_pack_array.__func__))
+        unpackb = staticmethod(functools.partial(msgpack.unpackb, object_hook=_unpack_array.__func__))
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
@@ -45,19 +81,19 @@ def replay(
         observation["prompt"] = task_prompt
         logger.info(f"Overriding prompt to: {task_prompt!r}")
 
-    pprint(observation.keys)
     logger.info("Loaded observation:")
     logger.info(f"  state shape : {observation['state'].shape}")
     logger.info(f"  cameras     : {list(observation['images'].keys())}")
     logger.info(f"  prompt      : {observation['prompt']!r}")
 
-    # Build URI
+    # Build URI. A full ws:// or wss:// URI is used as-is unless a port is
+    # explicitly given; a bare hostname gets ws:// and a default port.
     if host.startswith("ws"):
         uri = host
+        if port is not None:
+            uri += f":{port}"
     else:
-        uri = f"ws://{host}"
-    if port is not None:
-        uri += f":{port}"
+        uri = f"ws://{host}:{port if port is not None else 8800}"
 
     logger.info(f"Connecting to policy server at {uri}...")
 
@@ -106,15 +142,35 @@ if __name__ == "__main__":
         default="192.168.50.174",
         help="Policy server host (ws:// or wss:// URI, or plain hostname)",
     )
-    parser.add_argument("--policy_port", type=int, default=8800, help="Policy server port (omit for default)")
-    parser.add_argument("--task_prompt", default="None", help="Override the prompt stored in the file")
+    parser.add_argument(
+        "--policy_port",
+        type=int,
+        default=None,
+        help="Policy server port (default: 8800 for bare hostnames, none for ws:// / wss:// URIs)",
+    )
+    parser.add_argument(
+        "--task_prompt",
+        default=None,
+        help="Override the prompt stored in the file (default: keep the stored prompt)",
+    )
+    parser.add_argument(
+        "--interactive",
+        action="store_true",
+        help="Ask for the task prompt on stdin before sending (overrides --task_prompt)",
+    )
     parser.add_argument("--api_key", default=None, help="API key for Authorization header")
     args = parser.parse_args()
+
+    task_prompt = args.task_prompt
+    if args.interactive:
+        entered = input("Task prompt (leave empty to keep the stored prompt): ").strip()
+        if entered:
+            task_prompt = entered
 
     replay(
         input_path=args.input,
         host=args.policy_host,
         port=args.policy_port,
-        task_prompt=args.task_prompt,
+        task_prompt=task_prompt,
         api_key=args.api_key,
     )

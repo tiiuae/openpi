@@ -8,7 +8,17 @@ policy server — openpi, FalconVLA, starVLA, or a new backend — can be made
 The client is the `openpi_client.websocket_client_policy.WebsocketClientPolicy`.
 Both directions are [msgpack](https://msgpack.org/) frames encoded with
 `msgpack_numpy` (numpy arrays are serialized natively). The server **must** use
-the matching `msgpack_numpy` (un)packer.
+the matching `msgpack_numpy` (un)packer (arrays travel as
+`{b"__ndarray__": True, b"data": <raw bytes>, b"dtype": "<u1"/"<f8"/..., b"shape": (...)}`
+maps — see §2.1).
+
+**Testing without a robot:** [`capture_request.py`](capture_request.py) records
+one real observation to a `.msgpack` file in exactly this wire format, and
+[`replay_request.py`](replay_request.py) sends it to any server and validates
+the response — see [REPLAY_USAGE.md](REPLAY_USAGE.md). A pre-captured
+`captured_request.msgpack` ships alongside these docs. The prompt inside a
+capture is just a string field; `replay_request.py --task_prompt "..."` (or
+`--interactive`) replaces it at send time without recapturing.
 
 ---
 
@@ -58,6 +68,28 @@ Key facts a server must honor:
 The client builds this in `TrossenOpenPIBridge._build_observation()`. It resizes
 to 224×224 (PIL with `--starvla`, else cv2 LANCZOS) — the wire layout is
 identical either way.
+
+### 2.1 How numpy arrays are encoded in msgpack
+
+There is no msgpack extension type in play — each ndarray is a plain msgpack
+**map** with byte-string keys:
+
+```python
+{
+    b"__ndarray__": True,
+    b"data":  <raw C-order array bytes>,   # msgpack bin
+    b"dtype": "<f8",                       # numpy dtype str, e.g. "<f8" (float64), "|u1" (uint8)
+    b"shape": [3, 224, 224],               # msgpack array of ints
+}
+```
+
+Scalars use `{b"__npgeneric__": True, b"data": ..., b"dtype": ...}`. Decode by
+installing an `object_hook` that rebuilds the array
+(`np.ndarray(buffer=data, dtype=np.dtype(dtype), shape=shape)`); in Python,
+just reuse `openpi_client.msgpack_numpy` or the ~30-line fallback codec inside
+`replay_request.py`. Note the keys are **bytes**, not strings — decode requests
+with `raw=True` semantics for map keys in mind if you are not using the
+reference codec.
 
 ### ⚠️ Color order: the client sends BGR, not RGB
 

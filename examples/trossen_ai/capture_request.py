@@ -31,12 +31,12 @@ def capture(task_prompt: str, output_path: str) -> None:
         id="bimanual_follower",
         left_arm_ip_address="192.168.1.5",
         right_arm_ip_address="192.168.1.4",
-        min_time_to_move_multiplier=4.0,
-        loop_rate=30,
+        min_time_to_move_multiplier=3.0,
+        loop_rate=25,
         cameras={
-            "cam_high": OpenCVCameraConfig(index_or_path=16, width=640, height=480, fps=30),
-            "cam_right_wrist": OpenCVCameraConfig(index_or_path=10, width=640, height=480, fps=30),
-            "cam_left_wrist": OpenCVCameraConfig(index_or_path=4, width=640, height=480, fps=30),
+            "cam_high": OpenCVCameraConfig(index_or_path=40, width=640, height=480, fps=30),
+            "cam_right_wrist": OpenCVCameraConfig(index_or_path=41, width=640, height=480, fps=30),
+            "cam_left_wrist": OpenCVCameraConfig(index_or_path=42, width=640, height=480, fps=30),
         },
     )
 
@@ -54,6 +54,7 @@ def capture(task_prompt: str, output_path: str) -> None:
 
         # Resize and convert camera images (BGR -> RGB, HWC -> CHW)
         import os
+
         debug_dir = "debug"
         os.makedirs(debug_dir, exist_ok=True)
 
@@ -70,7 +71,10 @@ def capture(task_prompt: str, output_path: str) -> None:
             cv2.imwrite(os.path.join(debug_dir, f"{cam}_03_resized_rgb.png"), image_resized)
 
             image_chw = np.transpose(image_rgb, (2, 0, 1))
-            cv2.imwrite(os.path.join(debug_dir, f"{cam}_04_final_chw_as_hwc.png"), np.transpose(image_chw, (1, 2, 0))[:, :, ::-1])
+            cv2.imwrite(
+                os.path.join(debug_dir, f"{cam}_04_final_chw_as_hwc.png"),
+                np.transpose(image_chw, (1, 2, 0))[:, :, ::-1],
+            )
 
             images[cam] = image_chw
 
