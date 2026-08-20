@@ -25,6 +25,7 @@ from action_ensemble import ActionLogger
 from action_ensemble import AsyncPolicyWorker
 from action_ensemble import make_ensemble
 import cv2
+from episode_recorder import EpisodeRecorder
 from lerobot.cameras.opencv.configuration_opencv import OpenCVCameraConfig
 from lerobot.robots import make_robot_from_config
 from lerobot_robot_trossen.config_bi_widowxai_follower import BiWidowXAIFollowerRobotConfig
@@ -72,6 +73,8 @@ class TrossenOpenPIBridge:
         starvla: bool = False,
         raw_gripper: bool = True,
         gripper_indices: list[int] | None = None,
+        record_dir: str | None = None,
+        record_repo_id: str = "local/trossen_eval",
     ):
         self.starvla = starvla
         self.control_frequency = control_frequency
@@ -133,6 +136,15 @@ class TrossenOpenPIBridge:
 
         self.action_logger = ActionLogger(log_dir) if log_dir else None
 
+        # Episode recording is driven by typed commands (record/hold/save/reject),
+        # which only the async prompt listener delivers.
+        self._current_task = ""
+        self._recorder = None
+        if record_dir is not None:
+            if not async_inference:
+                raise ValueError("--record_dir requires --async_inference (recording is controlled by typed commands)")
+            self._recorder = EpisodeRecorder(self.robot, fps=control_frequency, root=record_dir, repo_id=record_repo_id)
+
         self.use_left_arm_only = use_left_arm_only
         self.use_right_arm_only = use_right_arm_only
 
@@ -189,6 +201,8 @@ class TrossenOpenPIBridge:
             self._prompt_listener.set_rate(1 / mean_s)
         else:
             message = f"step {self.episode_step}: {mean_s * 1e3:.1f}ms/step ({1 / mean_s:.0f} Hz avg)"
+            if self._recorder is not None and self._recorder.is_recording:
+                message += f" | ● REC {self._recorder.steps} steps"
             if self.test_mode == "test" and self._last_action is not None:
                 action = np.array2string(self._last_action, precision=3, max_line_width=np.inf, suppress_small=True)
                 message += f" | TEST MODE, last action: {action}"
@@ -233,11 +247,19 @@ class TrossenOpenPIBridge:
         if self.test_mode == "test":
             logger.debug(f"TEST MODE: Would send scripted pose: {pose}")
             return
+        # Scripted motions are recorded like policy steps (labeled with the
+        # current task instruction) — a gripper fix mid-take must appear in the
+        # episode or the saved trajectory teleports.
+        recording = self._recorder is not None and self._recorder.is_recording
+        observation = self.robot.get_observation() if recording else None
         joint_features = list(self.robot._joint_ft.keys())
         self.robot.send_action({k: pose[i] for i, k in enumerate(joint_features)})
+        if recording:
+            self._recorder.add(observation, pose, self._current_task)
 
-    def execute_action(self, action: np.ndarray):
-        """Execute action on the arm."""
+    def execute_action(self, action: np.ndarray) -> np.ndarray:
+        """Execute action on the arm. Returns the action actually sent (after
+        arm freezing), which is what the episode recorder must store."""
         full_action = action.copy()
 
         if self.use_left_arm_only or self.use_right_arm_only:
@@ -253,7 +275,7 @@ class TrossenOpenPIBridge:
             # instruction you are typing). Run with --debug to see every action.
             logger.debug(f"TEST MODE: Would execute action: {full_action}")
             self._last_action = full_action
-            return
+            return full_action
         if self.test_mode == "autonomous":
             joint_features = list(self.robot._joint_ft.keys())
             action_dict = {k: full_action[i] for i, k in enumerate(joint_features)}
@@ -261,6 +283,7 @@ class TrossenOpenPIBridge:
             self.robot.send_action(action_dict)
         else:
             logger.error(f"Unknown mode: {self.test_mode}. No action executed.")
+        return full_action
 
     def _build_observation(self, observation_dict: dict, task_prompt: str) -> dict:
         joint_pos_keys = [k for k in observation_dict if k.endswith(".pos")]
@@ -302,16 +325,56 @@ class TrossenOpenPIBridge:
             loop_start_time = time.perf_counter()
             current_time = time.time() - start_time
             positions = interpolator_position(current_time)
-            self.execute_action(positions)
+            # A ramp can run mid-take (resuming the policy after a scripted
+            # motion) — record it like any other motion, or the episode jumps.
+            recording = self._recorder is not None and self._recorder.is_recording
+            raw_obs = self.robot.get_observation() if recording else None
+            executed = self.execute_action(positions)
+            if recording:
+                self._recorder.add(raw_obs, executed, self._current_task)
             # Rate-limit to the control frequency: without this the ramp hammers the
             # driver as fast as the loop spins, which now happens on every resume.
             remaining = self.dt - (time.perf_counter() - loop_start_time)
             if remaining > 0:
                 time.sleep(remaining)
 
+    def _handle_recording_command(self, name: str, *, paused: bool) -> bool:
+        """Handle a typed record/save/reject. Returns the loop's paused flag:
+        save/reject close the current take, so they pause the policy — the
+        operator is deciding about the take, not driving the arm. 'record'
+        starts a take without interrupting the running policy."""
+        recorder = self._recorder
+        if recorder is None:
+            logger.warning("Recording is disabled — relaunch with --record_dir to enable it")
+            return paused
+        if name == "record":
+            if recorder.is_pending:
+                logger.warning("A take is pending — 'save' or 'reject' it before recording again")
+            elif recorder.is_recording:
+                logger.info("Already recording (%d steps)", recorder.steps)
+            else:
+                recorder.start()
+            return paused
+        if not (recorder.is_recording or recorder.is_pending):
+            logger.warning("No recorded take to %s", name)
+            return paused
+        if not paused:
+            paused = True
+            self.ensemble.reset()
+            self._policy_worker.flush()
+            if self._prompt_listener is not None:
+                self._prompt_listener.set_paused(True)
+            logger.info("Policy paused — type an instruction (Enter alone = default) to resume")
+        if name == "save":
+            recorder.save()
+        else:
+            recorder.reject()
+        return paused
+
     def run_episode(self, task_prompt: str = "look down"):
         """Run a single episode of policy execution."""
         logger.info(f"Starting episode with prompt: '{task_prompt}'")
+        self._current_task = task_prompt
         self.episode_step = 0
         self.action_chunk_idx = 0
         self.current_action_chunk = None
@@ -336,6 +399,9 @@ class TrossenOpenPIBridge:
             prompt_listener = terminal_ui.make_prompt_listener(task_prompt)
             prompt_listener.start()
         self._prompt_listener = prompt_listener
+        if self._recorder is not None and prompt_listener is not None:
+            self._recorder.status_cb = prompt_listener.set_recording
+            self._recorder.save_cb = prompt_listener.set_saving
 
         try:
             while self.is_running and self.episode_step < self.max_steps:
@@ -357,6 +423,8 @@ class TrossenOpenPIBridge:
                             break
                         if command is not None and command.name == "help":
                             terminal_ui.print_help(HELP_ROWS)
+                        elif command is not None and command.name in ("record", "save", "reject"):
+                            paused = self._handle_recording_command(command.name, paused=paused)
                         elif command is not None:
                             if command.moves_arm:
                                 # Stop feeding policy actions before driving the arm
@@ -365,6 +433,11 @@ class TrossenOpenPIBridge:
                                 paused = True
                                 self.ensemble.reset()
                                 self._policy_worker.flush()
+                                if command.name == "hold" and self._recorder is not None:
+                                    # Pausing in place is the end of the take; other
+                                    # motions keep recording (their frames are captured
+                                    # in _send_scripted_pose).
+                                    self._recorder.end()
                             prompt_listener.set_paused(paused)
                             self.motions.run(command)
                             self._reset_rate_window()
@@ -372,6 +445,7 @@ class TrossenOpenPIBridge:
                                 logger.info("Policy paused — type an instruction (Enter alone = default) to resume")
                         else:
                             task_prompt = typed
+                            self._current_task = task_prompt
                             prompt_listener.set_task(task_prompt)
                             logger.info(f"Task instruction: '{task_prompt}'")
                             if paused:
@@ -392,7 +466,8 @@ class TrossenOpenPIBridge:
                         continue
 
                     # Submit fresh observation every step — non-blocking
-                    obs = self._build_observation(self.robot.get_observation(), task_prompt)
+                    raw_obs = self.robot.get_observation()
+                    obs = self._build_observation(raw_obs, task_prompt)
                     self._policy_worker.submit(obs, self.episode_step)
                     if is_first_step:
                         logger.info("Waiting for first inference result...")
@@ -443,7 +518,12 @@ class TrossenOpenPIBridge:
                     is_first_step = False
                     self._reset_rate_window()
                 else:
-                    self.execute_action(a_t)
+                    executed = self.execute_action(a_t)
+                    if self._recorder is not None and self.async_inference:
+                        # raw_obs is the observation this action was computed for
+                        # (fetched at the top of the async branch). No-op unless
+                        # a take is running.
+                        self._recorder.add(raw_obs, executed, task_prompt)
 
                 self.action_chunk_idx += 1
                 self.episode_step += 1
@@ -482,6 +562,13 @@ class TrossenOpenPIBridge:
         unable to grab them.
         """
         logger.info("Cleaning up...")
+        if self._recorder is not None:
+            # Before disconnecting: an unsaved take is discarded (with a warning)
+            # and the parquet writers closed, or the dataset cannot be reloaded.
+            try:
+                self._recorder.close()
+            except Exception:
+                logger.exception("Could not finalize the recording dataset")
         try:
             self.robot.disconnect()
         except Exception:
@@ -545,6 +632,17 @@ if __name__ == "__main__":
         "the latest raw prediction to avoid mushy/laggy open-close behaviour.",
     )
     parser.add_argument(
+        "--record_dir",
+        default=None,
+        help="Record evaluation episodes into a LeRobot dataset at this directory (appends if it exists). "
+        "Requires --async_inference. Type 'record' to start a take, 'hold'/'stop' to end it, then 'save' or 'reject'.",
+    )
+    parser.add_argument(
+        "--record_repo_id",
+        default="local/trossen_eval",
+        help="repo_id stored in the recorded dataset's metadata",
+    )
+    parser.add_argument(
         "--debug",
         action="store_true",
         help="Log every control step (per-step timing and, in test mode, every action). "
@@ -569,6 +667,8 @@ if __name__ == "__main__":
         use_right_arm_only=args.use_right_arm_only,
         starvla=args.starvla,
         raw_gripper=not args.ensemble_gripper,
+        record_dir=args.record_dir,
+        record_repo_id=args.record_repo_id,
     )
 
     try:
