@@ -209,6 +209,10 @@ open-loop motion, and then waits — the arm stays still until you type an instr
 | `twist`, `twist wrist`, `twist the wrist left and right` | rotate both wrists left and right |
 | `twist left`, `twist right wrist` | one wrist |
 | `wave`, `wave left`, `wiggle right`, `shake left arm` | small "I'm alive" base movement |
+| `hold`, `freeze`, `stop`, `wait` | pause the policy; the arm freezes in place (also ends a recording take) |
+| `record`, `start recording` | start recording an episode (needs `--record_dir`) |
+| `save`, `keep` | save the recorded take into the dataset |
+| `reject`, `discard` | throw the recorded take away |
 | `quit`, `exit`, `shut down`, `disconnect` | end the episode, park the arms, close the cameras and exit |
 | `help`, `?` | print this list |
 
@@ -240,6 +244,43 @@ control-rate summary every 5 s instead.
 Commands for an arm disabled by `--use_left_arm_only` / `--use_right_arm_only` are refused rather than
 re-targeted. Targets are clamped to the joint limits reported by the arm driver, and the motions are defined
 in `scripted_motions.py` if you want to change amplitudes or durations.
+
+### Recording evaluation episodes (`--record_dir`)
+
+```bash
+uv run main.py --mode autonomous --async_inference --record_dir ~/trossen_eval_data \
+    --task_prompt "Pick up the blue cup and place it in the orange basket"
+```
+
+Pass `--record_dir` (requires `--async_inference`) to record rollouts into a **LeRobot v3.0 dataset** at that
+directory — native-resolution RGB camera frames, the 14-dim joint state, and the action actually sent to the
+arm (after ensembling, the raw-gripper override, and arm freezing), at the control frequency. The lifecycle is
+driven from the same input line:
+
+- `record` → start a take. The status line shows `● REC n steps` while frames are buffered.
+- `hold` / `stop` → pause the policy **and end the take**; the status line switches to
+  `■ take pending (n steps): save / reject`.
+- `save` → append the take as an episode (typing `save` while still recording ends the take first, and pauses
+  the policy). The video encoding runs in a **background thread**, so `save` returns immediately and you can
+  resume the policy and `record` the next take right away — the status line shows the encoding progress
+  (`💾 saving ep 3: encoding cam_high (1/3) · +1 queued`) until it disappears when the save is done.
+  `reject` / `discard` → drop the take instead.
+
+Scripted motions triggered mid-take (a gripper `open`/`close`, but also `home` etc.) **are recorded** as part
+of the episode, labeled with the current task instruction — the command text itself never becomes a task.
+Changing the instruction mid-take is fine too: the task is stored per frame, so one episode can carry two
+instructions. Quitting (or Ctrl+C) with an unsaved take discards it with a warning; takes already `save`d are
+never lost — shutdown waits for any background saves still encoding.
+
+Videos are encoded with **NVENC (GPU, h264)** when the machine supports it — ~3× faster than the CPU default
+and it leaves the CPU free for the control loop — otherwise encoding falls back to CPU (lerobot's libsvtav1
+default). The choice is logged at startup (`Video encoding: GPU (h264_nvenc)`). Because episodes are
+concatenated into shared video files, a resumed dataset always keeps the codec it was started with.
+
+Successive takes append to the same dataset, across runs as well — restarting the client with the same
+`--record_dir` resumes at the next episode index (the control frequency must match the existing dataset).
+The dataset is written by this venv's lerobot 0.4.x, i.e. **v3.0 format**; the openpi training environment at
+the repo root reads v2.x, so convert before training on recordings.
 
 You can change the cameras and arm ip address in the script `examples/trossen_ai/main.py` by editing
 

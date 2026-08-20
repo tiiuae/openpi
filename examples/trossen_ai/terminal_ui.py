@@ -52,6 +52,13 @@ _CTRL_D = "\x04"
 _ESCAPE = "\x1b"
 _REFRESH_PER_SECOND = 8
 
+# Pinned above the status line so the keyword commands stay visible while the
+# log scrolls; "help" prints the full table with explanations.
+_COMMAND_HINT = Text(
+    "record · hold/stop = end take · save · reject · open/close · home · sleep · twist · wave · help · quit",
+    style="dim",
+)
+
 
 def setup_logging(*, debug: bool = False) -> None:
     """Route logging through rich, on the same console as the pinned input line.
@@ -107,6 +114,9 @@ class BasePromptListener(ABC):
         self._task = default_prompt
         self._paused = False
         self._rate_hz: float | None = None
+        self._rec_state: str | None = None  # None | "recording" | "pending"
+        self._rec_steps = 0
+        self._saving: str | None = None
 
     # -- control loop API --------------------------------------------------
 
@@ -128,6 +138,17 @@ class BasePromptListener(ABC):
     def set_rate(self, rate_hz: float) -> None:
         with self._lock:
             self._rate_hz = rate_hz
+
+    def set_recording(self, state: str | None, steps: int) -> None:
+        """Mirror the EpisodeRecorder state ("recording"/"pending"/idle) on the status line."""
+        with self._lock:
+            self._rec_state = None if state == "idle" else state
+            self._rec_steps = steps
+
+    def set_saving(self, text: str | None) -> None:
+        """Show background episode-save progress (called from the saver thread)."""
+        with self._lock:
+            self._saving = text
 
     @abstractmethod
     def start(self) -> None: ...
@@ -269,6 +290,7 @@ class PinnedPromptListener(BasePromptListener):
     def _render(self) -> Group:
         with self._lock:
             buffer, paused, task, rate_hz = self._buffer, self._paused, self._task, self._rate_hz
+            rec_state, rec_steps, saving = self._rec_state, self._rec_steps, self._saving
 
         if paused:
             status = Text.assemble(
@@ -283,9 +305,18 @@ class PinnedPromptListener(BasePromptListener):
                 (" · task: ", "dim"),
                 (f"{task!r}", "italic"),
             )
+        if rec_state == "recording":
+            status.append(" · ", style="dim")
+            status.append(f"● REC {rec_steps} steps", style="bold red")
+        elif rec_state == "pending":
+            status.append(" · ", style="dim")
+            status.append(f"■ take pending ({rec_steps} steps): save / reject", style="bold yellow")
+        if saving is not None:
+            status.append(" · ", style="dim")
+            status.append(f"💾 saving {saving}", style="bold magenta")
         # Trailing reversed space renders as a block cursor.
         entry = Text.assemble(("❯ ", "bold cyan"), (buffer, ""), (" ", "reverse"))  # noqa: RUF001 - prompt glyph
-        return Group(status, entry)
+        return Group(_COMMAND_HINT, status, entry)
 
 
 def make_prompt_listener(default_prompt: str) -> BasePromptListener:
