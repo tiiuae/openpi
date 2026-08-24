@@ -150,18 +150,16 @@ class TrossenOpenPIBridge:
 
         # Keyword-triggered canned motions (home / grippers / wrist twist / wave).
         # They assume the 14-dim bimanual layout, so they stay off for anything else.
+        # The arm-only flags gate the POLICY stream, not operator-commanded
+        # scripted motions: "sleep" and "home" must park BOTH arms whichever
+        # arm the policy is restricted to, so all arms stay enabled here.
         if self.action_dim == BIMANUAL_DIM:
-            enabled_arms = ARMS
-            if use_left_arm_only:
-                enabled_arms = ("left",)
-            elif use_right_arm_only:
-                enabled_arms = ("right",)
             self.motions = ScriptedMotions(
                 get_pose=self._read_joint_pose,
                 send_pose=self._send_scripted_pose,
                 control_frequency=control_frequency,
                 joint_limits=self._read_joint_limits(),
-                enabled_arms=enabled_arms,
+                enabled_arms=ARMS,
             )
         else:
             self.motions = None
