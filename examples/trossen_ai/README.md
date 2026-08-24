@@ -189,11 +189,13 @@ The client will connect to the policy server and perform the specified task usin
 ### Changing the instruction while the robot is running (`--async_inference`)
 
 With `--async_inference` the client also reads your keyboard while the episode runs, so you don't have to
-restart it to change the task. Type a line and press Enter:
+restart it to change the task. Type a line and press Enter. Without `--rtc`, instruction switching keeps the
+original behavior and blends predictions already buffered by the selected ensemble. With `--rtc`:
 
-- **any free text** → becomes the new task instruction sent to the policy. The ensemble still holds chunks
-  predicted for the previous instruction, so the change blends in over the next ~`action_chunk_size` steps.
-- **empty line (Enter alone)** → goes back to the `--task_prompt` the client was started with.
+- **any free text** → becomes a new policy epoch. The client immediately clears committed and in-flight
+  chunks from the previous instruction, then holds the measured pose until a fresh chunk for the new prompt arrives.
+- **empty line (Enter alone)** → goes back to the `--task_prompt` the client was started with, using the same
+  clear-and-wait behavior.
 
 A few phrases are intercepted as **keyword commands** instead. Each one pauses the policy, runs a canned
 open-loop motion, and then waits — the arm stays still until you type an instruction to hand control back:
@@ -219,6 +221,43 @@ disconnect the cameras are released anyway — otherwise the next run finds the 
 Matching is on the **whole line** (after dropping filler words like "the"/"to"/"arm"), never on substrings, so
 real instructions such as `close the drawer` or `move the arm to the left` still reach the policy. That is also
 why there is no `move left` command — it collides with the default prompt.
+
+### RTC v2 behavior
+
+RTC is explicit opt-in on both processes. Add `--rtc` to the robot client only for an RTC test, and start
+`deployment.model_server.server_policy` with `--rtc` as well. Without the client flag, the original worker,
+prompt switching, temporal ensemble, response handling, and fallback behavior remain unchanged for other
+checkpoints.
+
+With client `--rtc`, the server handshake must advertise `rtc_enabled: true`, `rtc_protocol_version: 2`, and a
+positive `action_horizon`. The client rejects a non-RTC or legacy RTC server before connecting the robot because
+that server cannot safely align chunks to the actions that actually executed.
+
+For the command in this deployment, add the flag on the client:
+
+```bash
+python main.py --mode autonomous --async_inference --ensemble_type cogact \
+  --control_freq 30 --use_right_arm_only --rtc \
+  --task_prompt "pick up the metal pot and place it in the basket" \
+  --policy_port 8800 --max_steps 1000000
+```
+
+With `--rtc`, RTC supplies temporal consistency itself, so the client replaces `--ensemble_type cogact` (or
+`exp`) with one atomic latest-chunk queue. Every RTC request carries the control-loop query step, a rolling
+request-latency estimate in control steps, and a reset flag when starting an episode or after a prompt/scripted
+motion. When the response arrives, the client selects row `current_step - query_step`; it never starts a delayed
+chunk again from row zero or blends it with older chunks. A fully stale chunk is discarded. If no valid action is
+available, the command is the robot's finite measured joint pose (hold), never an all-zero absolute target.
+
+Submitting a new task or arm-moving command invalidates committed and in-flight predictions immediately in the
+terminal input thread. Input lines are queued in order, so entering `home` and then a new task cannot overwrite
+`home`. A prompt also interrupts any old-policy start ramp, commands a measured-pose hold, resets the server on
+the next request, and waits for a fresh chunk before policy motion resumes.
+
+For synchronous inference, `rtc_inference_delay` is zero because the control loop is blocked while waiting, and
+`rate_of_inference` must be smaller than the server's action horizon. For `--async_inference`, the delay is
+`ceil((max(recent request RTT) + pending observation age) * control_freq)`, so the server protects the part of
+the old chunk expected to execute before the new response can arrive.
 
 The input line is **pinned to the bottom of the terminal** (rich `Live`), so log records scroll above it and a
 half-typed instruction is never scrolled away. It also shows what the policy is doing:
@@ -277,15 +316,16 @@ The **rate of inference** determines how often the policy is queried for new act
 - According to the Pi-0 paper, the control loop runs at **50 Hz**, with inference every **0.5 s** (after 25 actions).
 - In our case, the control loop runs at **30 Hz** to align with the camera frame rate.  
 
-Practical trade-offs:
+Practical trade-offs for non-RTC servers:
 
 - **Rate = 50** → smoother motion, less responsive to environment changes.  
 - **Rate = 25** → more responsive, but noticeably jerky motion.  
 
-Depending on your setup, you may need to adjust this parameter for optimal performance.
+With RTC and a 50-step chunk, the rate must be below 50 so consecutive chunks
+overlap; 20–25 is a reasonable starting point for synchronous inference.
 
 ```python
-self.rate_of_inference = 50  # Number of control steps per policy inference
+self.rate_of_inference = 25  # Number of control steps per policy inference
 ```
 
 

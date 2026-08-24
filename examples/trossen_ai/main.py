@@ -17,13 +17,20 @@ Usage:
 """
 
 import argparse
+from collections.abc import Callable
 import logging
 from pathlib import Path
 import time
 
 from action_ensemble import ActionLogger
 from action_ensemble import AsyncPolicyWorker
+from action_ensemble import LatestChunkEnsemble
+from action_ensemble import RTCAsyncPolicyWorker
 from action_ensemble import make_ensemble
+from action_ensemble import measured_pose_hold
+from action_ensemble import validated_action_chunk
+from action_ensemble import validate_rtc_response_query
+from action_ensemble import validate_rtc_server_metadata
 import cv2
 from lerobot.cameras.opencv.configuration_opencv import OpenCVCameraConfig
 from lerobot.robots import make_robot_from_config
@@ -50,6 +57,7 @@ DEFAULT_REALSENSE_SETTINGS = Path(__file__).parent / "realsense_settings.json"
 RATE_SUMMARY_PERIOD_S = 5.0
 # The pinned status line costs no log lines, so it can refresh briskly.
 RATE_STATUS_PERIOD_S = 1.0
+FIRST_INFERENCE_MAX_ATTEMPTS = 3
 
 
 class TrossenOpenPIBridge:
@@ -66,6 +74,7 @@ class TrossenOpenPIBridge:
         rate_of_inference: int = 10,
         ensemble_type: str = "exp",
         async_inference: bool = False,
+        rtc: bool = False,
         log_dir: str | None = None,
         use_left_arm_only: bool = False,
         use_right_arm_only: bool = False,
@@ -78,11 +87,30 @@ class TrossenOpenPIBridge:
         self.max_steps = max_steps
         self.dt = 1.0 / control_frequency
         self.test_mode = test_mode
+        self.rtc_enabled = bool(rtc)
 
         logger.info(f"Connecting to policy server at {policy_server_host}:{policy_server_port}")
         self.policy_client = websocket_client_policy.WebsocketClientPolicy(
             host=policy_server_host, port=policy_server_port
         )
+        if self.rtc_enabled:
+            server_metadata = self.policy_client.get_server_metadata() or {}
+            # --rtc is explicit opt-in. Validate before constructing or
+            # connecting the robot; without --rtc no checkpoint behavior or
+            # metadata handling changes.
+            if not validate_rtc_server_metadata(
+                server_metadata,
+                rate_of_inference=rate_of_inference,
+                async_inference=async_inference,
+            ):
+                raise RuntimeError(
+                    "--rtc was requested, but the policy server did not advertise RTC. "
+                    "Start deployment.model_server.server_policy with --rtc."
+                )
+            logger.info(
+                "RTC protocol v2 enabled (server action horizon: %s)",
+                server_metadata.get("action_horizon", "unknown"),
+            )
 
         robot_config = BiWidowXAIFollowerRobotConfig(
             id="bimanual_follower",
@@ -122,14 +150,37 @@ class TrossenOpenPIBridge:
 
         self.rate_of_inference = rate_of_inference  # Number of control steps per policy inference
         self.action_dim = len(self.robot._joint_ft)  # 7 joints per arm * 2 arms
-        self.ensemble = make_ensemble(ensemble_type)
+        if self.rtc_enabled:
+            if ensemble_type != "none":
+                logger.info(
+                    "RTC controls temporal consistency; replacing --ensemble_type %s "
+                    "with an atomic latest-chunk queue",
+                    ensemble_type,
+                )
+            self.ensemble = LatestChunkEnsemble()
+        else:
+            self.ensemble = make_ensemble(ensemble_type)
 
         if async_inference and self.ensemble is None:
             raise ValueError("--async_inference requires an ensemble (ensemble_type cannot be 'none')")
         self.async_inference = async_inference
-        self._policy_worker = (
-            AsyncPolicyWorker(self.policy_client, self.ensemble, self.action_dim) if async_inference else None
-        )
+        if async_inference and self.rtc_enabled:
+            self._policy_worker = RTCAsyncPolicyWorker(
+                self.policy_client,
+                self.ensemble,
+                self.action_dim,
+                control_frequency=self.control_frequency,
+            )
+        elif async_inference:
+            # Preserve the original worker for every non-RTC checkpoint.
+            self._policy_worker = AsyncPolicyWorker(
+                self.policy_client,
+                self.ensemble,
+                self.action_dim,
+            )
+        else:
+            self._policy_worker = None
+        self._rtc_sync_reset_pending = self.rtc_enabled
 
         self.action_logger = ActionLogger(log_dir) if log_dir else None
 
@@ -277,12 +328,33 @@ class TrossenOpenPIBridge:
             images[cam] = np.transpose(image_rgb, (2, 0, 1))
         return {"state": joint_positions, "images": images, "prompt": task_prompt}
 
-    def move_to_start_position(self, goal_position: np.ndarray, duration: float = 5.0):
+    def _dispatch_rtc_action(
+        self,
+        action: np.ndarray,
+        prompt_listener: terminal_ui.BasePromptListener | None,
+    ) -> bool:
+        """Dispatch one RTC action atomically with respect to prompt arrival."""
+        if prompt_listener is None:
+            self.execute_action(action)
+            return True
+        return prompt_listener.dispatch_if_current(lambda: self.execute_action(action))
+
+    def move_to_start_position(
+        self,
+        goal_position: np.ndarray,
+        duration: float = 5.0,
+        should_stop: Callable[[], bool] | None = None,
+        dispatch_action: Callable[[np.ndarray], bool] | None = None,
+    ) -> bool:
         """The first position queried from the policy depends on the training data.
         Assuming the first position is a "stage" position will result in a large jump if the arm is not already there.
         To avoid this, we smoothly move the arm to a first action/position before sending the rest of the actions.
         We use PCHIP interpolation for smooth trajectory generation and give it enough time to reach the position to prevent
-        jumps and triggering safety stops (velocity limits)."""
+        jumps and triggering safety stops (velocity limits).
+
+        Returns ``False`` when newly submitted operator input invalidates the
+        target and interrupts the ramp.
+        """
 
         self._frozen_arm_pose = self._read_joint_pose()
         # Example stage_pose for bimanual WidowX arms.
@@ -299,15 +371,23 @@ class TrossenOpenPIBridge:
         end_time = start_time + timepoints[-1]
 
         while time.time() < end_time:
+            if should_stop is not None and should_stop():
+                return False
             loop_start_time = time.perf_counter()
             current_time = time.time() - start_time
             positions = interpolator_position(current_time)
-            self.execute_action(positions)
+            if dispatch_action is None:
+                self.execute_action(positions)
+            elif not dispatch_action(positions):
+                return False
             # Rate-limit to the control frequency: without this the ramp hammers the
             # driver as fast as the loop spins, which now happens on every resume.
             remaining = self.dt - (time.perf_counter() - loop_start_time)
             if remaining > 0:
                 time.sleep(remaining)
+        if should_stop is not None and should_stop():
+            return False
+        return True
 
     def run_episode(self, task_prompt: str = "look down"):
         """Run a single episode of policy execution."""
@@ -316,6 +396,7 @@ class TrossenOpenPIBridge:
         self.action_chunk_idx = 0
         self.current_action_chunk = None
         self.is_running = True
+        self._rtc_sync_reset_pending = self.rtc_enabled
         if self.ensemble is not None:
             self.ensemble.reset()
         if self.action_logger is not None:
@@ -333,7 +414,27 @@ class TrossenOpenPIBridge:
             self._policy_worker.start()
             if self.motions is not None:
                 terminal_ui.print_help(HELP_ROWS)
-            prompt_listener = terminal_ui.make_prompt_listener(task_prompt)
+
+            if self.rtc_enabled:
+                def invalidate_rtc_on_submit(typed: str) -> bool:
+                    """Invalidate RTC predictions in the input thread, before poll()."""
+                    command = parse_command(typed) if self.motions is not None else None
+                    interrupts_policy = (
+                        command is None
+                        or command.moves_arm
+                        or command.name == "quit"
+                    )
+                    if interrupts_policy:
+                        self._policy_worker.flush()
+                    return interrupts_policy
+
+                prompt_listener = terminal_ui.make_prompt_listener(
+                    task_prompt,
+                    on_submit=invalidate_rtc_on_submit,
+                )
+            else:
+                # Original listener semantics for every other checkpoint.
+                prompt_listener = terminal_ui.make_prompt_listener(task_prompt)
             prompt_listener.start()
         self._prompt_listener = prompt_listener
 
@@ -363,7 +464,8 @@ class TrossenOpenPIBridge:
                                 # ourselves, and throw away predictions made for the
                                 # pose/instruction the motion is about to invalidate.
                                 paused = True
-                                self.ensemble.reset()
+                                if not self.rtc_enabled:
+                                    self.ensemble.reset()
                                 self._policy_worker.flush()
                             prompt_listener.set_paused(paused)
                             self.motions.run(command)
@@ -374,42 +476,146 @@ class TrossenOpenPIBridge:
                             task_prompt = typed
                             prompt_listener.set_task(task_prompt)
                             logger.info(f"Task instruction: '{task_prompt}'")
-                            if paused:
-                                # Ensemble was cleared on pause, so treat this like a
-                                # fresh episode: block for a new chunk, then ramp to it
-                                # from wherever the scripted motion left the arm.
-                                logger.info("Resuming policy")
-                                paused = False
+                            if self.rtc_enabled:
+                                # Explicit RTC mode makes every prompt a new
+                                # epoch. Clear committed/in-flight chunks now,
+                                # hold measured pose, and reset the server on
+                                # the next request.
+                                self._policy_worker.flush()
+                                self._dispatch_rtc_action(
+                                    self._read_joint_pose(), prompt_listener
+                                )
                                 is_first_step = True
-                                prompt_listener.set_paused(paused)
-                            # Not paused: the ensemble still holds chunks for the old
-                            # instruction, so the switch blends in over the next
-                            # ~action_chunk_size steps instead of resetting (a reset
-                            # would leave get_action() empty and drive the arm to zeros).
+                                if paused:
+                                    logger.info("Resuming policy")
+                                    paused = False
+                                    prompt_listener.set_paused(paused)
+                                else:
+                                    logger.info(
+                                        "Cleared RTC prompt cache; waiting for a fresh chunk"
+                                    )
+                            else:
+                                # Preserve the original non-RTC behavior: only
+                                # a scripted-motion pause starts a fresh epoch;
+                                # a live prompt switch keeps temporal blending.
+                                if paused:
+                                    logger.info("Resuming policy")
+                                    paused = False
+                                    is_first_step = True
+                                    prompt_listener.set_paused(paused)
+
+                        # Preserve and process every queued line in order. This
+                        # is what makes rapid `home` then `<new task>` reliable.
+                        if self.rtc_enabled and prompt_listener.has_pending():
+                            continue
 
                     if paused:
                         time.sleep(0.05)
                         continue
+
+                    # The input thread invalidates the worker as soon as an
+                    # instruction is submitted. Do not issue another action
+                    # while the control loop is waiting to poll that line.
+                    if self.rtc_enabled and prompt_listener.has_interrupting_input():
+                        continue
+
+                    if self.rtc_enabled and self._policy_worker.consume_restart_required():
+                        # A failed/malformed inference invalidates both client
+                        # and server RTC epochs. Wait for a reset response and
+                        # ramp to it instead of switching to it mid-stream.
+                        logger.warning("Policy inference failed; waiting for a fresh reset chunk")
+                        self._policy_worker.flush()
+                        is_first_step = True
 
                     # Submit fresh observation every step — non-blocking
                     obs = self._build_observation(self.robot.get_observation(), task_prompt)
                     self._policy_worker.submit(obs, self.episode_step)
                     if is_first_step:
                         logger.info("Waiting for first inference result...")
-                        if not self._policy_worker.wait_for_first(timeout=30.0):
-                            logger.error("Timed out waiting for first inference — aborting")
-                            break
+                        if not self.rtc_enabled:
+                            if not self._policy_worker.wait_for_first(timeout=30.0):
+                                logger.error("Timed out waiting for first inference — aborting")
+                                break
+                        else:
+                            fresh_chunk_ready = False
+                            interrupted_by_input = False
+                            for attempt in range(1, FIRST_INFERENCE_MAX_ATTEMPTS + 1):
+                                deadline = time.monotonic() + 30.0
+                                first_result_arrived = False
+                                while time.monotonic() < deadline:
+                                    if prompt_listener.has_interrupting_input():
+                                        interrupted_by_input = True
+                                        break
+                                    remaining = deadline - time.monotonic()
+                                    if self._policy_worker.wait_for_first(
+                                        timeout=min(0.05, max(remaining, 0.0))
+                                    ):
+                                        if prompt_listener.has_interrupting_input():
+                                            interrupted_by_input = True
+                                        else:
+                                            first_result_arrived = True
+                                        break
+
+                                if interrupted_by_input:
+                                    logger.info("Operator input interrupted the pending RTC start")
+                                    break
+                                if not first_result_arrived:
+                                    logger.error("Timed out waiting for first RTC inference")
+                                    break
+                                if not self._policy_worker.consume_restart_required():
+                                    fresh_chunk_ready = True
+                                    break
+
+                                self._policy_worker.flush()
+                                if attempt == FIRST_INFERENCE_MAX_ATTEMPTS:
+                                    logger.error("First RTC inference failed %d times", attempt)
+                                    break
+                                logger.warning(
+                                    "Retrying first RTC inference with a server reset (%d/%d)",
+                                    attempt + 1,
+                                    FIRST_INFERENCE_MAX_ATTEMPTS,
+                                )
+                                obs = self._build_observation(
+                                    self.robot.get_observation(), task_prompt
+                                )
+                                self._policy_worker.submit(obs, self.episode_step)
+
+                            if interrupted_by_input:
+                                continue
+                            if not fresh_chunk_ready:
+                                logger.error("Could not obtain a fresh RTC chunk — aborting")
+                                break
+                    if self.rtc_enabled and prompt_listener.has_interrupting_input():
+                        continue
                     a_t = self.ensemble.get_action(self.episode_step)
                     if a_t is None:
-                        a_t = np.zeros(self.action_dim)
+                        if self.rtc_enabled:
+                            # Absolute zero is a motion command, not a neutral
+                            # RTC fallback. Hold the measured request pose.
+                            a_t = measured_pose_hold(obs, self.action_dim)
+                        else:
+                            a_t = np.zeros(self.action_dim)
 
                 else:
                     # Synchronous: request new chunk every rate_of_inference steps
                     if self.current_action_chunk is None or self.action_chunk_idx >= self.rate_of_inference:
                         observation = self._build_observation(self.robot.get_observation(), task_prompt)
+                        if self.rtc_enabled:
+                            # Synchronous inference blocks the control loop, so
+                            # zero action steps execute between request and reply.
+                            observation["rtc_query_step"] = self.episode_step
+                            observation["rtc_inference_delay"] = 0
+                            observation["rtc_reset"] = self._rtc_sync_reset_pending
                         logger.info(f"Step {self.episode_step}: Requesting new action chunk")
                         response = self.policy_client.infer(observation)
-                        self.current_action_chunk = response["actions"][:, : self.action_dim]
+                        if self.rtc_enabled:
+                            validate_rtc_response_query(response, self.episode_step)
+                            self._rtc_sync_reset_pending = False
+                            self.current_action_chunk = validated_action_chunk(
+                                response["actions"], self.action_dim
+                            )
+                        else:
+                            self.current_action_chunk = response["actions"][:, : self.action_dim]
                         if self.ensemble is not None:
                             self.ensemble.add_chunk(self.episode_step, self.current_action_chunk)
                         self.action_chunk_idx = 0
@@ -418,7 +624,12 @@ class TrossenOpenPIBridge:
                     if self.ensemble is not None:
                         a_t = self.ensemble.get_action(self.episode_step)
                         if a_t is None:
-                            a_t = np.zeros(self.action_dim)
+                            if self.rtc_enabled:
+                                a_t = measured_pose_hold(
+                                    {"state": self._read_joint_pose()}, self.action_dim
+                                )
+                            else:
+                                a_t = np.zeros(self.action_dim)
                     else:
                         a_t = self.current_action_chunk[self.action_chunk_idx]
 
@@ -430,7 +641,12 @@ class TrossenOpenPIBridge:
 
                 # Use the latest raw prediction for the gripper channels to avoid the
                 # ensemble averaging/lag that leaves the gripper half-open.
-                if self.raw_gripper and self.ensemble is not None and self.gripper_indices:
+                if (
+                    self.raw_gripper
+                    and not self.rtc_enabled
+                    and self.ensemble is not None
+                    and self.gripper_indices
+                ):
                     raw = self.ensemble.get_latest_raw(self.episode_step)
                     if raw is not None:
                         for gi in self.gripper_indices:
@@ -439,11 +655,35 @@ class TrossenOpenPIBridge:
 
                 if is_first_step:
                     logger.info("Moving to start position to avoid large jumps...")
-                    self.move_to_start_position(a_t, duration=5.0)
+                    if self.rtc_enabled:
+                        completed = self.move_to_start_position(
+                            a_t,
+                            duration=5.0,
+                            should_stop=(
+                                prompt_listener.has_interrupting_input
+                                if prompt_listener is not None
+                                else None
+                            ),
+                            dispatch_action=lambda positions: self._dispatch_rtc_action(
+                                positions, prompt_listener
+                            ),
+                        )
+                        if not completed or (
+                            prompt_listener is not None
+                            and prompt_listener.has_interrupting_input()
+                        ):
+                            logger.info("Operator input interrupted the RTC start ramp")
+                            continue
+                    else:
+                        self.move_to_start_position(a_t, duration=5.0)
                     is_first_step = False
                     self._reset_rate_window()
                 else:
-                    self.execute_action(a_t)
+                    if self.rtc_enabled:
+                        if not self._dispatch_rtc_action(a_t, prompt_listener):
+                            continue
+                    else:
+                        self.execute_action(a_t)
 
                 self.action_chunk_idx += 1
                 self.episode_step += 1
@@ -527,7 +767,15 @@ if __name__ == "__main__":
         "--async_inference",
         action="store_true",
         help="Run inference in a background thread — control loop never blocks. "
-        "Requires an ensemble (not 'none'). Recommended with --ensemble_type cogact.",
+        "Without --rtc this requires an ensemble (not 'none'); CogACT is recommended.",
+    )
+    parser.add_argument(
+        "--rtc",
+        action="store_true",
+        help=(
+            "Opt in to RTC v2 timing, cache reset, and atomic chunk execution. "
+            "The policy server must also be started with --rtc."
+        ),
     )
     parser.add_argument(
         "--starvla", action="store_true", help="Use StarVLA image resizing (224x224 via PIL) instead of default"
@@ -564,6 +812,7 @@ if __name__ == "__main__":
         rate_of_inference=args.rate_of_inference,
         ensemble_type=args.ensemble_type,
         async_inference=args.async_inference,
+        rtc=args.rtc,
         log_dir=args.log_dir,
         use_left_arm_only=args.use_left_arm_only,
         use_right_arm_only=args.use_right_arm_only,

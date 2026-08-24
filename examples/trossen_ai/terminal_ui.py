@@ -21,7 +21,10 @@ from __future__ import annotations
 from abc import ABC
 from abc import abstractmethod
 import atexit
+from collections import deque
+from collections.abc import Callable
 from collections.abc import Iterable
+from dataclasses import dataclass
 import logging
 import os
 import select
@@ -51,6 +54,15 @@ _BACKSPACE = ("\x7f", "\b")
 _CTRL_D = "\x04"
 _ESCAPE = "\x1b"
 _REFRESH_PER_SECOND = 8
+
+
+@dataclass
+class _PendingLine:
+    text: str
+    # New input is conservatively interrupting and not pollable until its
+    # callback has finished invalidating policy state and classifying it.
+    interrupts_policy: bool = True
+    ready: bool = False
 
 
 def setup_logging(*, debug: bool = False) -> None:
@@ -98,10 +110,19 @@ class BasePromptListener(ABC):
 
     pinned = False
 
-    def __init__(self, default_prompt: str) -> None:
+    def __init__(
+        self,
+        default_prompt: str,
+        on_submit: Callable[[str], bool] | None = None,
+    ) -> None:
         self._default_prompt = default_prompt
-        self._pending: str | None = None
+        # Preserve operator intent in arrival order. A single-slot value can
+        # lose `home` when a task instruction is entered before a blocking
+        # motion or inference wait returns to poll().
+        self._pending: deque[_PendingLine] = deque()
+        self._on_submit = on_submit
         self._lock = threading.Lock()
+        self._dispatch_lock = threading.Lock()
         self._running = False
         self._thread: threading.Thread | None = None
         self._task = default_prompt
@@ -111,11 +132,35 @@ class BasePromptListener(ABC):
     # -- control loop API --------------------------------------------------
 
     def poll(self) -> str | None:
-        """Return a line typed since the last call, or None."""
+        """Return the oldest unhandled line, or ``None``."""
         with self._lock:
-            pending = self._pending
-            self._pending = None
-        return pending
+            if not self._pending or not self._pending[0].ready:
+                return None
+            return self._pending.popleft().text
+
+    def has_pending(self) -> bool:
+        """Return whether an operator line is waiting to be handled."""
+        with self._lock:
+            return bool(self._pending)
+
+    def has_interrupting_input(self) -> bool:
+        """Return whether queued input requested immediate policy invalidation."""
+        with self._lock:
+            return any(pending.interrupts_policy for pending in self._pending)
+
+    def dispatch_if_current(self, dispatch: Callable[[], None]) -> bool:
+        """Run one RTC action only if no invalidating input has arrived.
+
+        Submission and this check share the same lock. Therefore an action is
+        either dispatched before a line is published, or the published line
+        prevents it; there is no check-then-send gap for a stale policy action.
+        """
+        with self._dispatch_lock:
+            with self._lock:
+                if any(pending.interrupts_policy for pending in self._pending):
+                    return False
+            dispatch()
+        return True
 
     def set_task(self, task: str) -> None:
         with self._lock:
@@ -138,8 +183,41 @@ class BasePromptListener(ABC):
     # -- internals ---------------------------------------------------------
 
     def _submit(self, line: str) -> None:
-        with self._lock:
-            self._pending = line or self._default_prompt
+        line = line or self._default_prompt
+        if self._on_submit is None:
+            # Exact legacy behavior for non-RTC clients: only the newest line
+            # is retained until the control loop polls it.
+            with self._lock:
+                self._pending.clear()
+                self._pending.append(
+                    _PendingLine(text=line, interrupts_policy=False, ready=True)
+                )
+            return
+
+        with self._dispatch_lock:
+            pending = _PendingLine(
+                text=line,
+                interrupts_policy=True,
+            )
+            # Publish the interrupt before the callback can block in
+            # worker.flush(). poll() waits for ready=True, preventing the
+            # control loop from handling this line and submitting fresh work
+            # while invalidation is incomplete.
+            with self._lock:
+                self._pending.append(pending)
+
+            interrupts_policy = False
+            try:
+                # The RTC callback may invalidate policy state immediately
+                # from the input thread. It returns whether blocking policy
+                # motion should stop so the control loop can process this line.
+                interrupts_policy = bool(self._on_submit(line))
+            except Exception:
+                logger.exception("PromptListener: submit callback failed")
+                interrupts_policy = True
+            with self._lock:
+                pending.interrupts_policy = interrupts_policy
+                pending.ready = True
 
 
 class PlainPromptListener(BasePromptListener):
@@ -180,8 +258,12 @@ class PinnedPromptListener(BasePromptListener):
 
     pinned = True
 
-    def __init__(self, default_prompt: str) -> None:
-        super().__init__(default_prompt)
+    def __init__(
+        self,
+        default_prompt: str,
+        on_submit: Callable[[str], bool] | None = None,
+    ) -> None:
+        super().__init__(default_prompt, on_submit=on_submit)
         self._buffer = ""
         self._live: Live | None = None
         self._fd = sys.stdin.fileno()
@@ -288,8 +370,11 @@ class PinnedPromptListener(BasePromptListener):
         return Group(status, entry)
 
 
-def make_prompt_listener(default_prompt: str) -> BasePromptListener:
+def make_prompt_listener(
+    default_prompt: str,
+    on_submit: Callable[[str], bool] | None = None,
+) -> BasePromptListener:
     """Return the pinned listener when the terminal supports it, else the plain one."""
     if not (sys.stdin and sys.stdin.isatty() and console.is_terminal and termios is not None):
-        return PlainPromptListener(default_prompt)
-    return PinnedPromptListener(default_prompt)
+        return PlainPromptListener(default_prompt, on_submit=on_submit)
+    return PinnedPromptListener(default_prompt, on_submit=on_submit)

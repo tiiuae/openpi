@@ -19,12 +19,18 @@ the matching `msgpack_numpy` (un)packer.
 2. **The server must send exactly one message immediately on connect**: a
    msgpack-packed metadata dict (may be empty `{}`). The client reads this once
    and stores it as `get_server_metadata()`. If the server never sends it, the
-   client blocks on connect.
+   client blocks on connect. An RTC server must advertise
+   `{"rtc_enabled": true, "rtc_protocol_version": 2, "action_horizon": 50}`.
+   The horizon must be a positive integer. When the robot client is explicitly
+   started with `--rtc`, it rejects a non-RTC, v1/missing-version, or malformed
+   server before connecting any hardware. Without `--rtc`, it retains the
+   original client behavior for other checkpoints.
 3. After the handshake, the client sends one request per inference and expects
    one response per request, in order.
 
-The client's `reset()` is a **no-op** — it sends nothing on the wire. Servers
-must not depend on receiving a reset/episode-boundary message from this client.
+The generic websocket client's `reset()` method remains a **no-op**; it does not
+send a separate routing message. RTC v2 instead serializes reset epochs safely
+with inference: the next flat observation carries `"rtc_reset": true`.
 
 ---
 
@@ -42,6 +48,11 @@ Every inference call sends a **single flat dict** (there is *no* `type`,
         "cam_left_wrist":  np.ndarray,  # shape (3, H, W), uint8, RGB
     },
     "prompt": str,          # natural-language task instruction
+
+    # RTC v2 only (present when the robot client is started with --rtc):
+    "rtc_query_step": int,       # control step when this observation was captured
+    "rtc_inference_delay": int,  # forecast actions executed before the reply arrives
+    "rtc_reset": bool,           # clear server RTC/policy state before this inference
 }
 ```
 
@@ -54,10 +65,18 @@ Key facts a server must honor:
 | image array | `np.ndarray` `(3, H, W)` uint8 | **Channel-first (CHW)**, **BGR** channel order (see note), already resized (224×224 by default; `H=W=224`). |
 | camera order | dict insertion order | `cam_high`, `cam_right_wrist`, `cam_left_wrist`. msgpack preserves insertion order — **treat it as significant** and keep it aligned with training. |
 | `prompt` | `str` | The client key is `prompt` (**not** `lang`, **not** `instruction`). |
+| `rtc_query_step` | `int` | RTC v2 only. Monotonic within a reset epoch; a reset may restart the counter. |
+| `rtc_inference_delay` | `int >= 0` | RTC v2 only. Async uses `ceil((max(recent RTT) + pending age) * control_freq)`; synchronous uses `0`. |
+| `rtc_reset` | `bool` | RTC v2 only. True on the first request and after a new episode, prompt, or scripted motion. |
 
 The client builds this in `TrossenOpenPIBridge._build_observation()`. It resizes
 to 224×224 (PIL with `--starvla`, else cv2 LANCZOS) — the wire layout is
 identical either way.
+
+The async worker adds the RTC fields to a shallow copy immediately before
+serialization. Servers must consume these as control metadata rather than model
+features. On `rtc_reset=true`, clear the previous chunk/query step before
+processing this observation.
 
 ### ⚠️ Color order: the client sends BGR, not RGB
 
@@ -83,7 +102,8 @@ The server must reply with a **single flat dict** whose `actions` key is a
 ```python
 {
     "actions": np.ndarray,   # shape (horizon, action_dim), float
-    # ... any other keys are ignored by the client ...
+    "rtc_query_step": int,   # required RTC v2 echo; must match the request
+    # optional RTC diagnostic keys may follow
 }
 ```
 
@@ -98,9 +118,40 @@ Requirements:
   under `data`, `result`, etc.).
 - Actions must be **already un-normalized** (env / joint space). The client
   executes them directly; it does no un-normalization.
+- With RTC enabled, `rtc_query_step` is required and must exactly echo the
+  request. A missing/mismatched value rejects the response instead of attaching
+  its actions to the wrong point in time.
+- In explicit RTC mode, action arrays must contain finite, real numeric values.
+  NaN, infinity, complex, string, empty, and undersized chunks are rejected
+  before execution. The non-RTC response path remains unchanged.
 - If the server sends a **string** frame instead of bytes, the client treats it
   as an error and raises `RuntimeError`. Encode errors as a normal msgpack dict
   or let the connection close.
+
+### RTC v2 execution semantics
+
+These semantics apply only with the client `--rtc` flag. RTC responses are not temporally ensembled on the client. The latest returned
+chunk atomically replaces the old chunk and is committed at its request's
+`rtc_query_step`. At control step `now`, the executed row is
+`actions[now - rtc_query_step]`; rows that became stale during inference are
+skipped. A fully expired chunk is discarded, and the client commands its
+measured joint pose until a valid row is available.
+
+This means server alignment must also use query-step deltas between consecutive
+requests. `rtc_inference_delay` is a separate forecast of how many actions will
+execute while the *current* inference is running; it is not the shift applied to
+the previous chunk.
+
+The v2 handshake must include a positive integer `action_horizon`. In
+synchronous mode, the client rejects `rate_of_inference >= action_horizon`,
+which would otherwise exhaust the chunk and destroy RTC overlap before the next
+request.
+
+Operator task lines are queued in arrival order. Submitting a new task or an
+arm-moving command immediately invalidates committed/in-flight client chunks;
+the next inference carries `rtc_reset=true`. This invalidation can interrupt a
+pending first-response wait or old-policy start ramp, so rapid `home` then
+`<new task>` input cannot replay the old target or drop the home command.
 
 ---
 
@@ -138,9 +189,13 @@ native multi-example clients.
 ## 5. Quick compatibility checklist for a new server
 
 - [ ] Send a metadata dict (even `{}`) **once, immediately on connect**.
+- [ ] If RTC is enabled, advertise `rtc_protocol_version: 2` and accept all
+      three RTC request fields.
 - [ ] Decode requests with `msgpack_numpy`; accept a **flat** dict (no `examples` wrapper).
 - [ ] Read `prompt` (string), `state` `(D,)`, `images` = **dict** of **CHW BGR** uint8 arrays.
 - [ ] Preserve camera order from the `images` dict.
 - [ ] Flip **BGR→RGB** if your model expects RGB (it almost certainly does).
 - [ ] Return `{"actions": ndarray}` with `actions` **2-D `(horizon, action_dim)`**, un-normalized, at top level.
+- [ ] For RTC v2, echo the exact request `rtc_query_step` in the response and
+      clear cached state before inference when `rtc_reset` is true.
 - [ ] Never send a bare string frame for a successful inference.
