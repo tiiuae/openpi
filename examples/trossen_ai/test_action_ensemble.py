@@ -194,19 +194,19 @@ def test_latest_chunk_replaces_atomically_and_uses_query_offset() -> None:
     assert queue.get_overlap_count(17) == 0
 
 
-def test_round_trip_delay_estimator_uses_rolling_maximum() -> None:
+def test_round_trip_delay_estimator_uses_rolling_mean() -> None:
     estimator = _RoundTripDelayEstimator(control_frequency=30, window_size=2)
     assert estimator.steps() == 0
 
     estimator.observe(0.10)
-    assert estimator.steps() == 3
+    assert estimator.steps() == 3  # mean(0.10) * 30 = 3.0 -> ceil 3
     estimator.observe(0.49)
-    assert estimator.steps() == 15
-    assert estimator.steps(pending_age_s=0.02) == 16
+    assert estimator.steps() == 9  # mean(0.10, 0.49) * 30 = 8.85 -> ceil 9
+    assert estimator.steps(pending_age_s=0.02) == 10  # (0.295 + 0.02) * 30 = 9.45 -> ceil 10
     estimator.observe(0.20)
-    assert estimator.steps() == 15
+    assert estimator.steps() == 11  # window drops 0.10: mean(0.49, 0.20) * 30 = 10.35 -> ceil 11
     estimator.observe(0.15)
-    assert estimator.steps() == 6
+    assert estimator.steps() == 6  # window drops 0.49: mean(0.20, 0.15) * 30 = 5.25 -> ceil 6
 
 
 def test_rtc_worker_sends_timing_and_reset_epochs() -> None:
@@ -226,8 +226,12 @@ def test_rtc_worker_sends_timing_and_reset_epochs() -> None:
         assert first_request["rtc_reset"] is True
         assert "rtc_query_step" not in original
 
-        # Inject a deterministic 490 ms observation: at 30 Hz the next
-        # conservative delay forecast is ceil(14.7) == 15 steps.
+        # Inject a deterministic 490 ms observation as the only sample in the
+        # window (clearing whatever the first request's real, timing-variable
+        # round trip recorded) so the mean-based forecast is exactly
+        # ceil(0.49 * 30) == 15 steps regardless of how fast that first
+        # request actually ran.
+        worker._delay_estimator._samples.clear()  # noqa: SLF001
         worker._delay_estimator.observe(0.49)  # noqa: SLF001
         worker.submit({"state": np.array([3.0, 4.0]), "prompt": "first"}, query_step=20)
         assert policy.wait_for_requests(2)

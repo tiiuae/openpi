@@ -486,14 +486,19 @@ class TrossenOpenPIBridge:
                                     self._read_joint_pose(), prompt_listener
                                 )
                                 is_first_step = True
+                                # Log this on every path, including resuming from a
+                                # scripted motion (e.g. "home" then a new prompt) —
+                                # that is exactly the sequence where confirming the
+                                # server-side RTC cache was actually cleared matters
+                                # most, since the arm's pose just changed underneath
+                                # whatever chunk was previously in flight.
+                                logger.info(
+                                    "Cleared RTC prompt cache; waiting for a fresh chunk"
+                                )
                                 if paused:
                                     logger.info("Resuming policy")
                                     paused = False
                                     prompt_listener.set_paused(paused)
-                                else:
-                                    logger.info(
-                                        "Cleared RTC prompt cache; waiting for a fresh chunk"
-                                    )
                             else:
                                 # Preserve the original non-RTC behavior: only
                                 # a scripted-motion pause starts a fresh epoch;

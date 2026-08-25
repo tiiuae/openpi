@@ -564,11 +564,17 @@ class _RoundTripDelayEstimator:
             raise ValueError("pending_age_s must be finite and non-negative")
         if not self._samples:
             return 0
-        # The maximum of a short rolling window intentionally errs on the side
-        # of protecting actions likely to execute before this response arrives.
-        # Include time the captured observation waited behind the preceding
-        # request; its query-step clock starts before websocket infer() does.
-        return int(np.ceil((max(self._samples) + pending_age_s) * self._control_frequency))
+        # The window mean tracks the typical round trip. Using max() instead
+        # pins the forecast to the single slowest recent sample for the whole
+        # window: when latency is bimodal (e.g. alternating fast/slow
+        # inference cycles), that keeps the estimate near the slow mode even
+        # on fast calls, which needlessly exhausts the RTC overlap horizon
+        # and disables guidance (rtc_skip_reason=inference_delay_exhausts_
+        # overlap) on every fast call. Include time the captured observation
+        # waited behind the preceding request; its query-step clock starts
+        # before websocket infer() does.
+        mean_round_trip_s = sum(self._samples) / len(self._samples)
+        return int(np.ceil((mean_round_trip_s + pending_age_s) * self._control_frequency))
 
 
 class RTCAsyncPolicyWorker:
