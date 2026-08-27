@@ -55,7 +55,7 @@ _REFRESH_PER_SECOND = 8
 # Pinned above the status line so the keyword commands stay visible while the
 # log scrolls; "help" prints the full table with explanations.
 _COMMAND_HINT = Text(
-    "record · hold/stop = end take · save · reject · open/close · home · sleep · twist · wave · help · quit",
+    "record · hold/stop = end take · pass · fail · reject · open/close · home · sleep · twist · wave · help · quit",
     style="dim",
 )
 
@@ -310,7 +310,7 @@ class PinnedPromptListener(BasePromptListener):
             status.append(f"● REC {rec_steps} steps", style="bold red")
         elif rec_state == "pending":
             status.append(" · ", style="dim")
-            status.append(f"■ take pending ({rec_steps} steps): save / reject", style="bold yellow")
+            status.append(f"■ take pending ({rec_steps} steps): pass / fail / reject", style="bold yellow")
         if saving is not None:
             status.append(" · ", style="dim")
             status.append(f"💾 saving {saving}", style="bold magenta")

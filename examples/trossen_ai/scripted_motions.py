@@ -75,7 +75,7 @@ class Command:
     @property
     def moves_arm(self) -> bool:
         """False for commands the control loop handles itself rather than the arm."""
-        return self.name not in ("help", "quit", "record", "save", "reject")
+        return self.name not in ("help", "quit", "record", "pass", "fail", "reject")
 
 
 def _build_phrase_table() -> dict[str, Command]:
@@ -109,7 +109,8 @@ def _build_phrase_table() -> dict[str, Command]:
     # Episode recording (episode_recorder.py): control-loop commands like
     # help/quit — the loop handles them, the arm never moves.
     add(Command("record", ()), "record", "start record", "start recording", "record episode")
-    add(Command("save", ()), "save", "save episode", "keep", "keep episode")
+    add(Command("pass", ()), "pass", "pass episode", "keep", "keep episode", "success")
+    add(Command("fail", ()), "fail", "fail episode", "failed", "failure")
     add(Command("reject", ()), "reject", "reject episode", "discard", "discard episode", "drop episode")
     add(Command("help", ()), "help", "?", "commands")
 
@@ -147,7 +148,8 @@ HELP_ROWS = (
     ("wave | wiggle right | shake left", "small 'I'm alive' base movement"),
     ("hold | freeze | stop | wait", "pause the policy; the arm freezes in place (ends a recording take)"),
     ("record", "start recording an episode (needs --record_dir)"),
-    ("save | keep", "save the recorded take into the dataset"),
+    ("pass | keep | success", "save the recorded take into the 'pass' dataset"),
+    ("fail | failed | failure", "save the recorded take into the 'fail' dataset"),
     ("reject | discard", "throw the recorded take away"),
     ("quit | exit | disconnect", "park the arms, close the cameras and exit"),
     ("help | ?", "this list"),

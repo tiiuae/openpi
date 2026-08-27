@@ -136,7 +136,7 @@ class TrossenOpenPIBridge:
 
         self.action_logger = ActionLogger(log_dir) if log_dir else None
 
-        # Episode recording is driven by typed commands (record/hold/save/reject),
+        # Episode recording is driven by typed commands (record/hold/pass/fail/reject),
         # which only the async prompt listener delivers.
         self._current_task = ""
         self._recorder = None
@@ -337,17 +337,17 @@ class TrossenOpenPIBridge:
                 time.sleep(remaining)
 
     def _handle_recording_command(self, name: str, *, paused: bool) -> bool:
-        """Handle a typed record/save/reject. Returns the loop's paused flag:
-        save/reject close the current take, so they pause the policy — the
-        operator is deciding about the take, not driving the arm. 'record'
-        starts a take without interrupting the running policy."""
+        """Handle a typed record/pass/fail/reject. Returns the loop's paused
+        flag: pass/fail/reject close the current take, so they pause the
+        policy — the operator is deciding about the take, not driving the
+        arm. 'record' starts a take without interrupting the running policy."""
         recorder = self._recorder
         if recorder is None:
             logger.warning("Recording is disabled — relaunch with --record_dir to enable it")
             return paused
         if name == "record":
             if recorder.is_pending:
-                logger.warning("A take is pending — 'save' or 'reject' it before recording again")
+                logger.warning("A take is pending — 'pass', 'fail', or 'reject' it before recording again")
             elif recorder.is_recording:
                 logger.info("Already recording (%d steps)", recorder.steps)
             else:
@@ -363,8 +363,8 @@ class TrossenOpenPIBridge:
             if self._prompt_listener is not None:
                 self._prompt_listener.set_paused(True)
             logger.info("Policy paused — type an instruction (Enter alone = default) to resume")
-        if name == "save":
-            recorder.save()
+        if name in ("pass", "fail"):
+            recorder.commit(name)
         else:
             recorder.reject()
         return paused
@@ -421,7 +421,7 @@ class TrossenOpenPIBridge:
                             break
                         if command is not None and command.name == "help":
                             terminal_ui.print_help(HELP_ROWS)
-                        elif command is not None and command.name in ("record", "save", "reject"):
+                        elif command is not None and command.name in ("record", "pass", "fail", "reject"):
                             paused = self._handle_recording_command(command.name, paused=paused)
                         elif command is not None:
                             if command.moves_arm:
@@ -481,7 +481,9 @@ class TrossenOpenPIBridge:
                     if self.current_action_chunk is None or self.action_chunk_idx >= self.rate_of_inference:
                         observation = self._build_observation(self.robot.get_observation(), task_prompt)
                         logger.info(f"Step {self.episode_step}: Requesting new action chunk")
+                        _infer_start = time.perf_counter()
                         response = self.policy_client.infer(observation)
+                        logger.info(f"Inference latency: {(time.perf_counter() - _infer_start) * 1e3:.1f} ms")
                         self.current_action_chunk = response["actions"][:, : self.action_dim]
                         if self.ensemble is not None:
                             self.ensemble.add_chunk(self.episode_step, self.current_action_chunk)
@@ -632,13 +634,14 @@ if __name__ == "__main__":
     parser.add_argument(
         "--record_dir",
         default=None,
-        help="Record evaluation episodes into a LeRobot dataset at this directory (appends if it exists). "
-        "Requires --async_inference. Type 'record' to start a take, 'hold'/'stop' to end it, then 'save' or 'reject'.",
+        help="Record evaluation episodes into 'pass' and 'fail' LeRobot datasets under this directory "
+        "(<record_dir>/pass, <record_dir>/fail — each appended to if it already exists). Requires "
+        "--async_inference. Type 'record' to start a take, 'hold'/'stop' to end it, then 'pass', 'fail', or 'reject'.",
     )
     parser.add_argument(
         "--record_repo_id",
         default="local/trossen_eval",
-        help="repo_id stored in the recorded dataset's metadata",
+        help="repo_id prefix stored in the recorded datasets' metadata (suffixed with _pass / _fail)",
     )
     parser.add_argument(
         "--debug",
