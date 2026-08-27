@@ -165,6 +165,10 @@ class TrossenOpenPIBridge:
             self.motions = None
             logger.warning("action_dim is %d, not %d — keyword motions disabled", self.action_dim, BIMANUAL_DIM)
 
+        # Per-joint max velocity, used by _limit_velocity() to soft-cap an over-fast
+        # policy step instead of letting the firmware hard-fault on it.
+        self.joint_velocity_limits = self._read_joint_velocity_limits()
+
         # Gripper channels are near-binary, so temporal averaging makes them mushy and
         # laggy. When an ensemble is active we bypass it for the gripper dims and use the
         # latest raw prediction instead (joints stay smoothed). For a 14-dim bimanual
@@ -235,6 +239,55 @@ class TrossenOpenPIBridge:
             return None
         return array
 
+    def _read_joint_velocity_limits(self) -> np.ndarray | None:
+        """Per-joint max velocity (rad/s; m/s for the gripper), straight from the driver."""
+        try:
+            limits = [
+                joint.velocity_max
+                for arm in (self.robot.left_arm, self.robot.right_arm)
+                for joint in arm.driver.get_joint_limits()
+            ]
+            array = np.array(limits, dtype=float)
+            if array.shape != (self.action_dim,):
+                raise ValueError(f"expected ({self.action_dim},) limits, got {array.shape}")
+        except Exception:
+            logger.warning(
+                "Could not read joint velocity limits from the driver — velocity clamp disabled", exc_info=True
+            )
+            return None
+        return array
+
+    def _limit_velocity(self, target: np.ndarray) -> np.ndarray:
+        """Scale down any joint whose implied velocity — (target - last commanded pose) /
+        dt — exceeds the driver's velocity_max, instead of sending it as-is and letting
+        the firmware hard-fault on the jump. Logs a warning when it kicks in.
+
+        Scaling to the exact limit (rather than a flat fudge factor) means a small
+        overshoot is barely slowed while a huge one is capped hard, in both cases
+        landing right at the fastest safe speed instead of over- or under-correcting.
+        """
+        if self.joint_velocity_limits is None or self._last_action is None:
+            return target
+
+        delta = target - self._last_action
+        velocity = delta / self.dt
+        abs_velocity = np.abs(velocity)
+        limit = self.joint_velocity_limits
+
+        over = abs_velocity > limit
+        if not np.any(over):
+            return target
+
+        scale = np.ones_like(target)
+        scale[over] = limit[over] / abs_velocity[over]
+        logger.warning(
+            "Policy step exceeds joint velocity limit on joints %s (%s rad/s, limit %s rad/s) — scaling motion down",
+            np.where(over)[0].tolist(),
+            np.array2string(abs_velocity[over], precision=3),
+            np.array2string(limit[over], precision=3),
+        )
+        return self._last_action + delta * scale
+
     def _send_scripted_pose(self, pose: np.ndarray):
         """Send one pose from a scripted motion.
 
@@ -252,12 +305,13 @@ class TrossenOpenPIBridge:
         observation = self.robot.get_observation() if recording else None
         joint_features = list(self.robot._joint_ft.keys())
         self.robot.send_action({k: pose[i] for i, k in enumerate(joint_features)})
+        self._last_action = pose
         if recording:
             self._recorder.add(observation, pose, self._current_task)
 
     def execute_action(self, action: np.ndarray) -> np.ndarray:
         """Execute action on the arm. Returns the action actually sent (after
-        arm freezing), which is what the episode recorder must store."""
+        arm freezing and velocity limiting), which is what the episode recorder must store."""
         full_action = action.copy()
 
         if self.use_left_arm_only or self.use_right_arm_only:
@@ -267,6 +321,8 @@ class TrossenOpenPIBridge:
             elif self.use_left_arm_only:
                 # Freeze right arm (indices 7:14) at current pose; only left arm (0:7) moves
                 full_action[7:] = self._frozen_arm_pose[7:]
+
+        full_action = self._limit_velocity(full_action)
 
         if self.test_mode == "test":
             # Per-step, so it stays at DEBUG — at 25 Hz it buries the log (and any
@@ -279,6 +335,7 @@ class TrossenOpenPIBridge:
             action_dict = {k: full_action[i] for i, k in enumerate(joint_features)}
 
             self.robot.send_action(action_dict)
+            self._last_action = full_action
         else:
             logger.error(f"Unknown mode: {self.test_mode}. No action executed.")
         return full_action
@@ -306,6 +363,9 @@ class TrossenOpenPIBridge:
         jumps and triggering safety stops (velocity limits)."""
 
         self._frozen_arm_pose = self._read_joint_pose()
+        # Anchor the velocity-limit reference to the arm's real current pose, so the
+        # very first ramp sample (and thus the whole ramp) is velocity-checked too.
+        self._last_action = self._frozen_arm_pose
         # Example stage_pose for bimanual WidowX arms.
         # Each value corresponds to a joint position (in radians) for the 14 joints:
         # [left_joint_0, left_joint_1, left_joint_2, left_joint_3, left_joint_4, left_joint_5, left_left_carriage_joint,
