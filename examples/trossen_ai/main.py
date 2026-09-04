@@ -148,6 +148,11 @@ class TrossenOpenPIBridge:
         self.use_left_arm_only = use_left_arm_only
         self.use_right_arm_only = use_right_arm_only
 
+        # Per-joint [min, max] position, straight from the driver. Shared by
+        # ScriptedMotions (clamps scripted poses) and execute_action() below
+        # (clamps policy actions before they reach the driver).
+        self.joint_limits = self._read_joint_limits()
+
         # Keyword-triggered canned motions (home / grippers / wrist twist / wave).
         # They assume the 14-dim bimanual layout, so they stay off for anything else.
         # The arm-only flags gate the POLICY stream, not operator-commanded
@@ -158,7 +163,7 @@ class TrossenOpenPIBridge:
                 get_pose=self._read_joint_pose,
                 send_pose=self._send_scripted_pose,
                 control_frequency=control_frequency,
-                joint_limits=self._read_joint_limits(),
+                joint_limits=self.joint_limits,
                 enabled_arms=ARMS,
             )
         else:
@@ -311,7 +316,7 @@ class TrossenOpenPIBridge:
 
     def execute_action(self, action: np.ndarray) -> np.ndarray:
         """Execute action on the arm. Returns the action actually sent (after
-        arm freezing and velocity limiting), which is what the episode recorder must store."""
+        arm freezing, velocity limiting, and position clamping), which is what the episode recorder must store."""
         full_action = action.copy()
 
         if self.use_left_arm_only or self.use_right_arm_only:
@@ -323,6 +328,16 @@ class TrossenOpenPIBridge:
                 full_action[7:] = self._frozen_arm_pose[7:]
 
         full_action = self._limit_velocity(full_action)
+
+        if self.joint_limits is not None:
+            clamped = np.clip(full_action, self.joint_limits[:, 0], self.joint_limits[:, 1])
+            out_of_range = np.where(clamped != full_action)[0]
+            if out_of_range.size:
+                logger.warning(
+                    "Policy step exceeds joint position limits on joints %s — clamping to range",
+                    out_of_range.tolist(),
+                )
+            full_action = clamped
 
         if self.test_mode == "test":
             # Per-step, so it stays at DEBUG — at 25 Hz it buries the log (and any
