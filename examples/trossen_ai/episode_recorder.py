@@ -178,6 +178,25 @@ class _DatasetSink:
             )
             logger.info("'%s' recording to new dataset %s at %s", label, repo_id, root)
 
+        # By default lerobot batches many episodes into one shared parquet/video
+        # file (100MB/500MB thresholds) and only writes that file's footer when
+        # the writer is closed — which normally only happens at process exit or
+        # once the threshold is hit. If the process is killed before that (e.g.
+        # the arm driver faults and the operator has to force-kill a hung
+        # process), every episode still sitting in that open file is left
+        # without a footer — not just the one being recorded when it died. Worse,
+        # video episodes sharing a file are merged in by rewriting the *entire*
+        # shared file each time (see _save_episode_video's concatenate_video_files
+        # call), so a kill mid-rewrite can damage already-saved episodes too.
+        # Forcing near-zero thresholds makes (almost) every episode round-trip
+        # through its own file via a plain move/close instead of an in-place
+        # rewrite, so a crash can only ever cost the one episode being written
+        # at that instant — never episodes already on disk. Paired with the
+        # per-episode dataset.finalize() call in EpisodeRecorder._save_worker,
+        # which closes that one episode's files immediately instead of leaving
+        # them open until the next episode (or process exit) closes them.
+        self.dataset.meta.update_chunk_settings(data_files_size_in_mb=0.001, video_files_size_in_mb=1)
+
         # GPU (NVENC) video encoding when possible. lerobot only exposes its
         # CPU codecs, so encode_video_frames is swapped out module-wide by
         # EpisodeRecorder (shared by both sinks — see _dispatching_encode).
@@ -458,6 +477,12 @@ class EpisodeRecorder:
                 buffer = sink.dataset.episode_buffer
                 self._set_save_status(f"{label} ep {episode_index}: writing data ({steps} steps)")
                 sink.dataset.save_episode(episode_data=buffer)
+                # Close this episode's parquet writers the moment it's saved,
+                # instead of leaving them open until the next episode rolls
+                # over (or process exit) closes them — see the matching
+                # update_chunk_settings() call in _DatasetSink.__init__ for why
+                # this only ever costs the in-flight episode on a hard kill.
+                sink.dataset.finalize()
                 logger.info("Saved '%s' episode %d (%d steps)", label, episode_index, steps)
             except Exception:
                 # Episode indices are consecutive, so a failed save also breaks

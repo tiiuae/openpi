@@ -383,7 +383,9 @@ class AsyncPolicyWorker:
                 continue
             obs, query_step = item
             try:
+                _infer_start = time.perf_counter()
                 response = self._client.infer(obs)
+                logger.info(f"Inference latency: {(time.perf_counter() - _infer_start) * 1e3:.1f} ms")
                 chunk = np.asarray(response["actions"])[:, : self._action_dim]
                 with self._lock:
                     if generation != self._generation:
