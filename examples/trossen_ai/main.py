@@ -51,6 +51,12 @@ DEFAULT_REALSENSE_SETTINGS = Path(__file__).parent / "realsense_settings.json"
 RATE_SUMMARY_PERIOD_S = 5.0
 # The pinned status line costs no log lines, so it can refresh briskly.
 RATE_STATUS_PERIOD_S = 1.0
+# Below this, a joint-limit overshoot is floating-point/calibration noise, not
+# a meaningful commanded position — e.g. the pi05 checkpoint's quantile-normalized
+# gripper output landing ~1e-4 past the physical limit, or a held pose echoing the
+# arm's own measured position at ~1e-6 past it. Clamping still applies at full
+# precision regardless; this only gates whether we log about it.
+CLAMP_WARNING_TOLERANCE = 1e-3
 
 
 class TrossenOpenPIBridge:
@@ -152,6 +158,20 @@ class TrossenOpenPIBridge:
         # ScriptedMotions (clamps scripted poses) and execute_action() below
         # (clamps policy actions before they reach the driver).
         self.joint_limits = self._read_joint_limits()
+        if self.joint_limits is not None:
+            for gi in (6, 13):
+                if gi < len(self.joint_limits):
+                    lo, hi = self.joint_limits[gi]
+                    logger.info("Driver-reported joint %d limits: [%.6g, %.6g]", gi, lo, hi)
+                    if lo > hi:
+                        logger.warning(
+                            "Joint %d has position_min (%.6g) > position_max (%.6g) — "
+                            "np.clip will pin every action on this joint to %.6g regardless of input",
+                            gi,
+                            lo,
+                            hi,
+                            hi,
+                        )
 
         # Keyword-triggered canned motions (home / grippers / wrist twist / wave).
         # They assume the 14-dim bimanual layout, so they stay off for anything else.
@@ -331,11 +351,13 @@ class TrossenOpenPIBridge:
 
         if self.joint_limits is not None:
             clamped = np.clip(full_action, self.joint_limits[:, 0], self.joint_limits[:, 1])
-            out_of_range = np.where(clamped != full_action)[0]
+            deviation = np.abs(full_action - clamped)
+            out_of_range = np.where(deviation > CLAMP_WARNING_TOLERANCE)[0]
             if out_of_range.size:
                 logger.warning(
-                    "Policy step exceeds joint position limits on joints %s — clamping to range",
+                    "Policy step exceeds joint position limits on joints %s (by up to %.4g) — clamping to range",
                     out_of_range.tolist(),
+                    deviation[out_of_range].max(),
                 )
             full_action = clamped
 
@@ -370,7 +392,7 @@ class TrossenOpenPIBridge:
             images[cam] = np.transpose(image_rgb, (2, 0, 1))
         return {"state": joint_positions, "images": images, "prompt": task_prompt}
 
-    def move_to_start_position(self, goal_position: np.ndarray, duration: float = 5.0):
+    def move_to_start_position(self, goal_position: np.ndarray, duration: float = 8.0):
         """The first position queried from the policy depends on the training data.
         Assuming the first position is a "stage" position will result in a large jump if the arm is not already there.
         To avoid this, we smoothly move the arm to a first action/position before sending the rest of the actions.
@@ -589,7 +611,7 @@ class TrossenOpenPIBridge:
 
                 if is_first_step:
                     logger.info("Moving to start position to avoid large jumps...")
-                    self.move_to_start_position(a_t, duration=5.0)
+                    self.move_to_start_position(a_t, duration=8.0)
                     is_first_step = False
                     self._reset_rate_window()
                 else:
