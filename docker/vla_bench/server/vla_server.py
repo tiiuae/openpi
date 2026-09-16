@@ -215,7 +215,13 @@ def main():
     srv = Server(adapter, a.model, a.checkpoint, not a.no_flip_bgr, a.action_dim, a.pad_to or None)
 
     if a.probe:
-        obs = {"primary": np.zeros((480, 640, 3), np.uint8), "wrist": np.zeros((480, 640, 3), np.uint8),
+        # NOT a black frame. GigaBrain-0.7 builds camera pad masks and discards an all-zero image as
+        # padding ("no valid current RGB image after applying camera pad masks"), and an all-zero
+        # input is a weak test for anything else either. This is a fixed, deterministic gradient, so
+        # two probes of the same checkpoint still return the same numbers.
+        yy, xx = np.mgrid[0:480, 0:640]
+        frame = np.stack([(xx % 256), (yy % 256), ((xx + yy) % 256)], -1).astype(np.uint8)
+        obs = {"primary": frame, "wrist": frame[:, ::-1].copy(),
                "state": np.zeros(a.action_dim, np.float32), "task": a.probe_task}
         t1 = time.time()
         act = np.asarray(adapter.predict(obs))
