@@ -192,6 +192,10 @@ def main():
     ap.add_argument("--no-flip-bgr", action="store_true",
                     help="client already sends RGB. The Trossen robot client does NOT; leave this off.")
     ap.add_argument("--probe", action="store_true", help="load the checkpoint, report, exit")
+    ap.add_argument("--probe-task", default=os.environ.get("VLA_BENCH_PROBE_TASK", "probe"),
+                    help="instruction --probe sends. FastWAM is built with load_text_encoder=false and "
+                         "looks its prompt up in a T5 embedding cache by hash, so it needs a real trained "
+                         "instruction here; its image sets VLA_BENCH_PROBE_TASK accordingly.")
     a = ap.parse_args()
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 
@@ -212,10 +216,10 @@ def main():
 
     if a.probe:
         obs = {"primary": np.zeros((480, 640, 3), np.uint8), "wrist": np.zeros((480, 640, 3), np.uint8),
-               "state": np.zeros(a.action_dim, np.float32), "task": "probe"}
+               "state": np.zeros(a.action_dim, np.float32), "task": a.probe_task}
         t1 = time.time()
         act = np.asarray(adapter.predict(obs))
-        print(json.dumps({"probe": "ok", "model": a.model, "checkpoint": a.checkpoint,
+        print(json.dumps({"probe": "ok", "model": a.model, "checkpoint": a.checkpoint, "task": a.probe_task,
                           "load_seconds": round(load_s, 1), "first_infer_ms": round((time.time() - t1) * 1000, 1),
                           "action_shape": list(act.shape), "metadata": srv.metadata()}, indent=1))
         return
