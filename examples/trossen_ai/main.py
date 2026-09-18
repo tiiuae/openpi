@@ -29,10 +29,8 @@ from episode_recorder import EpisodeRecorder
 from lerobot.cameras.opencv.configuration_opencv import OpenCVCameraConfig
 from lerobot.robots import make_robot_from_config
 from latency import LatencyTracker
-from latency import server_timing
 from lerobot_robot_trossen.config_bi_widowxai_follower import BiWidowXAIFollowerRobotConfig
 import numpy as np
-from openpi_client import websocket_client_policy
 from PIL import Image
 from realsense_settings import apply_realsense_settings
 from scipy.interpolate import PchipInterpolator
@@ -42,6 +40,7 @@ from scripted_motions import HELP_ROWS
 from scripted_motions import ScriptedMotions
 from scripted_motions import parse_command
 import terminal_ui
+from timed_policy_client import TimedWebsocketClientPolicy
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
@@ -84,9 +83,13 @@ class TrossenOpenPIBridge:
         self.dt = 1.0 / control_frequency
         self.test_mode = test_mode
 
+        # The client itself times each phase of a call (pack / wire / unpack) and
+        # files the split here, so no caller has to wrap infer() in a timer.
+        self.latency = LatencyTracker()
+
         logger.info(f"Connecting to policy server at {policy_server_host}:{policy_server_port}")
-        self.policy_client = websocket_client_policy.WebsocketClientPolicy(
-            host=policy_server_host, port=policy_server_port
+        self.policy_client = TimedWebsocketClientPolicy(
+            host=policy_server_host, port=policy_server_port, latency=self.latency
         )
 
         robot_config = BiWidowXAIFollowerRobotConfig(
@@ -132,13 +135,8 @@ class TrossenOpenPIBridge:
         if async_inference and self.ensemble is None:
             raise ValueError("--async_inference requires an ensemble (ensemble_type cannot be 'none')")
         self.async_inference = async_inference
-        # One tracker for both paths, so the status line reports the same numbers
-        # whichever way inference is being driven.
-        self.latency = LatencyTracker()
         self._policy_worker = (
-            AsyncPolicyWorker(self.policy_client, self.ensemble, self.action_dim, latency=self.latency)
-            if async_inference
-            else None
+            AsyncPolicyWorker(self.policy_client, self.ensemble, self.action_dim) if async_inference else None
         )
 
         self.action_logger = ActionLogger(log_dir) if log_dir else None
@@ -401,6 +399,9 @@ class TrossenOpenPIBridge:
 
         prompt_listener = None
         paused = False
+        # Measures how late a background thread wakes, which is what separates
+        # "the server is slow" from "this process is starved".
+        self.latency.lag.start()
         if self.async_inference:
             self._policy_worker.start()
             if self.motions is not None:
@@ -492,9 +493,7 @@ class TrossenOpenPIBridge:
                     if self.current_action_chunk is None or self.action_chunk_idx >= self.rate_of_inference:
                         observation = self._build_observation(self.robot.get_observation(), task_prompt)
                         logger.info(f"Step {self.episode_step}: Requesting new action chunk")
-                        _started = time.perf_counter()
                         response = self.policy_client.infer(observation)
-                        self.latency.record(time.perf_counter() - _started, server_timing(response).get("infer_ms"))
                         self.current_action_chunk = response["actions"][:, : self.action_dim]
                         if self.ensemble is not None:
                             self.ensemble.add_chunk(self.episode_step, self.current_action_chunk)
@@ -549,6 +548,7 @@ class TrossenOpenPIBridge:
                 self._log_rate_summary(loop_s)
 
         finally:
+            self.latency.lag.stop()
             if self.async_inference:
                 self._policy_worker.stop()
             if prompt_listener is not None:

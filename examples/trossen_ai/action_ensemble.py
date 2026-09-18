@@ -32,9 +32,6 @@ from pathlib import Path
 
 import numpy as np
 
-from latency import LatencyTracker
-from latency import server_timing
-
 logger = logging.getLogger(__name__)
 
 
@@ -324,18 +321,10 @@ class AsyncPolicyWorker:
         worker.stop()
     """
 
-    def __init__(
-        self,
-        policy_client,
-        ensemble: ActionEnsemble,
-        action_dim: int,
-        latency: LatencyTracker | None = None,
-    ) -> None:
+    def __init__(self, policy_client, ensemble: ActionEnsemble, action_dim: int) -> None:
         self._client = policy_client
         self._ensemble = ensemble
         self._action_dim = action_dim
-        # Shared with the control loop, which reports it on the status line.
-        self.latency = latency if latency is not None else LatencyTracker()
         self._pending: tuple | None = None  # (obs_dict, query_step)
         self._lock = threading.Lock()
         self._first_result = threading.Event()
@@ -394,14 +383,10 @@ class AsyncPolicyWorker:
                 continue
             obs, query_step = item
             try:
-                # Wall clock around the whole round trip. What this does NOT
-                # isolate is the point: it also contains msgpack packing of
-                # ~450 KB of images, the network hop, and any time this thread
-                # spent waiting for the GIL while the 25 Hz control loop held
-                # it. The server's own timing below is what separates them.
-                started = time.perf_counter()
+                # Timing lives in the client (see timed_policy_client.py), which
+                # can get between packing, the wire and unpacking. Wrapping the
+                # call here could only ever produce one number mixing all three.
                 response = self._client.infer(obs)
-                self.latency.record(time.perf_counter() - started, server_timing(response).get("infer_ms"))
                 chunk = np.asarray(response["actions"])[:, : self._action_dim]
                 with self._lock:
                     if generation != self._generation:
