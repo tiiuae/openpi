@@ -1,14 +1,23 @@
 # VLA-bench shared base — torch210-cu130
-# Built once, reused by every model on this torch version. Keeps eleven images from each carrying
-# their own copy of a 7-15 GB torch stack.
+# Built once, reused by every model on this torch version (walloss05).
 #
-#   docker build -f base/Dockerfile.torch210-cu130 -t vla-bench-base:torch210-cu130 .
-FROM pytorch/pytorch:2.10.0-cuda13.0-cudnn9-runtime
+#   docker build -f docker/vla_bench/base/Dockerfile.torch210-cu130 -t vla-bench-base:torch210-cu130 .
+#
+# WHY THIS ONE IS A *devel* IMAGE. wall-x is the only model in the set that compiles a CUDA extension
+# at install time: `pip install --no-build-isolation -e .` runs a `torch.utils.cpp_extension`
+# CUDAExtension build of wall_x/model/core/ops/csrc/*.cu, and `wall_x.model.core.ops._cuda_ext.load()`
+# raises at import if the resulting `_cuda_ext_bin*.so` is missing. That needs nvcc, which the
+# `-runtime` images do not ship, and torch's cpp_extension refuses a CUDA *major* mismatch — so it has
+# to be the CUDA 13 devel image to go with torch 2.10.0+cu130 (the venv used nvcc 13.1, this is 13.0;
+# same major, which is the requirement). Everything else here is identical to the other bases.
+FROM pytorch/pytorch:2.10.0-cuda13.0-cudnn9-devel
 
 ENV DEBIAN_FRONTEND=noninteractive \
     PYTHONUNBUFFERED=1 \
     PIP_BREAK_SYSTEM_PACKAGES=1 \
     PIP_ROOT_USER_ACTION=ignore \
+    PIP_RETRIES=10 \
+    PIP_TIMEOUT=120 \
     TOKENIZERS_PARALLELISM=false \
     HF_HUB_DISABLE_XET=1 \
     OPENPI_CLIENT_SRC=/opt/openpi-client/src
