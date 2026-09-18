@@ -54,14 +54,21 @@ incomplete.
 WAN2.2-TI2V-5B branch). The action path never reads it, so inference skips it; this is a saving, not a
 deviation.
 
-## Verification status — built, **not** replay-verified
+## Verification status — serves end to end on CPU, **not** replay-verified on GPU
 
 **Verified.** The image builds; the pinned CUDA kernels install from their release URLs; `lerobot`
 1.0.0, `transformers` 5.2.0, `flash_attn` 2.8.1 and `fla` 0.5.0 all import; all seven
 `transformers_replace` package overlays are applied and the build asserts that
 `transformers.models.qwen3_5` is the repo's implementation and not the stock one.
 
-**Not verified.** `--probe` and the 170-query replay. `from_pretrained` builds the policy on the GPU
+**`--probe` passes end to end — on CPU.** With `device=cpu` / `dtype=float32` in the adapter kwargs it
+loads the real mounted checkpoint in 65.2 s, resolves the embodiment schema by `robot_type`, runs the
+whole backend (slot remap, resize-with-pad, state normalisation, eval-mode chat prompt, 10 flow steps,
+un-normalisation, clipping) and returns `(30, 7)`. One inference takes **460 s** that way, so it is a
+wiring check, not a benchmark: on CPU the causal-conv1d and FLA kernels are unavailable and
+`is_fast_path_available` is False, which is a different numeric path from the reference.
+
+**Not verified.** `--probe` on a GPU, and the 170-query replay. `from_pretrained` builds the policy on the GPU
 and then loads the 5.39 GB state dict onto it, so it needs roughly **11 GB of VRAM**; the build host
 had **7.83 GB free per card** for the whole session (another user's 8-GPU job held 73.3 GB of each
 A100). It fails inside `safetensors.torch.load_file(..., device='cuda:0')` with
