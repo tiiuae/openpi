@@ -29,6 +29,8 @@ from episode_recorder import EpisodeRecorder
 from lerobot.cameras.opencv.configuration_opencv import OpenCVCameraConfig
 from lerobot.robots import make_robot_from_config
 from lerobot_robot_trossen.config_bi_widowxai_follower import BiWidowXAIFollowerRobotConfig
+import motion_limits
+from motion_limits import JointLimitError
 import numpy as np
 from openpi_client import websocket_client_policy
 from PIL import Image
@@ -36,7 +38,9 @@ from realsense_settings import apply_realsense_settings
 from scipy.interpolate import PchipInterpolator
 from scripted_motions import ARMS
 from scripted_motions import BIMANUAL_DIM
+from scripted_motions import GRIPPER_IDX
 from scripted_motions import HELP_ROWS
+from scripted_motions import JOINTS_PER_ARM
 from scripted_motions import ScriptedMotions
 from scripted_motions import parse_command
 import terminal_ui
@@ -70,6 +74,7 @@ class TrossenOpenPIBridge:
         log_dir: str | None = None,
         use_left_arm_only: bool = False,
         use_right_arm_only: bool = False,
+        allow_unlimited_motion: bool = False,
         starvla: bool = False,
         raw_gripper: bool = True,
         gripper_indices: list[int] | None = None,
@@ -148,6 +153,31 @@ class TrossenOpenPIBridge:
         self.use_left_arm_only = use_left_arm_only
         self.use_right_arm_only = use_right_arm_only
 
+        # Per-joint [min, max] position and max velocity, straight from the driver.
+        # Every pose that reaches the arm is checked against both by _limit_and_send(),
+        # whichever source it came from (policy step, start-position ramp, scripted
+        # motion). A table that fails validation does not silently disable the check
+        # it was protecting: motion is refused instead (see _motion_permitted below).
+        self.joint_limits = self._read_joint_limits()
+        self.joint_velocity_limits = self._read_joint_velocity_limits()
+        self._limit_warn_deadline = 0.0
+
+        self._motion_permitted = True
+        if self.joint_limits is None or self.joint_velocity_limits is None:
+            if allow_unlimited_motion:
+                logger.error(
+                    "MOTION LIMITS UNAVAILABLE and --allow_unlimited_motion was passed — the arm will be "
+                    "commanded with NO velocity or position checks. The firmware fault is the only thing "
+                    "left between a bad action and the hardware."
+                )
+            else:
+                self._motion_permitted = False
+                logger.error(
+                    "MOTION LIMITS UNAVAILABLE — refusing to command the arm. Observation, inference and "
+                    "recording still run, so this session is read-only. Fix the driver connection, or pass "
+                    "--allow_unlimited_motion to command the arm without limit checks anyway."
+                )
+
         # Keyword-triggered canned motions (home / grippers / wrist twist / wave).
         # They assume the 14-dim bimanual layout, so they stay off for anything else.
         # The arm-only flags gate the POLICY stream, not operator-commanded
@@ -158,7 +188,8 @@ class TrossenOpenPIBridge:
                 get_pose=self._read_joint_pose,
                 send_pose=self._send_scripted_pose,
                 control_frequency=control_frequency,
-                joint_limits=self._read_joint_limits(),
+                joint_limits=self.joint_limits,
+                velocity_limits=self.joint_velocity_limits,
                 enabled_arms=ARMS,
             )
         else:
@@ -219,69 +250,145 @@ class TrossenOpenPIBridge:
         return np.array([v for k, v in observation.items() if k.endswith(".pos")])
 
     def _read_joint_limits(self) -> np.ndarray | None:
-        """Per-joint [min, max] straight from the driver, so scripted motions can
-        clamp instead of hardcoding a gripper stroke that varies per end effector."""
+        """Per-joint [min, max] position, straight from the driver and validated.
+
+        None means "do not trust any position limit": the caller refuses to move
+        the arm rather than carrying on with the clamp quietly switched off.
+        """
         try:
             limits = [
                 (joint.position_min, joint.position_max)
                 for arm in (self.robot.left_arm, self.robot.right_arm)
                 for joint in arm.driver.get_joint_limits()
             ]
-            array = np.array(limits, dtype=float)
-            if array.shape != (self.action_dim, 2):
-                raise ValueError(f"expected ({self.action_dim}, 2) limits, got {array.shape}")
-        except Exception:
-            logger.warning("Could not read joint limits from the driver — using fallback values", exc_info=True)
+            array = motion_limits.validate_position_limits(limits, self.action_dim)
+        except JointLimitError as error:
+            logger.error("Driver position limits are unusable: %s", error)
             return None
+        except Exception:
+            logger.error("Could not read position limits from the driver", exc_info=True)
+            return None
+        # The gripper carriages are the pair most likely to be miscalibrated per
+        # end effector, so their stroke is worth seeing in the startup log.
+        for index in (GRIPPER_IDX, JOINTS_PER_ARM + GRIPPER_IDX):
+            if index < len(array):
+                logger.info("Driver joint %d position limits: [%.6g, %.6g]", index, *array[index])
         return array
+
+    def _read_joint_velocity_limits(self) -> np.ndarray | None:
+        """Per-joint max velocity (rad/s; m/s for the gripper carriage), validated."""
+        try:
+            limits = [
+                joint.velocity_max
+                for arm in (self.robot.left_arm, self.robot.right_arm)
+                for joint in arm.driver.get_joint_limits()
+            ]
+            return motion_limits.validate_velocity_limits(limits, self.action_dim)
+        except JointLimitError as error:
+            logger.error("Driver velocity limits are unusable: %s", error)
+            return None
+        except Exception:
+            logger.error("Could not read velocity limits from the driver", exc_info=True)
+            return None
+
+    def _warn_throttled(self, message: str, *args) -> None:
+        """Log a limit warning at most once a second.
+
+        The limiter can fire on every step of a 25 Hz loop, and a warning per
+        step buries the log and scrolls away whatever the operator is typing.
+        """
+        now = time.perf_counter()
+        if now >= self._limit_warn_deadline:
+            self._limit_warn_deadline = now + 1.0
+            logger.warning(message, *args)
+
+    def _limit_and_send(self, pose: np.ndarray, *, freeze_disabled_arms: bool) -> np.ndarray:
+        """The one path from a desired pose to the driver.
+
+        Policy steps, start-position ramps and scripted motions all come through
+        here, so a limit applies to the arm rather than to one code path: a
+        scripted "home" cannot be faster than a policy step is allowed to be.
+        Returns the pose actually commanded, which is what the episode recorder
+        must store — a clamped action that is recorded unclamped teaches the
+        trajectory a move the arm never made.
+        """
+        target = np.asarray(pose, dtype=float).copy()
+
+        if freeze_disabled_arms and (self.use_left_arm_only or self.use_right_arm_only):
+            if self.use_right_arm_only:
+                # Freeze left arm (indices 0:7) at current pose; only right arm (7:14) moves
+                target[:7] = self._frozen_arm_pose[:7]
+            elif self.use_left_arm_only:
+                # Freeze right arm (indices 7:14) at current pose; only left arm (0:7) moves
+                target[7:] = self._frozen_arm_pose[7:]
+
+        # Velocity first, then position: scaling a step down can only shorten it,
+        # so it can never push a joint back out of the range the clamp just fixed.
+        if self.joint_velocity_limits is not None and self._last_action is not None:
+            target, factor, over = motion_limits.scale_to_velocity_limits(
+                self._last_action, target, self.dt, self.joint_velocity_limits
+            )
+            if over:
+                self._warn_throttled(
+                    "Step exceeds the velocity limit on joints %s — slowing the whole step to %.0f%% "
+                    "(scaling only the fast joints would bend the path)",
+                    over,
+                    factor * 100.0,
+                )
+
+        if self.joint_limits is not None:
+            target, deviation = motion_limits.clamp_to_position_limits(target, self.joint_limits)
+            out_of_range = np.where(deviation > motion_limits.CLAMP_WARNING_TOLERANCE)[0]
+            if out_of_range.size:
+                self._warn_throttled(
+                    "Step exceeds position limits on joints %s (by up to %.4g) — clamping to range",
+                    out_of_range.tolist(),
+                    deviation[out_of_range].max(),
+                )
+
+        if not self._motion_permitted:
+            # No trustworthy limits: hold. Reported once per second rather than
+            # per step so the reason stays visible without burying the log.
+            self._warn_throttled("Motion refused: no validated joint limits (see startup log)")
+            return self._last_action if self._last_action is not None else target
+
+        if self.test_mode == "test":
+            # Per-step, so it stays at DEBUG — at 25 Hz it buries the log (and any
+            # instruction you are typing). Run with --debug to see every action.
+            logger.debug(f"TEST MODE: Would command pose: {target}")
+            self._last_action = target
+            return target
+        if self.test_mode != "autonomous":
+            logger.error(f"Unknown mode: {self.test_mode}. No action executed.")
+            return target
+
+        joint_features = list(self.robot._joint_ft.keys())
+        self.robot.send_action({k: target[i] for i, k in enumerate(joint_features)})
+        self._last_action = target
+        return target
 
     def _send_scripted_pose(self, pose: np.ndarray):
         """Send one pose from a scripted motion.
 
-        Bypasses execute_action()'s arm freezing on purpose: the operator asked
-        for this motion explicitly, and ScriptedMotions already refuses commands
-        for an arm disabled by --use_left_arm_only / --use_right_arm_only.
+        Skips the arm-only freeze on purpose: the operator asked for this motion
+        explicitly, and ScriptedMotions already refuses commands for an arm
+        disabled by --use_left_arm_only / --use_right_arm_only. The velocity and
+        position limits in _limit_and_send() are NOT skipped.
         """
-        if self.test_mode == "test":
-            logger.debug(f"TEST MODE: Would send scripted pose: {pose}")
-            return
         # Scripted motions are recorded like policy steps (labeled with the
         # current task instruction) — a gripper fix mid-take must appear in the
         # episode or the saved trajectory teleports.
         recording = self._recorder is not None and self._recorder.is_recording
         observation = self.robot.get_observation() if recording else None
-        joint_features = list(self.robot._joint_ft.keys())
-        self.robot.send_action({k: pose[i] for i, k in enumerate(joint_features)})
+        sent = self._limit_and_send(pose, freeze_disabled_arms=False)
         if recording:
-            self._recorder.add(observation, pose, self._current_task)
+            self._recorder.add(observation, sent, self._current_task)
 
     def execute_action(self, action: np.ndarray) -> np.ndarray:
-        """Execute action on the arm. Returns the action actually sent (after
-        arm freezing), which is what the episode recorder must store."""
-        full_action = action.copy()
-
-        if self.use_left_arm_only or self.use_right_arm_only:
-            if self.use_right_arm_only:
-                # Freeze left arm (indices 0:7) at current pose; only right arm (7:14) moves
-                full_action[:7] = self._frozen_arm_pose[:7]
-            elif self.use_left_arm_only:
-                # Freeze right arm (indices 7:14) at current pose; only left arm (0:7) moves
-                full_action[7:] = self._frozen_arm_pose[7:]
-
-        if self.test_mode == "test":
-            # Per-step, so it stays at DEBUG — at 25 Hz it buries the log (and any
-            # instruction you are typing). Run with --debug to see every action.
-            logger.debug(f"TEST MODE: Would execute action: {full_action}")
-            self._last_action = full_action
-            return full_action
-        if self.test_mode == "autonomous":
-            joint_features = list(self.robot._joint_ft.keys())
-            action_dict = {k: full_action[i] for i, k in enumerate(joint_features)}
-
-            self.robot.send_action(action_dict)
-        else:
-            logger.error(f"Unknown mode: {self.test_mode}. No action executed.")
-        return full_action
+        """Execute one policy action. Returns the pose actually sent (after arm
+        freezing, velocity scaling and position clamping), which is what the
+        episode recorder must store."""
+        return self._limit_and_send(action, freeze_disabled_arms=True)
 
     def _build_observation(self, observation_dict: dict, task_prompt: str) -> dict:
         joint_pos_keys = [k for k in observation_dict if k.endswith(".pos")]
@@ -306,6 +413,11 @@ class TrossenOpenPIBridge:
         jumps and triggering safety stops (velocity limits)."""
 
         self._frozen_arm_pose = self._read_joint_pose()
+        # Anchor the velocity-limit reference to the arm's real current pose, so the
+        # very first ramp sample (and thus the whole ramp) is velocity-checked too.
+        # Without this the first sample is compared against nothing and goes out
+        # unlimited, which is exactly the jump this ramp exists to avoid.
+        self._last_action = self._frozen_arm_pose
         # Example stage_pose for bimanual WidowX arms.
         # Each value corresponds to a joint position (in radians) for the 14 joints:
         # [left_joint_0, left_joint_1, left_joint_2, left_joint_3, left_joint_4, left_joint_5, left_left_carriage_joint,
@@ -624,6 +736,13 @@ if __name__ == "__main__":
         "--use_right_arm_only", action="store_true", help="Only move the right arm; left arm stays at current pose"
     )
     parser.add_argument(
+        "--allow_unlimited_motion",
+        action="store_true",
+        help="Command the arm even when the driver's joint limits could not be read or failed validation. "
+        "Off by default: without limits there is no velocity or position check between a bad action and "
+        "the hardware, so the client stays read-only instead.",
+    )
+    parser.add_argument(
         "--ensemble_gripper",
         action="store_true",
         help="Also temporally ensemble the gripper channels. By default the gripper uses "
@@ -663,6 +782,7 @@ if __name__ == "__main__":
         log_dir=args.log_dir,
         use_left_arm_only=args.use_left_arm_only,
         use_right_arm_only=args.use_right_arm_only,
+        allow_unlimited_motion=args.allow_unlimited_motion,
         starvla=args.starvla,
         raw_gripper=not args.ensemble_gripper,
         record_dir=args.record_dir,

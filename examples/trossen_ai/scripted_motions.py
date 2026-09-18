@@ -26,8 +26,8 @@ from dataclasses import dataclass
 import logging
 import time
 
+import motion_limits
 import numpy as np
-from scipy.interpolate import PchipInterpolator
 
 logger = logging.getLogger(__name__)
 
@@ -54,9 +54,18 @@ SLEEP_ARM_POSE = np.zeros(JOINTS_PER_ARM)
 # gripper is a linear carriage measured in metres, closed at 0.
 FALLBACK_GRIPPER_RANGE = (0.0, 0.03)
 
-HOME_DURATION_S = 4.0
-SLEEP_DURATION_S = 4.0
-GRIPPER_DURATION_S = 1.5
+# Floors, not fixed durations. How long a move actually takes is derived from how
+# far it has to travel and the driver's velocity limit for the slowest joint
+# involved (see motion_limits.ramp_duration): a canned "4 seconds to home" is only
+# safe for the move it happened to be tuned on, and is over the limit from a far
+# enough starting pose.
+MIN_HOME_DURATION_S = 4.0
+MIN_SLEEP_DURATION_S = 4.0
+MIN_GRIPPER_DURATION_S = 1.5
+# A derived duration is never capped (that would put back the over-speed it
+# exists to prevent), but past this it is worth telling the operator why the arm
+# is going to crawl for so long.
+LONG_MOVE_WARNING_S = 15.0
 TWIST_AMPLITUDE_RAD = 0.5
 TWIST_PERIOD_S = 2.0
 TWIST_CYCLES = 2
@@ -183,6 +192,9 @@ class ScriptedMotions:
         control_frequency: Rate at which interpolated targets are streamed, Hz.
         joint_limits: (14, 2) array of [min, max] per joint from the driver, or
             None to fall back to conservative gripper values and no clamping.
+        velocity_limits: (14,) array of max joint speeds from the driver, used to
+            size each move's duration. None falls back to the fixed floors, which
+            is only as safe as the move they were tuned for.
         enabled_arms: Arms the operator allowed to move (``--use_left_arm_only``
             and friends). Commands for a disabled arm are refused, not silently
             re-targeted — the flag usually means that arm must not move at all.
@@ -194,12 +206,14 @@ class ScriptedMotions:
         send_pose: Callable[[np.ndarray], None],
         control_frequency: int,
         joint_limits: np.ndarray | None = None,
+        velocity_limits: np.ndarray | None = None,
         enabled_arms: tuple[str, ...] = ARMS,
     ) -> None:
         self._get_pose = get_pose
         self._send_pose = send_pose
         self._dt = 1.0 / control_frequency
         self._joint_limits = joint_limits
+        self._velocity_limits = velocity_limits
         self._enabled_arms = tuple(enabled_arms)
 
     # -- dispatch ----------------------------------------------------------
@@ -250,7 +264,7 @@ class ScriptedMotions:
         for arm in arms:
             offset = ARM_OFFSETS[arm]
             goal[offset : offset + JOINTS_PER_ARM] = HOME_ARM_POSE
-        self._goto(goal, HOME_DURATION_S)
+        self._goto(goal, MIN_HOME_DURATION_S)
 
     def sleep(self, arms: tuple[str, ...]) -> None:
         """Park the arm folded down, going through home on the way.
@@ -264,7 +278,7 @@ class ScriptedMotions:
         for arm in arms:
             offset = ARM_OFFSETS[arm]
             goal[offset : offset + JOINTS_PER_ARM] = SLEEP_ARM_POSE
-        self._goto(goal, SLEEP_DURATION_S)
+        self._goto(goal, MIN_SLEEP_DURATION_S)
 
     def set_gripper(self, arms: tuple[str, ...], *, opened: bool) -> None:
         goal = self._get_pose().copy()
@@ -272,7 +286,7 @@ class ScriptedMotions:
             index = ARM_OFFSETS[arm] + GRIPPER_IDX
             low, high = self._limits_for(index, FALLBACK_GRIPPER_RANGE)
             goal[index] = high if opened else low
-        self._goto(goal, GRIPPER_DURATION_S)
+        self._goto(goal, MIN_GRIPPER_DURATION_S)
 
     def twist_wrist(self, arms: tuple[str, ...]) -> None:
         self._oscillate(arms, WRIST_ROTATE_IDX, TWIST_AMPLITUDE_RAD, TWIST_PERIOD_S, TWIST_CYCLES)
@@ -282,30 +296,48 @@ class ScriptedMotions:
 
     # -- primitives --------------------------------------------------------
 
-    def _goto(self, goal: np.ndarray, duration: float) -> None:
+    def _goto(self, goal: np.ndarray, min_duration: float) -> None:
         """Stream a smooth ramp from the current pose to *goal*.
 
-        PCHIP over [current, goal] — same scheme as move_to_start_position() and
-        sleep.py — so the arm never sees a step change large enough to trip its
-        velocity limits.
+        The duration is derived from the distance and the driver's velocity
+        limits, with *min_duration* as a floor — a "home" from an extended pose
+        takes longer than one from a pose already near home, instead of both
+        being crammed into the same fixed number of seconds.
+
+        The profile is minimum-jerk rather than the two-point PCHIP this used to
+        use: scipy special-cases PCHIP over two points to a straight line, which
+        commands the arm to jump from rest to full speed and back again. Bounded
+        velocity, unbounded acceleration.
         """
         start = self._get_pose()
         goal = self._clamp(goal)
-        interpolator = PchipInterpolator(np.array([0.0, duration]), np.array([start, goal]), axis=0)
+        duration = motion_limits.ramp_duration(start, goal, self._velocity_limits, minimum=min_duration)
+        if duration >= LONG_MOVE_WARNING_S:
+            logger.warning(
+                "This move needs %.0fs to stay inside the driver's velocity limits — the arm will move slowly",
+                duration,
+            )
+        elif duration > min_duration + 1e-6:
+            logger.info("Move sized to %.1fs by the driver's velocity limits (floor %.1fs)", duration, min_duration)
 
         loop_start = time.perf_counter()
         elapsed = 0.0
         while elapsed < duration:
             step_start = time.perf_counter()
-            self._send_pose(interpolator(elapsed))
+            self._send_pose(motion_limits.minimum_jerk_pose(start, goal, elapsed, duration))
             self._sleep_remaining(step_start)
             elapsed = time.perf_counter() - loop_start
         self._send_pose(goal)
 
     def _oscillate(self, arms: tuple[str, ...], joint_idx: int, amplitude: float, period: float, cycles: int) -> None:
-        """Swing one joint per arm back and forth, ending exactly where it started."""
+        """Swing one joint per arm back and forth, ending exactly where it started.
+
+        A*sin(2*pi*t/P) peaks at A*2*pi/P, so the period is stretched if that
+        would be too fast for the slowest joint involved.
+        """
         start = self._get_pose()
         indices = [ARM_OFFSETS[arm] + joint_idx for arm in arms]
+        period = motion_limits.safe_oscillation_period(amplitude, period, indices, self._velocity_limits)
         duration = period * cycles
 
         loop_start = time.perf_counter()
@@ -319,7 +351,9 @@ class ScriptedMotions:
             self._send_pose(self._clamp(pose))
             self._sleep_remaining(step_start)
             elapsed = time.perf_counter() - loop_start
-        self._send_pose(start)
+        # Return to the exact starting pose. Clamped like every other sample:
+        # the measured pose it came from can sit a hair outside the limits.
+        self._send_pose(self._clamp(start))
 
     def _sleep_remaining(self, step_start: float) -> None:
         remaining = self._dt - (time.perf_counter() - step_start)
