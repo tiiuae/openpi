@@ -61,6 +61,10 @@ compared against the validated venv, tensor by tensor, on identical inputs
 mean/std/q01/q99 tables and the packed-60 → absolute-7 `unpack_action` inverse all hash **identically**,
 on the same torch 2.8.0+cu128 / transformers 4.57.1 / numpy 2.1.3.
 
+There is no CPU fallback to lean on here: XR-1 builds its Qwen3-VL backbone with
+`_attn_implementation="flash_attention_2"`, so `device=cpu` fails at construction with "Flash
+Attention 2 is not available on CPU". The hash comparison above is what stands in for it.
+
 **Not verified.** `--probe` and the 170-query replay. XR-1's bf16 weights need **~11-12 GB of VRAM**
 and the build host had **7.83 GB free per card** for the whole session (another user's 8-GPU job held
 73.3 GB of each A100). The probe fails at exactly that point, in `model.eval().to(device)`, with
