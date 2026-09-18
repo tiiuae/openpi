@@ -44,6 +44,17 @@ import terminal_ui
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
 
+
+def _is_stop_command(text: str) -> bool:
+    """Whether a typed line is asking the arm to stop moving now.
+
+    Used by the prompt listener to latch a stop the moment it is typed, rather
+    than when the control loop next polls. Only these two: everything else is a
+    task instruction or a motion the operator deliberately asked for.
+    """
+    command = parse_command(text)
+    return command is not None and command.name in ("hold", "quit")
+
 DEFAULT_TRAINING_SIZE = (224, 224)
 DEFAULT_REALSENSE_SETTINGS = Path(__file__).parent / "realsense_settings.json"
 # How often the control loop logs its rate when there is no pinned status line.
@@ -160,6 +171,7 @@ class TrossenOpenPIBridge:
                 control_frequency=control_frequency,
                 joint_limits=self._read_joint_limits(),
                 enabled_arms=ARMS,
+                should_cancel=self._stop_requested,
             )
         else:
             self.motions = None
@@ -212,6 +224,31 @@ class TrossenOpenPIBridge:
         ramp doesn't get averaged into the control rate."""
         self._rate_window.clear()
         self._last_rate_log = time.perf_counter()
+
+    def _stop_requested(self) -> bool:
+        """Whether the operator has typed a stop since the last time one was handled.
+
+        Latched by the prompt listener the instant the line is typed, so a
+        blocking phase sees it on its next tick instead of when the control loop
+        next gets a turn to poll.
+        """
+        listener = self._prompt_listener
+        return listener is not None and listener.stop_requested.is_set()
+
+    def _wait_for_first_inference(self, timeout: float) -> bool:
+        """Block for the first chunk, but stay interruptible.
+
+        Waiting the full timeout in one call means a stop typed during it is not
+        seen for up to 30 seconds.
+        """
+        deadline = time.perf_counter() + timeout
+        while time.perf_counter() < deadline:
+            if self._stop_requested():
+                logger.info("Stop requested while waiting for the first inference")
+                return False
+            if self._policy_worker.wait_for_first(timeout=0.1):
+                return True
+        return False
 
     def _read_joint_pose(self) -> np.ndarray:
         """Current measured joint pose, in the same order as `robot._joint_ft`."""
@@ -320,6 +357,11 @@ class TrossenOpenPIBridge:
         end_time = start_time + timepoints[-1]
 
         while time.time() < end_time:
+            if self._stop_requested():
+                # Open-loop ramp: abandoning it part way leaves the arm where it
+                # got to, which is what "stop" asks for.
+                logger.info("Start-position ramp cancelled — holding position")
+                return
             loop_start_time = time.perf_counter()
             current_time = time.time() - start_time
             positions = interpolator_position(current_time)
@@ -394,7 +436,7 @@ class TrossenOpenPIBridge:
             self._policy_worker.start()
             if self.motions is not None:
                 terminal_ui.print_help(HELP_ROWS)
-            prompt_listener = terminal_ui.make_prompt_listener(task_prompt)
+            prompt_listener = terminal_ui.make_prompt_listener(task_prompt, is_stop=_is_stop_command)
             prompt_listener.start()
         self._prompt_listener = prompt_listener
         if self._recorder is not None and prompt_listener is not None:
@@ -411,6 +453,11 @@ class TrossenOpenPIBridge:
                     # task instruction.
                     typed = prompt_listener.poll() if prompt_listener is not None else None
                     if typed is not None:
+                        # The latch has done its job of interrupting whatever was
+                        # blocking; the line itself is handled below. Clearing it
+                        # here means the next scripted motion is not cancelled
+                        # before it starts.
+                        prompt_listener.clear_stop()
                         command = parse_command(typed) if self.motions is not None else None
                         if command is not None and command.name == "quit":
                             # Leave the loop so the finally below stops the worker and
@@ -469,9 +516,11 @@ class TrossenOpenPIBridge:
                     self._policy_worker.submit(obs, self.episode_step)
                     if is_first_step:
                         logger.info("Waiting for first inference result...")
-                        if not self._policy_worker.wait_for_first(timeout=30.0):
-                            logger.error("Timed out waiting for first inference — aborting")
-                            break
+                        if not self._wait_for_first_inference(timeout=30.0):
+                            logger.error("No first inference (timed out or stopped) — pausing")
+                            paused = True
+                            prompt_listener.set_paused(True)
+                            continue
                     a_t = self.ensemble.get_action(self.episode_step)
                     if a_t is None:
                         a_t = np.zeros(self.action_dim)
