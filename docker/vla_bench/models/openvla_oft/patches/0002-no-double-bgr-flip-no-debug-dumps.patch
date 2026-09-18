@@ -1,0 +1,68 @@
+# openpi's openvla-oft submodule (tiiuae/openvla-oft-internal) carries two changes in
+# experiments/robot/openvla_utils.py::prepare_images_for_vla that must NOT be in a vla-bench image:
+#
+#  1. an extra `image = image[..., ::-1]` "BGR -> RGB" flip. docker/vla_bench/server/vla_server.py
+#     already converts the robot client's BGR frames to RGB once, at the wire boundary, so this second
+#     flip hands the model BGR. It is silent: the policy still returns plausible actions. Measured on
+#     the five reference episodes it costs +26.98 % joint MAE and +51.98 % gripper MAE against the
+#     recorded reference — the whole reason the conversion lives in exactly one place.
+#  2. a debug dump of two PNGs per camera per inference into <repo>/debug/step_NNNNNN/. At 1 Hz replan
+#     that is unbounded disk growth plus four file writes in the latency path.
+#
+# This patch restores the upstream (moojink/openvla-oft) behaviour of that function. It touches nothing
+# else, and it is applied only inside the image — your submodule working tree is untouched.
+diff --git a/experiments/robot/openvla_utils.py b/experiments/robot/openvla_utils.py
+index 794816b..c14c9dc 100644
+--- a/experiments/robot/openvla_utils.py
++++ b/experiments/robot/openvla_utils.py
+@@ -39,10 +39,6 @@ DATE_TIME = time.strftime("%Y_%m_%d-%H_%M_%S")
+ DEVICE = torch.device("cuda:0") if torch.cuda.is_available() else torch.device("cpu")
+ OPENVLA_IMAGE_SIZE = 224  # Standard image size expected by OpenVLA
+ 
+-# Debug image saving
+-_DEBUG_DIR = Path(__file__).parent.parent.parent / "debug"
+-_debug_step = 0
+-
+ # Configure NumPy print settings
+ np.set_printoptions(formatter={"float": lambda x: "{0:0.3f}".format(x)})
+ 
+@@ -694,24 +690,12 @@ def prepare_images_for_vla(images: List[np.ndarray], cfg: Any) -> List[Image.Ima
+     Returns:
+         List[Image.Image]: Processed images ready for the model
+     """
+-    global _debug_step
+-
+-    # Create per-step debug directory
+-    step_dir = _DEBUG_DIR / f"step_{_debug_step:06d}"
+-    step_dir.mkdir(parents=True, exist_ok=True)
+-
+     processed_images = []
+ 
+-    for i, image in enumerate(images):
+-        # Images arrive as HWC BGR (OpenCV convention); convert to RGB for the model and PIL
+-        image = np.ascontiguousarray(image[..., ::-1])
+-
++    for image in images:
+         # Validate format
+         check_image_format(image)
+ 
+-        # Save raw input image before any processing (already RGB at this point)
+-        Image.fromarray(image).save(step_dir / f"openvla_utils__img_{i}__raw.png")
+-
+         # Resize if needed
+         if image.shape != (OPENVLA_IMAGE_SIZE, OPENVLA_IMAGE_SIZE, 3):
+             image = resize_image_for_policy(image, OPENVLA_IMAGE_SIZE)
+@@ -723,13 +707,8 @@ def prepare_images_for_vla(images: List[np.ndarray], cfg: Any) -> List[Image.Ima
+         if cfg.center_crop:
+             pil_image = center_crop_image(pil_image)
+ 
+-        # Save processed image (after resize + optional crop)
+-        pil_image.save(step_dir / f"openvla_utils__img_{i}__processed.png")
+-
+         processed_images.append(pil_image)
+ 
+-    _debug_step += 1
+-
+     return processed_images
+ 
+ 

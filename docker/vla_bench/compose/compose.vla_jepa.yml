@@ -1,0 +1,32 @@
+# vla-bench vla_jepa — one container, one checkpoint, the Trossen client's websocket protocol.
+#
+#   WEIGHTS_DIR=/opt/vla_weights HF_CACHE_DIR=$HOME/.cache/huggingface \
+#     docker compose -f docker/vla_bench/compose/compose.vla_jepa.yml up --build
+#
+# Paths are host paths; both mounts are read-only. CHECKPOINT is the path INSIDE the container.
+services:
+  vla-bench-vla_jepa:
+    build:
+      context: ../../..
+      dockerfile: docker/vla_bench/models/vla_jepa/Dockerfile
+    image: vla-bench-vla_jepa:latest
+    container_name: vla-bench-vla_jepa
+    ports:
+      - "${PORT:-8800}:8800"
+    command:
+      - --checkpoint
+      - ${CHECKPOINT:-/models/vla_jepa}
+    volumes:
+      - ${WEIGHTS_DIR:-/opt/vla_weights}:/models:ro
+      - ${HF_CACHE_DIR:-/opt/vla_hf_cache}:/hf:ro
+    environment:
+      - HF_HOME=/hf
+      - HF_HUB_OFFLINE=1
+      - VLA_BENCH_IMAGE=vla-bench-vla_jepa
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
