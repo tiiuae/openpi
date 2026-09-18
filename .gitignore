@@ -3,6 +3,12 @@ examples/trossen_ai/action_logs*
 
 # Data directories.
 assets/
+# ...but a bare `assets/` matches at ANY depth, and it was silently swallowing the per-model
+# config/norm-stats files that docker/vla_bench/models/*/Dockerfile COPY into the images. The
+# images still built locally (from the working tree), so the loss only shows up as a broken
+# build from a fresh clone. Keep those tracked.
+!docker/vla_bench/models/*/assets/
+!docker/vla_bench/models/*/assets/**
 checkpoints/
 data/
 wandb/
