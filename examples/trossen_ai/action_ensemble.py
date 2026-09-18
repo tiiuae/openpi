@@ -32,6 +32,9 @@ from pathlib import Path
 
 import numpy as np
 
+from policy_reply import PolicyReplyError
+from policy_reply import validate_actions
+
 logger = logging.getLogger(__name__)
 
 
@@ -384,7 +387,12 @@ class AsyncPolicyWorker:
             obs, query_step = item
             try:
                 response = self._client.infer(obs)
-                chunk = np.asarray(response["actions"])[:, : self._action_dim]
+                # Validated before it reaches the ensemble: an empty chunk used to
+                # satisfy wait_for_first() while providing no action, and a NaN
+                # would average straight through to the motors (np.clip does not
+                # remove NaN). A bad reply is dropped, the ensemble starves, and
+                # the control loop holds its pose.
+                chunk = validate_actions(response, action_dim=self._action_dim)
                 with self._lock:
                     if generation != self._generation:
                         continue  # flushed while this inference was running — drop it
@@ -393,5 +401,9 @@ class AsyncPolicyWorker:
                     self._need_first = False
                 if first:
                     self._first_result.set()
+            except PolicyReplyError as error:
+                # The server answered with something unusable. That is an
+                # operational fault to report, not a crash to trace.
+                logger.error("Policy server sent an unusable reply, dropping it: %s", error)
             except Exception:
                 logger.exception("AsyncPolicyWorker: inference error")

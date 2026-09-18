@@ -34,6 +34,7 @@ from motion_limits import JointLimitError
 import numpy as np
 from openpi_client import websocket_client_policy
 from PIL import Image
+from policy_reply import validate_actions
 from realsense_settings import apply_realsense_settings
 from scipy.interpolate import PchipInterpolator
 from scripted_motions import ARMS
@@ -122,6 +123,7 @@ class TrossenOpenPIBridge:
         self._rate_window: list[float] = []
         self._last_rate_log = time.perf_counter()
         self._last_action: np.ndarray | None = None
+        self._starved_steps = 0
         self._prompt_listener: terminal_ui.BasePromptListener | None = None
 
         self.action_chunk_size = action_chunk_size
@@ -367,6 +369,43 @@ class TrossenOpenPIBridge:
         self._last_action = target
         return target
 
+    def _hold_pose(self, paused: bool) -> tuple[np.ndarray, bool]:
+        """Pose to command when the policy has nothing for this step.
+
+        This used to be ``np.zeros(action_dim)``. Zero is not "do nothing": it
+        is an absolute pose — every joint folded down and both grippers shut —
+        so a starved step commanded a full sweep to the rest pose from wherever
+        the arm was, closing the gripper on whatever it was holding. Velocity
+        scaling and position clamping slow that move down; they do not change
+        where it is going.
+
+        Holding the last commanded pose is always safe, and it keeps the
+        driver's goal stream fed while the policy catches up. If the starvation
+        lasts past STARVED_HOLD_BUDGET_S the loop pauses instead, so the arm
+        sits still under a visible reason rather than silently stalling.
+
+        Returns ``(pose, paused)``.
+        """
+        self._starved_steps += 1
+        pose = self._last_action if self._last_action is not None else self._read_joint_pose()
+
+        budget = max(int(STARVED_HOLD_BUDGET_S * self.control_frequency), 1)
+        if not paused and self._starved_steps >= budget:
+            logger.warning(
+                "No policy action for %d consecutive steps (%.1fs) — holding position and pausing. "
+                "Check the policy server, then type an instruction to resume.",
+                self._starved_steps,
+                self._starved_steps * self.dt,
+            )
+            if self.async_inference:
+                self.ensemble.reset()
+                self._policy_worker.flush()
+            return pose, True
+
+        if self._starved_steps == 1:
+            logger.info("No policy action for this step — holding the last commanded pose")
+        return pose, paused
+
     def _send_scripted_pose(self, pose: np.ndarray):
         """Send one pose from a scripted motion.
 
@@ -586,7 +625,12 @@ class TrossenOpenPIBridge:
                             break
                     a_t = self.ensemble.get_action(self.episode_step)
                     if a_t is None:
-                        a_t = np.zeros(self.action_dim)
+                        a_t, paused = self._hold_pose(paused)
+                        if paused:
+                            prompt_listener.set_paused(True)
+                            continue
+                    else:
+                        self._starved_steps = 0
 
                 else:
                     # Synchronous: request new chunk every rate_of_inference steps
@@ -594,7 +638,7 @@ class TrossenOpenPIBridge:
                         observation = self._build_observation(self.robot.get_observation(), task_prompt)
                         logger.info(f"Step {self.episode_step}: Requesting new action chunk")
                         response = self.policy_client.infer(observation)
-                        self.current_action_chunk = response["actions"][:, : self.action_dim]
+                        self.current_action_chunk = validate_actions(response, action_dim=self.action_dim)
                         if self.ensemble is not None:
                             self.ensemble.add_chunk(self.episode_step, self.current_action_chunk)
                         self.action_chunk_idx = 0
@@ -603,9 +647,16 @@ class TrossenOpenPIBridge:
                     if self.ensemble is not None:
                         a_t = self.ensemble.get_action(self.episode_step)
                         if a_t is None:
-                            a_t = np.zeros(self.action_dim)
-                    else:
+                            a_t, _ = self._hold_pose(paused=False)
+                        else:
+                            self._starved_steps = 0
+                    elif self.action_chunk_idx < len(self.current_action_chunk):
                         a_t = self.current_action_chunk[self.action_chunk_idx]
+                    else:
+                        # The server returned a shorter horizon than --rate_of_inference
+                        # asks us to consume before the next request. Hold rather than
+                        # index past the end of the chunk.
+                        a_t, _ = self._hold_pose(paused=False)
 
                 if self.action_logger is not None and self.ensemble is not None:
                     self.action_logger.log(
