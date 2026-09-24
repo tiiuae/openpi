@@ -186,6 +186,7 @@ class LatencyTracker:
         self._server_ms: deque[float] = deque(maxlen=window)
         self._network_ms: deque[float] = deque(maxlen=window)
         self._warmup: InferenceTiming | None = None
+        self._last: InferenceTiming | None = None
         self.calls = 0
         self.lag = SchedulingLagProbe(window=window)
 
@@ -193,6 +194,7 @@ class LatencyTracker:
         for samples in self._all_series().values():
             samples.clear()
         self._warmup = None
+        self._last = None
         self.calls = 0
 
     def _all_series(self) -> dict[str, deque]:
@@ -213,6 +215,7 @@ class LatencyTracker:
         control loop will see again.
         """
         self.calls += 1
+        self._last = timing
         if self.calls == 1:
             self._warmup = timing
             logger.info(
@@ -244,6 +247,11 @@ class LatencyTracker:
         )
 
     @property
+    def last(self) -> InferenceTiming | None:
+        """The most recent call, warmup included."""
+        return self._last
+
+    @property
     def warmup(self) -> InferenceTiming | None:
         """The first call, which usually includes compilation."""
         return self._warmup
@@ -271,22 +279,30 @@ class LatencyTracker:
         return stats
 
     def summary(self) -> str | None:
-        """One line for the status line, or None before there is anything to say."""
+        """One line for the terminal, or None before the first inference completes.
+
+        Leads with the most recent call and its own split, because a 200-sample
+        rolling median moves too slowly to watch while testing; the percentiles
+        and max follow for the spread, which is what makes latency look erratic.
+
+            last 212 ms (server 180 · net 25 · pack 7) · p50 207 · p95 240 · max 310 ms · gil lag 3 ms · 57 calls
+        """
+        last = self._last
+        if last is None:
+            return None
         stats = self.percentiles()
         if not stats:
-            return None
+            return f"first call {last.round_trip_ms:.0f} ms (model warmup, excluded from stats) · waiting for more"
 
-        text = f"infer p50 {stats['p50_ms']:.0f} p95 {stats['p95_ms']:.0f} ms"
-        parts = []
-        if "server_ms" in stats:
-            parts.append(f"server {stats['server_ms']:.0f}")
-        if "network_ms" in stats:
-            parts.append(f"net {stats['network_ms']:.0f}")
-        client_ms = stats.get("pack_ms", 0.0) + stats.get("unpack_ms", 0.0)
-        if client_ms:
-            parts.append(f"pack {client_ms:.0f}")
-        if parts:
-            text += " (" + ", ".join(parts) + ")"
+        split = []
+        if last.server_ms is not None:
+            split.append(f"server {last.server_ms:.0f}")
+        if last.network_ms is not None:
+            split.append(f"net {last.network_ms:.0f}")
+        split.append(f"pack {last.client_ms:.0f}")
+        text = f"last {last.round_trip_ms:.0f} ms ({' · '.join(split)})"
+        text += f" · p50 {stats['p50_ms']:.0f} · p95 {stats['p95_ms']:.0f} · max {stats['max_ms']:.0f} ms"
         if "sched_lag_ms" in stats:
             text += f" · gil lag {stats['sched_lag_ms']:.0f} ms"
+        text += f" · {self.calls} calls"
         return text

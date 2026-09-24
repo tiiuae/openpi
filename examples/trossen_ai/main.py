@@ -206,14 +206,16 @@ class TrossenOpenPIBridge:
             self._prompt_listener.set_latency(latency_summary)
         else:
             message = f"step {self.episode_step}: {mean_s * 1e3:.1f}ms/step ({1 / mean_s:.0f} Hz avg)"
-            if latency_summary is not None:
-                message += f" | {latency_summary}"
             if self._recorder is not None and self._recorder.is_recording:
                 message += f" | ● REC {self._recorder.steps} steps"
             if self.test_mode == "test" and self._last_action is not None:
                 action = np.array2string(self._last_action, precision=3, max_line_width=np.inf, suppress_small=True)
                 message += f" | TEST MODE, last action: {action}"
             logger.info(message)
+            # Its own line rather than the tail of the rate message, where it was
+            # easy to miss and long enough to wrap.
+            if latency_summary is not None:
+                logger.info("inference: %s", latency_summary)
         self._reset_rate_window()
 
     def _reset_rate_window(self) -> None:

@@ -317,9 +317,6 @@ class PinnedPromptListener(BasePromptListener):
                 (" · task: ", "dim"),
                 (f"{task!r}", "italic"),
             )
-        if latency is not None and not paused:
-            status.append(" · ", style="dim")
-            status.append(latency, style="cyan")
         if rec_state == "recording":
             status.append(" · ", style="dim")
             status.append(f"● REC {rec_steps} steps", style="bold red")
@@ -329,9 +326,17 @@ class PinnedPromptListener(BasePromptListener):
         if saving is not None:
             status.append(" · ", style="dim")
             status.append(f"💾 saving {saving}", style="bold magenta")
+        # Inference timing gets a line of its own: appended to the status line it
+        # was cut off on narrow terminals, and it was hidden while paused. It is
+        # still shown then (dimmed, as the last values seen) so a stall that
+        # caused the pause can be read off after the fact.
+        timing = Text.assemble(
+            ("⏱ inference ", "bold cyan" if not paused else "dim"),
+            (latency or "waiting for the first result…", "cyan" if not paused else "dim"),
+        )
         # Trailing reversed space renders as a block cursor.
         entry = Text.assemble(("❯ ", "bold cyan"), (buffer, ""), (" ", "reverse"))  # noqa: RUF001 - prompt glyph
-        return Group(_COMMAND_HINT, status, entry)
+        return Group(_COMMAND_HINT, status, timing, entry)
 
 
 def make_prompt_listener(default_prompt: str) -> BasePromptListener:
