@@ -71,6 +71,8 @@ class WebsocketPolicyServer:
                 await websocket.send(packer.pack(action))
                 prev_total_time = time.monotonic() - start_time
 
+                logger.info(f"Send actions | infernce latency: {infer_time * 1000:.2f} ms")
+
             except websockets.ConnectionClosed:
                 logger.info(f"Connection from {websocket.remote_address} closed")
                 break
