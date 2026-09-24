@@ -65,7 +65,10 @@ def test_the_first_call_is_held_aside_as_warmup():
     tracker.record(_timing(wire=30_000.0))
     assert tracker.warmup.wire_ms == pytest.approx(30_000.0)
     assert tracker.samples == 0
-    assert tracker.summary() is None
+    # Shown, so a long first call is explained rather than looking like a hang,
+    # but labelled as excluded from the statistics.
+    assert "warmup" in tracker.summary()
+    assert "30007 ms" in tracker.summary()
 
     for _ in range(10):
         tracker.record(_timing())
@@ -144,9 +147,32 @@ def test_summary_names_each_contributor():
     for _ in range(5):
         tracker.record(_timing(pack=5.0, wire=200.0, unpack=2.0, server=180.0))
     summary = tracker.summary()
-    assert summary.startswith("infer p50 207 p95 207 ms")
-    assert "server 180" in summary
-    assert "net 20" in summary
+    assert summary.startswith("last 207 ms (server 180 · net 20 · pack 7)")
+    assert "p50 207 · p95 207 · max 207 ms" in summary
+    assert summary.endswith("6 calls")
+
+
+def test_summary_leads_with_the_latest_call_not_the_median():
+    """A 200-sample median barely moves; while testing, the operator needs to
+    see the call that just happened, spike included."""
+    tracker = LatencyTracker()
+    tracker.record(_timing())
+    for _ in range(50):
+        tracker.record(_timing(pack=0.0, wire=100.0, unpack=0.0, server=90.0))
+    tracker.record(_timing(pack=0.0, wire=900.0, unpack=0.0, server=880.0))
+    summary = tracker.summary()
+    assert summary.startswith("last 900 ms (server 880 · net 20 · pack 0)")
+    assert "p50 100" in summary
+    assert "max 900 ms" in summary
+
+
+def test_summary_omits_server_and_net_when_the_backend_reports_neither():
+    tracker = LatencyTracker()
+    for _ in range(3):
+        tracker.record(_timing(server=None))
+    summary = tracker.summary()
+    assert "server" not in summary
+    assert "net" not in summary
     assert "pack 7" in summary
 
 
@@ -201,3 +227,37 @@ def test_server_timing_is_returned_when_present():
 @pytest.mark.parametrize("reply", [{"actions": []}, {"server_timing": "nope"}, None, "string"])
 def test_missing_server_timing_is_not_an_error(reply):
     assert server_timing(reply) == {}
+
+
+# -- terminal display ----------------------------------------------------------
+
+
+def _render(latency: str | None, *, paused: bool) -> str:
+    rich_console = pytest.importorskip("rich.console")
+    import terminal_ui  # noqa: PLC0415 - needs rich, which the bare test env may lack
+
+    listener = terminal_ui.PinnedPromptListener.__new__(terminal_ui.PinnedPromptListener)
+    terminal_ui.BasePromptListener.__init__(listener, "pick up the cup")
+    listener._buffer = ""
+    listener.set_latency(latency)
+    listener.set_paused(paused)
+    console = rich_console.Console(width=200, force_terminal=False, color_system=None, record=True)
+    console.print(listener._render())
+    return console.export_text()
+
+
+def test_the_terminal_shows_latency_on_its_own_line():
+    text = _render("last 212 ms (server 180 · net 25 · pack 7)", paused=False)
+    lines = [line for line in text.splitlines() if "inference" in line]
+    assert lines == ["⏱ inference last 212 ms (server 180 · net 25 · pack 7)"]
+
+
+def test_the_terminal_keeps_showing_latency_while_paused():
+    """It used to vanish on pause, which is exactly when a stall needs reading."""
+    text = _render("last 950 ms (server 930 · net 20 · pack 0)", paused=True)
+    assert "last 950 ms" in text
+    assert "paused" in text
+
+
+def test_the_terminal_says_it_is_waiting_before_the_first_result():
+    assert "waiting for the first result" in _render(None, paused=False)
