@@ -36,6 +36,7 @@ from openpi_client import websocket_client_policy
 from PIL import Image
 from policy_reply import validate_actions
 from realsense_settings import apply_realsense_settings
+import robot_lifecycle
 from scipy.interpolate import PchipInterpolator
 from scripted_motions import ARMS
 from scripted_motions import BIMANUAL_DIM
@@ -111,7 +112,13 @@ class TrossenOpenPIBridge:
             },
         )
         self.robot = make_robot_from_config(robot_config)
-        self.robot.connect()
+        if test_mode == "test":
+            # --mode test promises no movement. The driver's own connect() ends
+            # by driving both arms to the staged pose, so going through it would
+            # break that promise before a single test action is logged.
+            robot_lifecycle.connect_without_motion(self.robot)
+        else:
+            self.robot.connect()
 
         # Push the recorded exposure/gain/white balance onto the cameras so inference sees the
         # same image the policy was trained on, instead of whatever auto-exposure settles on.
@@ -714,31 +721,33 @@ class TrossenOpenPIBridge:
         logger.info("Starting autonomous mode")
         self.run_episode(task_prompt=task_prompt)
 
-    def cleanup(self):
-        """Disconnect the arms and release the cameras.
+    def cleanup(self, *, park: bool = True):
+        """Release the hardware, parking the arms first only when asked to.
 
-        robot.disconnect() parks both arms (staged pose, then all joints to zero)
-        before closing the cameras — but it closes them *after* the arms, so a
-        failing arm would otherwise leave the cameras held open and the next run
-        unable to grab them.
+        *park* must be False on every failure path. Parking is a new open-loop
+        motion through the staged pose and then down to the folded pose, and the
+        reason the client is shutting down — a driver fault, a camera timeout, a
+        blocked arm, the operator hitting Ctrl+C — is usually a reason not to
+        start one. An orderly 'quit' is the case where parking is what the
+        operator actually asked for.
+
+        In test mode the arms were connected braked and never commanded, so
+        there is nothing to park and doing so would be the very motion
+        --mode test promises not to make.
         """
         logger.info("Cleaning up...")
         if self._recorder is not None:
-            # Before disconnecting: an unsaved take is discarded (with a warning)
+            # Before releasing: an unsaved take is discarded (with a warning)
             # and the parquet writers closed, or the dataset cannot be reloaded.
             try:
                 self._recorder.close()
             except Exception:
                 logger.exception("Could not finalize the recording dataset")
-        try:
-            self.robot.disconnect()
-        except Exception:
-            logger.exception("Robot disconnect failed — releasing cameras directly")
-            for name, camera in self.robot.cameras.items():
-                try:
-                    camera.disconnect()
-                except Exception:
-                    logger.warning("Could not release camera %s", name, exc_info=True)
+
+        if park and self.test_mode == "autonomous":
+            robot_lifecycle.park_and_release(self.robot)
+        else:
+            robot_lifecycle.release_without_parking(self.robot)
 
 
 if __name__ == "__main__":
@@ -840,11 +849,19 @@ if __name__ == "__main__":
         record_repo_id=args.record_repo_id,
     )
 
+    # Parking is a new open-loop motion, so it happens only when the episode
+    # ended the way it was meant to. An interrupt or a crash releases the
+    # hardware where it stands: whatever made the client stop — a blocked arm,
+    # a driver fault, an operator reaching for Ctrl+C — is usually a reason not
+    # to start the arms moving again. Either way the devices are released, so
+    # the next run does not find them busy.
+    orderly_exit = False
     try:
         bridge.autonomous_mode(task_prompt=args.task_prompt)
+        orderly_exit = True
     except KeyboardInterrupt:
-        logger.info("Interrupted — shutting down")
+        logger.info("Interrupted — releasing the arms where they stand, not parking")
+    except Exception:
+        logger.exception("Episode failed — releasing the arms where they stand, not parking")
     finally:
-        # Ctrl+C and crashes must still park the arms and release the cameras,
-        # otherwise the next run finds the devices busy.
-        bridge.cleanup()
+        bridge.cleanup(park=orderly_exit)
