@@ -59,6 +59,11 @@ def detect_falconvla_config(checkpoint_dir: str | pathlib.Path, **overrides: Any
         detected["use_proprio"], detected["proprio_mode"] = _detect_proprio(resolved_dir, config_json)
 
     merged = {**detected, **{k: v for k, v in overrides.items() if v is not None}}
+    # Heads narrower than the bimanual robot are single-arm. Every 7-d checkpoint trained so far
+    # is the right arm (the lerobot-edge pi05 server makes the same assumption); pass arm="left"
+    # for one that is not.
+    if "arm" not in merged and merged["action_dim"] < FalconVLAConfig.robot_action_dim:
+        merged["arm"] = "right"
     return FalconVLAConfig(**merged)
 
 

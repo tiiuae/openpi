@@ -1,4 +1,5 @@
 from collections.abc import Mapping
+import inspect
 import logging
 import os
 import random
@@ -259,11 +260,169 @@ def _coerce_actions(actions: np.ndarray, *, action_horizon: int, action_dim: int
     return actions
 
 
+# Channels whose training span (q99 - q01) is below this never moved during collection, e.g. the
+# unused arm of a single-arm dataset. They are pinned to the training mean before normalizing: a
+# live value normalized on a near-degenerate range saturates to +/-1, which the model never saw.
+_FROZEN_SPAN_THRESH = 1e-3
+
+
+def _normalizes_internally(model) -> bool:
+    """Whether the checkpoint normalizes proprio itself inside `predict_action`.
+
+    FM-DiT (`proprio_mode="to_head"`) does, so it must be handed the RAW robot state; the ResNet
+    heads have no such step and expect an already-normalized vector.
+    """
+    return hasattr(model, "_normalize_proprio")
+
+
+def _proprio_is_kwarg(model) -> bool:
+    """Whether `predict_action` declares `proprio_inputs`.
+
+    ResNet takes it as a keyword argument; FM-DiT reads it out of the `inputs` dict and would
+    silently swallow the keyword into `**kwargs`.
+    """
+    try:
+        return "proprio_inputs" in inspect.signature(model.predict_action).parameters
+    except (TypeError, ValueError):
+        return False
+
+
+def _text_token_proprio(model) -> bool:
+    """Whether the checkpoint takes proprio as discretized tokens spliced into the VLM prefix."""
+    return str(getattr(model.config, "proprio_mode", "")).lower() == "text_token"
+
+
+def _has_prop_tokens(processor) -> bool:
+    """Whether the tokenizer has the `<prop*>` text tokens the `proprio_mode="tokens"` path injects."""
+    tokenizer = getattr(processor, "tokenizer", None)
+    if tokenizer is None:
+        return False
+    token_id = tokenizer.convert_tokens_to_ids("<prop0>")
+    return token_id is not None and token_id != getattr(tokenizer, "unk_token_id", None)
+
+
+def _proprio_token_ids(proprio_norm: np.ndarray, config) -> np.ndarray:
+    """Discretize normalized proprio into the top-of-vocab token block, as training did.
+
+    Training binned each scalar over `num_bins` edges spanning [bin_min, bin_max] and mapped bin
+    `b` to `base + b`, ascending with the value. The bundled `predict_action` instead maps to
+    `proprio_token_id_max - b`, which mirrors the encoding, so openpi builds the ids itself.
+    """
+    num_bins = int(getattr(config, "proprio_num_bins", 256))
+    lo = float(getattr(config, "proprio_bin_min", -1.0))
+    hi = float(getattr(config, "proprio_bin_max", 1.0))
+    base = int(getattr(config, "proprio_token_id_max", 131071)) - num_bins + 1
+
+    edges = np.linspace(lo, hi, num_bins)
+    bins = np.digitize(np.clip(np.asarray(proprio_norm, dtype=np.float64).ravel(), lo, hi), edges) - 1
+    return base + np.clip(bins, 0, num_bins - 1).astype(np.int64)
+
+
+def _splice_before_thinking(inputs: dict, token_ids: np.ndarray, thinking_token_id: int) -> None:
+    """Insert `token_ids` immediately before the first `<thinking>` token, in place.
+
+    Training anchored the proprio tokens here. The bundled `predict_action` anchors on the last
+    image patch instead, which lands them inside the final image block and displaces its
+    `|<end_of_img>|` terminator.
+    """
+    ids = inputs["input_ids"]
+    if ids.dim() != 2 or ids.shape[0] != 1:
+        raise ValueError(f"expected a single-sample input_ids, got shape {tuple(ids.shape)}")
+    found = (ids[0] == thinking_token_id).nonzero()
+    if found.numel() == 0:
+        raise ValueError("prompt contains no <thinking> token to anchor the proprio tokens to")
+    at = int(found[0])
+
+    extra = torch.as_tensor(token_ids, device=ids.device, dtype=ids.dtype).reshape(1, -1)
+    inputs["input_ids"] = torch.cat([ids[:, :at], extra, ids[:, at:]], dim=1)
+    mask = inputs.get("attention_mask")
+    if mask is not None:
+        ones = torch.ones((1, extra.shape[1]), device=mask.device, dtype=mask.dtype)
+        inputs["attention_mask"] = torch.cat([mask[:, :at], ones, mask[:, at:]], dim=1)
+
+
+def _arm_offset(arm: str, robot_action_dim: int) -> int:
+    """Index of the first channel belonging to `arm` in the robot's bimanual vector."""
+    if arm not in ("both", "left", "right"):
+        raise ValueError(f"arm must be 'both', 'left' or 'right', got {arm!r}")
+    return robot_action_dim // 2 if arm == "right" else 0
+
+
+def _fit(vec: np.ndarray, dim: int) -> np.ndarray:
+    """Truncate or zero-extend `vec` to `dim` channels."""
+    vec = np.asarray(vec, dtype=np.float64).ravel()
+    if vec.shape[0] >= dim:
+        return vec[:dim]
+    return np.concatenate([vec, np.zeros(dim - vec.shape[0])])
+
+
+def _build_proprio(
+    state: np.ndarray,
+    stats: dict,
+    *,
+    proprio_dim: int | None,
+    offset: int,
+    static_indices: tuple[int, ...] | None,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Assemble the checkpoint's proprio vector from the live robot state.
+
+    Starts from the training mean, so any channel the robot cannot supply -- dims beyond the
+    state vector, or an arm that was static during collection -- keeps the constant value the
+    model saw in training rather than a saturated out-of-range one. Channels listed in
+    `static_indices`, and any whose training span is ~0, are pinned to the mean.
+
+    Returns ``(proprio, pinned_mask)``.
+    """
+    mean = np.asarray(stats["mean"], dtype=np.float64)
+    dim = mean.shape[0]
+    if proprio_dim is not None and proprio_dim != dim:
+        raise ValueError(f"config proprio_dim={proprio_dim} but checkpoint stats are {dim}-d")
+
+    out = mean.copy()
+    live = min(dim, max(state.shape[0] - offset, 0))
+    out[:live] = state[offset : offset + live]
+
+    pinned = np.zeros(dim, dtype=bool)
+    pinned[[i for i in (static_indices or ()) if 0 <= i < dim]] = True
+    if "q01" in stats and "q99" in stats:
+        span = np.asarray(stats["q99"], dtype=np.float64) - np.asarray(stats["q01"], dtype=np.float64)
+        pinned[: span.shape[0]] |= span[:dim] < _FROZEN_SPAN_THRESH
+    out[pinned] = mean[pinned]
+    return out, pinned
+
+
+def _to_robot_actions(
+    actions: np.ndarray,
+    *,
+    offset: int,
+    robot_action_dim: int,
+    hold: np.ndarray,
+) -> np.ndarray:
+    """Widen or trim (action_horizon, action_dim) actions to the robot's (action_horizon, robot_action_dim).
+
+    Heads wider than the robot (16-d with extra end-effector columns) are truncated; narrower
+    single-arm heads are written at `offset` while the other arm holds `hold`, its measured pose.
+    """
+    if actions.shape[1] >= robot_action_dim:
+        return actions[:, :robot_action_dim]
+    out = np.tile(_fit(hold, robot_action_dim), (actions.shape[0], 1))
+    out[:, offset : offset + actions.shape[1]] = actions
+    return out
+
+
 class FalconVLA(_model.BaseModel):
     def __init__(self, config: FalconVLAConfig, checkpoint_dir: str = ""):
         super().__init__(config.action_dim, config.action_horizon, config.max_token_len)
         self.config = config
         self.checkpoint_dir = checkpoint_dir
+
+        # A head narrower than the robot drives one arm; which one cannot be inferred, and
+        # guessing would move the wrong arm. (Wider heads are simply truncated.)
+        if config.action_dim < config.robot_action_dim and config.arm == "both":
+            raise ValueError(
+                f"FalconVLA head has action_dim={config.action_dim} < robot_action_dim={config.robot_action_dim}: "
+                "set arm='left' or arm='right' on the config (or pass arm=... to the autoconfig)"
+            )
 
         # Pin RNGs before loading so the flow-matching action head is reproducible.
         _pin_determinism(config.seed, strict=config.strict_determinism)
@@ -275,6 +434,25 @@ class FalconVLA(_model.BaseModel):
         # Initialize model parameters or load pretrained weights here
         self.processor, self.model = load_falcon_model(checkpoint_dir, config.device, hf_token)
         _warn_if_action_shape_mismatch(self.model.config, config.action_dim, config.action_horizon)
+
+        # How proprio reaches this checkpoint. text_token checkpoints (detected from the model)
+        # take discretized ids spliced before <thinking>; proprio_mode="tokens" injects <prop*>
+        # text tokens; everything else takes a continuous tensor.
+        self._thinking_token_id = None
+        self._prop_tokens = False
+        if config.use_proprio:
+            if _text_token_proprio(self.model):
+                self._thinking_token_id = self.processor.tokenizer.encode("<thinking>", add_special_tokens=False)[0]
+                logger.info("FalconVLA: proprio_mode=text_token; splicing discretized proprio before <thinking>")
+            elif config.proprio_mode == "tokens":
+                self._prop_tokens = _has_prop_tokens(self.processor)
+                if not self._prop_tokens:
+                    # Configs written before proprio_mode existed default to "tokens"; for a
+                    # checkpoint without <prop*> tokens that would inject gibberish, so fall back.
+                    logger.warning(
+                        "FalconVLA: proprio_mode='tokens' but this checkpoint's tokenizer has no <prop*> "
+                        "tokens; passing proprio as a continuous input instead"
+                    )
 
     @torch.no_grad()
     def inference(self, observation: _model.Observation, task_label: str | None = None) -> _model.Actions:
@@ -322,55 +500,59 @@ class FalconVLA(_model.BaseModel):
             if secondary_image is not None:
                 input_builder.add_secondary_image(_to_pil(secondary_image))
 
+        state = observation.get("state", None)
+        raw_state = np.zeros(0) if state is None else np.asarray(state, dtype=np.float64).ravel()
+        offset = _arm_offset(self.config.arm, self.config.robot_action_dim)
+        single_arm_head = self.config.action_dim < self.config.robot_action_dim
+        if single_arm_head and raw_state.shape[0] < self.config.robot_action_dim:
+            # The idle arm holds its measured pose; without a state that pose is unknown, and
+            # padding with zeros would command it to the folded rest pose.
+            raise ValueError(
+                f"single-arm FalconVLA head (action_dim={self.config.action_dim}) needs the robot's "
+                f"{self.config.robot_action_dim}-d state to hold the other arm; got {raw_state.shape[0]}-d"
+            )
+
         proprio_inputs = None
+        proprio_token_ids = None
         if self.config.use_proprio:
-            # Normalize the raw state using the checkpoint's own proprio stats; how it then
-            # reaches the model depends on `proprio_mode` (see FalconVLAConfig).
+            # The checkpoint's own proprio stats (keyed by unnorm_key), and its proprio vector
+            # for the selected arm, with static and never-moving channels pinned to the mean.
             proprio_stats = fetch_proprio_stats(self.model, self.config.unnorm_key)
+            proprio, pinned = _build_proprio(
+                raw_state,
+                proprio_stats,
+                proprio_dim=self.config.proprio_dim,
+                offset=offset,
+                static_indices=self.config.static_proprio_indices,
+            )
 
-            raw_state = np.asarray(observation.get("state", None), dtype=np.float64).ravel()
-            _q01 = np.asarray(proprio_stats["q01"], dtype=np.float64)
-            _q99 = np.asarray(proprio_stats["q99"], dtype=np.float64)
-            _mean = np.asarray(proprio_stats["mean"], dtype=np.float64)
-            _span = _q99 - _q01
-
-            # Pin "frozen" proprio channels (those with ~zero training span — e.g. the
-            # static arm in a single-arm dataset) to the training mean before normalizing.
-            # At deploy the physical arm sits at an arbitrary pose; normalizing that live
-            # value on a near-degenerate [q01,q99] range saturates it to ±1 — a value the
-            # model never saw in training, which corrupts the conditioning and makes the
-            # policy emit a near-constant/jittery trajectory. Replacing those channels with
-            # the training mean keeps the tokenized input in-distribution.
-            frozen_span_thresh = 1e-3
-            n = min(raw_state.shape[0], _span.shape[0])
-            frozen_mask = np.zeros(raw_state.shape[0], dtype=bool)
-            frozen_mask[:n] = _span[:n] < frozen_span_thresh
-            pinned_state = raw_state.copy()
-            pinned_state[:n][frozen_mask[:n]] = _mean[:n][frozen_mask[:n]]
-
-            normalized_proprio = normalize_proprio(pinned_state, proprio_stats)
-
-            # Debug: per-channel flags — PIN = frozen channel pinned to mean,
-            # OOD = live value outside training bounds.
             if logger.isEnabledFor(logging.DEBUG):
-                logger.debug(f"{'i':>2} {'raw':>12} {'pinned':>12} {'q01':>12} {'q99':>12} {'span':>10}  flag")
-                for i in range(len(raw_state)):
-                    ood = i < n and ((raw_state[i] < _q01[i] - 1e-6) or (raw_state[i] > _q99[i] + 1e-6))
-                    flag = "PIN" if frozen_mask[i] else ("OOD" if ood else "")
-                    _q01_i, _q99_i, _span_i = (_q01[i], _q99[i], _span[i]) if i < n else (float("nan"),) * 3
-                    logger.debug(
-                        f"{i:>2} {raw_state[i]:>12.5f} {pinned_state[i]:>12.5f} {_q01_i:>12.5f} {_q99_i:>12.5f} {_span_i:>10.5f}  {flag}"
-                    )
+                q01 = np.asarray(proprio_stats.get("q01", proprio_stats["mean"]), dtype=np.float64)
+                q99 = np.asarray(proprio_stats.get("q99", proprio_stats["mean"]), dtype=np.float64)
+                logger.debug("proprio arm=%s dim=%d offset=%d", self.config.arm, len(proprio), offset)
+                for i, value in enumerate(proprio):
+                    ood = not q01[i] - 1e-6 <= value <= q99[i] + 1e-6
+                    flag = "PIN" if pinned[i] else ("OOD" if ood else "")
+                    logger.debug(f"{i:>2} {value:>12.5f} {q01[i]:>12.5f} {q99[i]:>12.5f}  {flag}")
 
-            if self.config.proprio_mode == "tokens":
+            if self._thinking_token_id is not None:
+                # Spliced into the prompt below; leaving `proprio_inputs` unset keeps the
+                # checkpoint from also splicing its own (mirrored, mis-anchored) copy.
+                proprio_token_ids = _proprio_token_ids(normalize_proprio(proprio, proprio_stats), self.model.config)
+            elif self._prop_tokens:
                 # Discrete-token path: inject `<prop*>` text tokens into the prompt (the FM-DiT
                 # `-p` checkpoints, e.g. aidrc_cups_manipulation_14 dualarm).
-                proprio_tokens = tokenize_proprio(normalized_proprio, self.config.num_bins)
+                proprio_tokens = tokenize_proprio(normalize_proprio(proprio, proprio_stats), self.config.num_bins)
                 input_builder.add_proprio("".join(proprio_tokens))
             else:
-                # FiLM path: pass a continuous tensor as `proprio_inputs=` to `predict_action`
-                # (the ResNet `-p-film` checkpoints).
-                proprio_inputs = torch.as_tensor(normalized_proprio, device=self.config.device).float()
+                # Continuous path. FM-DiT heads normalize internally and must get the raw vector
+                # (on CPU: they build their bounds there and move the result themselves); ResNet
+                # FiLM heads expect it already normalized, on the model device.
+                normalizes_internally = _normalizes_internally(self.model)
+                if not normalizes_internally:
+                    proprio = normalize_proprio(proprio, proprio_stats)
+                proprio_device = "cpu" if normalizes_internally else self.config.device
+                proprio_inputs = torch.as_tensor(np.asarray(proprio), device=proprio_device).float()
                 # -> (B, T, proprio_dim); single-frame history => T=1
                 if proprio_inputs.dim() == 1:
                     proprio_inputs = proprio_inputs.unsqueeze(0).unsqueeze(0)
@@ -381,9 +563,17 @@ class FalconVLA(_model.BaseModel):
         inputs.pop("token_type_ids", None)
         inputs = {k: (v.to(self.config.device) if hasattr(v, "to") else v) for k, v in inputs.items()}
 
+        if proprio_token_ids is not None:
+            _splice_before_thinking(inputs, proprio_token_ids, self._thinking_token_id)
+
         predict_action_kwargs = {}
         if proprio_inputs is not None:
-            predict_action_kwargs["proprio_inputs"] = proprio_inputs
+            # ResNet declares the keyword; FM-DiT reads it out of `inputs` and would silently
+            # swallow a keyword into **kwargs.
+            if _proprio_is_kwarg(self.model):
+                predict_action_kwargs["proprio_inputs"] = proprio_inputs
+            else:
+                inputs["proprio_inputs"] = proprio_inputs
 
         raw_actions = self.model.predict_action(
             inputs,
@@ -394,9 +584,10 @@ class FalconVLA(_model.BaseModel):
         )
         if isinstance(raw_actions, torch.Tensor):
             raw_actions = raw_actions.detach().cpu().float().numpy()
-        return _coerce_actions(
+        actions = _coerce_actions(
             np.asarray(raw_actions), action_horizon=self.config.action_horizon, action_dim=self.config.action_dim
         )
+        return _to_robot_actions(actions, offset=offset, robot_action_dim=self.config.robot_action_dim, hold=raw_state)
 
     @override
     def compute_loss(
