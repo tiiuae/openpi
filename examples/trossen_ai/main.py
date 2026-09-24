@@ -31,7 +31,6 @@ from lerobot.robots import make_robot_from_config
 from lerobot_robot_trossen.config_bi_widowxai_follower import BiWidowXAIFollowerRobotConfig
 import numpy as np
 from openpi_client import websocket_client_policy
-from PIL import Image
 from realsense_settings import apply_realsense_settings
 from scipy.interpolate import PchipInterpolator
 from scripted_motions import ARMS
@@ -44,7 +43,6 @@ import terminal_ui
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
 
-DEFAULT_TRAINING_SIZE = (224, 224)
 DEFAULT_REALSENSE_SETTINGS = Path(__file__).parent / "realsense_settings.json"
 # How often the control loop logs its rate when there is no pinned status line.
 # Anything faster competes with the operator typing instructions into the terminal.
@@ -76,7 +74,10 @@ class TrossenOpenPIBridge:
         record_dir: str | None = None,
         record_repo_id: str = "local/trossen_eval",
     ):
-        self.starvla = starvla
+        if starvla:
+            # Kept so existing launch commands still start. Its only effect was to
+            # pick a PIL resize instead of cv2, and the client no longer resizes.
+            logger.warning("--starvla no longer has any effect: images are sent at native resolution")
         self.control_frequency = control_frequency
         self.max_steps = max_steps
         self.dt = 1.0 / control_frequency
@@ -289,13 +290,19 @@ class TrossenOpenPIBridge:
         cameras = list(self.robot._cameras_ft.keys())
         images = {}
         for cam in cameras:
-            image_hwc = observation_dict[cam]
-            if self.starvla:
-                image_rgb = np.array(Image.fromarray(cv2.cvtColor(image_hwc, cv2.COLOR_BGR2RGB)).resize((224, 224)))
-            else:
-                image_resized = cv2.resize(image_hwc, DEFAULT_TRAINING_SIZE, interpolation=cv2.INTER_LANCZOS4)
-                image_rgb = cv2.cvtColor(image_resized, cv2.COLOR_BGR2RGB)
-            images[cam] = np.transpose(image_rgb, (2, 0, 1))
+            # Frames go out at the camera's native resolution. Resizing is the
+            # server's job: each backend resizes the way its model was trained
+            # (openpi's ResizeImages letterboxes to 224x224, ACT resizes to its
+            # own training size), and a client-side squash to 224x224 both
+            # distorted the aspect ratio and threw detail away before any of
+            # them got the chance.
+            #
+            # The channel swap is deliberately unchanged. The camera already
+            # returns RGB, so this makes the wire BGR — but every server built
+            # against CLIENT_SCHEMA.md flips it back, and dropping the swap here
+            # alone would silently reverse their colours.
+            image = cv2.cvtColor(observation_dict[cam], cv2.COLOR_BGR2RGB)
+            images[cam] = np.transpose(image, (2, 0, 1))
         return {"state": joint_positions, "images": images, "prompt": task_prompt}
 
     def move_to_start_position(self, goal_position: np.ndarray, duration: float = 5.0):
@@ -615,7 +622,10 @@ if __name__ == "__main__":
         "Requires an ensemble (not 'none'). Recommended with --ensemble_type cogact.",
     )
     parser.add_argument(
-        "--starvla", action="store_true", help="Use StarVLA image resizing (224x224 via PIL) instead of default"
+        "--starvla",
+        action="store_true",
+        help="Deprecated, no effect. It used to select a PIL resize to 224x224; images are now sent at native "
+        "resolution for every backend and the server resizes.",
     )
     parser.add_argument(
         "--use_left_arm_only", action="store_true", help="Only move the left arm; right arm stays at current pose"
