@@ -30,9 +30,11 @@ class FakeDriver:
         self.log = log
         self.name = name
         self.fail_cleanup = fail_cleanup
+        self.modes: list = []
 
     def set_all_modes(self, mode):
-        self.log.append(f"{self.name}:mode={mode}")
+        self.modes.append(mode)
+        self.log.append(f"{self.name}:mode")
 
     def set_all_positions(self, positions, goal_time=2.0, blocking=True):
         self.log.append(f"{self.name}:MOVE")
@@ -125,11 +127,18 @@ def test_motion_free_connect_issues_no_position_goal():
 
 def test_motion_free_connect_brakes_both_arms():
     """Idle is braked, not limp, so an observation-only session holds its pose
-    instead of the arm dropping."""
+    instead of the arm dropping.
+
+    Compared against whichever Mode.idle robot_lifecycle actually bound: the
+    stub above in a bare environment, or the real trossen_arm enum when another
+    test has already imported the driver. Comparing strings made this pass or
+    fail depending on test order.
+    """
     robot = FakeRobot()
     robot_lifecycle.connect_without_motion(robot)
-    assert "left:mode=idle" in robot.log
-    assert "right:mode=idle" in robot.log
+    idle = robot_lifecycle.trossen_arm.Mode.idle
+    assert robot.left_arm.driver.modes == [idle]
+    assert robot.right_arm.driver.modes == [idle]
 
 
 def test_motion_free_connect_still_opens_the_cameras():
