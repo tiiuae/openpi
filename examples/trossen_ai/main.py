@@ -26,9 +26,9 @@ from action_ensemble import AsyncPolicyWorker
 from action_ensemble import make_ensemble
 import cv2
 from episode_recorder import EpisodeRecorder
+from latency import LatencyTracker
 from lerobot.cameras.opencv.configuration_opencv import OpenCVCameraConfig
 from lerobot.robots import make_robot_from_config
-from latency import LatencyTracker
 from lerobot_robot_trossen.config_bi_widowxai_follower import BiWidowXAIFollowerRobotConfig
 import motion_limits
 from motion_limits import JointLimitError
