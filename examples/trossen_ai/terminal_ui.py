@@ -21,6 +21,7 @@ from __future__ import annotations
 from abc import ABC
 from abc import abstractmethod
 import atexit
+from collections.abc import Callable
 from collections.abc import Iterable
 import logging
 import os
@@ -101,12 +102,22 @@ class BasePromptListener(ABC):
     Args:
         default_prompt: Instruction restored when the operator hits Enter on an
             empty line.
+        is_stop: Returns True for a line that asks the arm to stop. Such a line
+            latches ``stop_requested`` the instant it is typed, instead of
+            waiting for the control loop to come back and poll. The loop only
+            polls between steps, so without this a stop typed during an
+            8-second ramp or a scripted motion sat in the buffer while setpoints
+            kept streaming.
     """
 
     pinned = False
 
-    def __init__(self, default_prompt: str) -> None:
+    def __init__(self, default_prompt: str, is_stop: Callable[[str], bool] | None = None) -> None:
         self._default_prompt = default_prompt
+        self._is_stop = is_stop
+        # Latched, not a flag that the reader clears: a stop must survive until
+        # something acts on it, however long the loop takes to look.
+        self.stop_requested = threading.Event()
         self._pending: str | None = None
         self._lock = threading.Lock()
         self._running = False
@@ -158,9 +169,18 @@ class BasePromptListener(ABC):
 
     # -- internals ---------------------------------------------------------
 
+    def clear_stop(self) -> None:
+        """Drop the latch once the loop has acted on the stop."""
+        self.stop_requested.clear()
+
     def _submit(self, line: str) -> None:
+        text = line or self._default_prompt
+        if self._is_stop is not None and self._is_stop(text):
+            # Set before the line is queued, so a blocking motion sees it on its
+            # very next tick rather than when the loop next polls.
+            self.stop_requested.set()
         with self._lock:
-            self._pending = line or self._default_prompt
+            self._pending = text
 
 
 class PlainPromptListener(BasePromptListener):
@@ -201,8 +221,8 @@ class PinnedPromptListener(BasePromptListener):
 
     pinned = True
 
-    def __init__(self, default_prompt: str) -> None:
-        super().__init__(default_prompt)
+    def __init__(self, default_prompt: str, is_stop: Callable[[str], bool] | None = None) -> None:
+        super().__init__(default_prompt, is_stop)
         self._buffer = ""
         self._live: Live | None = None
         self._fd = sys.stdin.fileno()
@@ -319,8 +339,10 @@ class PinnedPromptListener(BasePromptListener):
         return Group(_COMMAND_HINT, status, entry)
 
 
-def make_prompt_listener(default_prompt: str) -> BasePromptListener:
+def make_prompt_listener(
+    default_prompt: str, is_stop: Callable[[str], bool] | None = None
+) -> BasePromptListener:
     """Return the pinned listener when the terminal supports it, else the plain one."""
     if not (sys.stdin and sys.stdin.isatty() and console.is_terminal and termios is not None):
-        return PlainPromptListener(default_prompt)
-    return PinnedPromptListener(default_prompt)
+        return PlainPromptListener(default_prompt, is_stop)
+    return PinnedPromptListener(default_prompt, is_stop)

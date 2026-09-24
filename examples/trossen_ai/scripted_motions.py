@@ -198,6 +198,9 @@ class ScriptedMotions:
         enabled_arms: Arms the operator allowed to move (``--use_left_arm_only``
             and friends). Commands for a disabled arm are refused, not silently
             re-targeted — the flag usually means that arm must not move at all.
+        should_cancel: Checked before every streamed target. These moves block
+            the control loop for seconds at a time, so without it a typed stop
+            cannot be seen until the move has finished running.
     """
 
     def __init__(
@@ -208,6 +211,7 @@ class ScriptedMotions:
         joint_limits: np.ndarray | None = None,
         velocity_limits: np.ndarray | None = None,
         enabled_arms: tuple[str, ...] = ARMS,
+        should_cancel: Callable[[], bool] | None = None,
     ) -> None:
         self._get_pose = get_pose
         self._send_pose = send_pose
@@ -215,6 +219,7 @@ class ScriptedMotions:
         self._joint_limits = joint_limits
         self._velocity_limits = velocity_limits
         self._enabled_arms = tuple(enabled_arms)
+        self._should_cancel = should_cancel
 
     # -- dispatch ----------------------------------------------------------
 
@@ -274,6 +279,9 @@ class ScriptedMotions:
         the elbow through the workspace, while home is a known-safe waypoint.
         """
         self.home(arms)
+        if self._cancelled():
+            # Cancelled during the first leg: do not start the second one.
+            return
         goal = self._get_pose().copy()
         for arm in arms:
             offset = ARM_OFFSETS[arm]
@@ -293,6 +301,17 @@ class ScriptedMotions:
 
     def wave(self, arms: tuple[str, ...]) -> None:
         self._oscillate(arms, BASE_YAW_IDX, WAVE_AMPLITUDE_RAD, WAVE_PERIOD_S, WAVE_CYCLES)
+
+    def _cancelled(self) -> bool:
+        """True once the operator has asked the arm to stop.
+
+        The arm holds wherever the move had reached: a canned motion is
+        open-loop, so abandoning it part way is exactly "stop here".
+        """
+        if self._should_cancel is None or not self._should_cancel():
+            return False
+        logger.info("Scripted motion cancelled — holding position")
+        return True
 
     # -- primitives --------------------------------------------------------
 
@@ -323,6 +342,8 @@ class ScriptedMotions:
         loop_start = time.perf_counter()
         elapsed = 0.0
         while elapsed < duration:
+            if self._cancelled():
+                return
             step_start = time.perf_counter()
             self._send_pose(motion_limits.minimum_jerk_pose(start, goal, elapsed, duration))
             self._sleep_remaining(step_start)
@@ -343,6 +364,8 @@ class ScriptedMotions:
         loop_start = time.perf_counter()
         elapsed = 0.0
         while elapsed < duration:
+            if self._cancelled():
+                return
             step_start = time.perf_counter()
             pose = start.copy()
             delta = amplitude * np.sin(2.0 * np.pi * elapsed / period)
