@@ -1228,7 +1228,7 @@ _CONFIGS = [
     TrainConfig(
         name="FalconVLA-AD14-H25",
         model=falconvla_config.FalconVLAConfig(
-            unnorm_key="aidrc_cups_manipulation_14",
+            unnorm_key="aidrc_aloha_demo_short_horizon_14_rlds",
             action_dim=14,
             action_horizon=25,
             use_proprio=True,
@@ -1241,7 +1241,7 @@ _CONFIGS = [
     TrainConfig(
         name="FalconVLA-AD14-H25-NP",
         model=falconvla_config.FalconVLAConfig(
-            unnorm_key="aidrc_cups_manipulation_14",
+            unnorm_key="aidrc_aloha_demo_short_horizon_14_rlds",
             action_dim=14,
             action_horizon=25,
             use_proprio=False,
@@ -1293,32 +1293,64 @@ _CONFIGS = [
     TrainConfig(
     name="FalconVLA-AD16-H25-P",
     model=falconvla_config.FalconVLAConfig(
-        unnorm_key="aloha_geometry_dataset_simple_single_arm_translated_rlds",
+        unnorm_key="aloha_geometry_dataset_simple_single_arm_translated_large_rlds",
         action_dim=16,
         action_horizon=25,
-        use_proprio=False,
-        # use_proprio_projector=True,
-        # proprio_dim=19,
-        # proprio_history_window=1,
+        use_proprio=True,
+        proprio_dim=14,
+        static_proprio_indices=(0, 1, 2, 3, 4, 5, 6),
     ),
     data=LeRobotFalconVLADataConfig(
         assets=AssetsConfig(asset_id="trossen"),
     ),
     policy_metadata={"reset_pose": [0, -1.5, 1.5, 0, 0, 0]},
     ),
-    # TrainConfig(
-    # name="FalconVLA-AD16-H25",
-    # model=falconvla_config.FalconVLAConfig(
-    #     unnorm_key="aloha_geometry_dataset_single_arm_reach_rlds",
-    #     action_dim=16,
-    #     action_horizon=25,
-    #     use_proprio=True,
-    # ),
-    # data=LeRobotFalconVLADataConfig(
-    #     assets=AssetsConfig(asset_id="trossen"),
-    # ),
-    # policy_metadata={"reset_pose": [0, -1.5, 1.5, 0, 0, 0]},
-    # ),
+    TrainConfig(
+    # 19-d proprio: dims 0:14 are the joints, 14:19 extra channels the robot cannot supply.
+    name="FalconVLA-AD16-H25-P19",
+    model=falconvla_config.FalconVLAConfig(
+        unnorm_key="aloha_geometry_dataset_simple_single_arm_translated_rlds",
+        action_dim=16,
+        action_horizon=25,
+        use_proprio=True,
+        proprio_dim=19,
+        static_proprio_indices=(0, 1, 2, 3, 4, 5, 6),
+    ),
+    data=LeRobotFalconVLADataConfig(
+        assets=AssetsConfig(asset_id="trossen"),
+    ),
+    policy_metadata={"reset_pose": [0, -1.5, 1.5, 0, 0, 0]},
+    ),
+    TrainConfig(
+    name="FalconVLA-AD16-H25-P19-SH",
+    model=falconvla_config.FalconVLAConfig(
+        unnorm_key="aidrc_aloha_demo_short_horizon_16_rlds",
+        action_dim=16,
+        action_horizon=25,
+        use_proprio=True,
+        proprio_dim=19,
+        static_proprio_indices=(0, 1, 2, 3, 4, 5, 6),
+    ),
+    data=LeRobotFalconVLADataConfig(
+        assets=AssetsConfig(asset_id="trossen"),
+    ),
+    policy_metadata={"reset_pose": [0, -1.5, 1.5, 0, 0, 0]},
+    ),
+    TrainConfig(
+    name="FalconVLA-AD14-H25-P",
+    model=falconvla_config.FalconVLAConfig(
+        unnorm_key="aidrc_aloha_demo_short_horizon_14_rlds",
+        action_dim=14,
+        action_horizon=25,
+        use_proprio=True,
+        proprio_dim=14,
+        static_proprio_indices=(0, 1, 2, 3, 4, 5, 6),
+    ),
+    data=LeRobotFalconVLADataConfig(
+        assets=AssetsConfig(asset_id="trossen"),
+    ),
+    policy_metadata={"reset_pose": [0, -1.5, 1.5, 0, 0, 0]},
+    ),
     TrainConfig(
     name="FalconVLA-AD14-H50-NP",
     model=falconvla_config.FalconVLAConfig(
@@ -1348,10 +1380,11 @@ _CONFIGS = [
     TrainConfig(
     name="FalconVLA-AD7-H25-NP",
     model=falconvla_config.FalconVLAConfig(
-        unnorm_key="aloha_geometry_dataset_single_arm_rlds_right_truncated",
+        unnorm_key="aidrc_aloha_demo_short_horizon_7_rlds",
         action_dim=7,
         action_horizon=25,
         use_proprio=False,
+        arm="right",
     ),
     data=LeRobotFalconVLADataConfig(
         assets=AssetsConfig(asset_id="trossen"),
@@ -1361,10 +1394,74 @@ _CONFIGS = [
     TrainConfig(
     name="FalconVLA-AD7-H25",
     model=falconvla_config.FalconVLAConfig(
-        unnorm_key="aloha_geometry_dataset_single_arm_rlds_right_truncated",
+        unnorm_key="aidrc_aloha_demo_short_horizon_7_rlds",
         action_dim=7,
         action_horizon=25,
         use_proprio=True,
+        proprio_dim=7,
+        arm="right",
+    ),
+    data=LeRobotFalconVLADataConfig(
+        assets=AssetsConfig(asset_id="trossen"),
+    ),
+    policy_metadata={"reset_pose": [0, -1.5, 1.5, 0, 0, 0]},
+    ),
+    TrainConfig(
+    name="FalconVLA-AD7-H25-LEFT",
+    model=falconvla_config.FalconVLAConfig(
+        unnorm_key="aidrc_aloha_demo_short_horizon_7_rlds",
+        action_dim=7,
+        action_horizon=25,
+        use_proprio=True,
+        proprio_dim=7,
+        arm="left",
+    ),
+    data=LeRobotFalconVLADataConfig(
+        assets=AssetsConfig(asset_id="trossen"),
+    ),
+    policy_metadata={"reset_pose": [0, -1.5, 1.5, 0, 0, 0]},
+    ),
+    TrainConfig(
+    # FM-DiT bimanual no-proprio export, whose stats key omits the dimension suffix used by
+    # the other short-horizon datasets.
+    name="FalconVLA-AD14-H25-NP-SH",
+    model=falconvla_config.FalconVLAConfig(
+        unnorm_key="aidrc_aloha_demo_short_horizon_rlds",
+        action_dim=14,
+        action_horizon=25,
+        use_proprio=False,
+    ),
+    data=LeRobotFalconVLADataConfig(
+        assets=AssetsConfig(asset_id="trossen"),
+    ),
+    policy_metadata={"reset_pose": [0, -1.5, 1.5, 0, 0, 0]},
+    ),
+    TrainConfig(
+    # Two-view FM-DiT exports: overhead plus the right wrist, no left wrist.
+    name="FalconVLA-AD7-H25-2V",
+    model=falconvla_config.FalconVLAConfig(
+        unnorm_key="aidrc_aloha_demo_short_horizon_7_rlds",
+        action_dim=7,
+        action_horizon=25,
+        use_proprio=True,
+        proprio_dim=7,
+        arm="right",
+        use_secondary=False,
+    ),
+    data=LeRobotFalconVLADataConfig(
+        assets=AssetsConfig(asset_id="trossen"),
+    ),
+    policy_metadata={"reset_pose": [0, -1.5, 1.5, 0, 0, 0]},
+    ),
+    TrainConfig(
+    name="FalconVLA-AD7-H25-NP-2V",
+    model=falconvla_config.FalconVLAConfig(
+        unnorm_key="aidrc_aloha_demo_short_horizon_7_rlds",
+        action_dim=7,
+        action_horizon=25,
+        use_proprio=False,
+        arm="right",
+        use_secondary=False,
     ),
     data=LeRobotFalconVLADataConfig(
         assets=AssetsConfig(asset_id="trossen"),
