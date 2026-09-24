@@ -52,6 +52,10 @@ print({k: v.shape for k, v in obs["images"].items()})
 # {'cam_high': (3, 224, 224), 'cam_right_wrist': (3, 224, 224), 'cam_left_wrist': (3, 224, 224)}
 ```
 
+The bundled `captured_request_2026-08-13.msgpack` predates the switch to native
+resolution: the live client now sends `(3, 480, 640)` frames, unresized. Recapture
+with `capture_request.py` to test against what the client actually sends.
+
 ⚠️ The image arrays are **channel-first (3, H, W), uint8, BGR** — see the color
 order note in `CLIENT_SCHEMA.md` §2. If your model expects RGB (it almost
 certainly does), flip the channel axis server-side.

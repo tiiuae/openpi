@@ -61,13 +61,22 @@ Key facts a server must honor:
 |-------|------|-------|
 | `state` | `np.ndarray` `(D,)` | 1-D, **not** `(1, D)`. Raw joint positions (radians). `D == action_dim`. |
 | `images` | `dict[str, np.ndarray]` | **A dict, not a list.** Keys are camera names. |
-| image array | `np.ndarray` `(3, H, W)` uint8 | **Channel-first (CHW)**, **BGR** channel order (see note), already resized (224×224 by default; `H=W=224`). |
+| image array | `np.ndarray` `(3, H, W)` uint8 | **Channel-first (CHW)**, **BGR** channel order (see note), at the camera's **native resolution** — **not resized** (`H=480, W=640` on the current rig). Resizing is the server's job. |
 | camera order | dict insertion order | `cam_high`, `cam_right_wrist`, `cam_left_wrist`. msgpack preserves insertion order — **treat it as significant** and keep it aligned with training. |
 | `prompt` | `str` | The client key is `prompt` (**not** `lang`, **not** `instruction`). |
 
-The client builds this in `TrossenOpenPIBridge._build_observation()`. It resizes
-to 224×224 (PIL with `--starvla`, else cv2 LANCZOS) — the wire layout is
-identical either way.
+The client builds this in `TrossenOpenPIBridge._build_observation()`. It does
+**not** resize: frames are sent exactly as the camera produced them, and each
+server resizes the way its own model was trained. openpi does this already —
+`ResizeImages(224, 224)` in the model transforms letterboxes a 640×480 frame to
+224×168 plus black bars, as in training. A server whose model needs a fixed
+input size must resize on its side; do not assume 224×224 arrives.
+
+Earlier clients squashed every frame to 224×224 with `cv2.resize`, distorting
+the aspect ratio. Captures made before that change (such as
+`captured_request_2026-08-13.msgpack`) are 224×224 and do not represent what the
+client sends now. `--starvla`, which only chose the resize method, is accepted
+but has no effect.
 
 ### 2.1 How numpy arrays are encoded in msgpack
 
@@ -79,7 +88,7 @@ There is no msgpack extension type in play — each ndarray is a plain msgpack
     b"__ndarray__": True,
     b"data":  <raw C-order array bytes>,   # msgpack bin
     b"dtype": "<f8",                       # numpy dtype str, e.g. "<f8" (float64), "|u1" (uint8)
-    b"shape": [3, 224, 224],               # msgpack array of ints
+    b"shape": [3, 480, 640],               # msgpack array of ints
 }
 ```
 
@@ -172,6 +181,7 @@ native multi-example clients.
 - [ ] Send a metadata dict (even `{}`) **once, immediately on connect**.
 - [ ] Decode requests with `msgpack_numpy`; accept a **flat** dict (no `examples` wrapper).
 - [ ] Read `prompt` (string), `state` `(D,)`, `images` = **dict** of **CHW BGR** uint8 arrays.
+- [ ] **Resize images yourself** to what your model expects — they arrive at native camera resolution.
 - [ ] Preserve camera order from the `images` dict.
 - [ ] Flip **BGR→RGB** if your model expects RGB (it almost certainly does).
 - [ ] Return `{"actions": ndarray}` with `actions` **2-D `(horizon, action_dim)`**, un-normalized, at top level.

@@ -52,7 +52,9 @@ def capture(task_prompt: str, output_path: str) -> None:
         joint_pos_keys = [k for k in observation_dict.keys() if k.endswith(".pos")]
         joint_positions = np.array([observation_dict[k] for k in joint_pos_keys])
 
-        # Resize and convert camera images (BGR -> RGB, HWC -> CHW)
+        # Same image path as main.py's _build_observation(): native resolution,
+        # no resize (the server resizes for its own model), and the same channel
+        # swap, so a capture is what the live client really sends.
         import os
 
         debug_dir = "debug"
@@ -62,23 +64,18 @@ def capture(task_prompt: str, output_path: str) -> None:
         images = {}
         for cam in cameras:
             image_hwc = observation_dict[cam]
-            cv2.imwrite(os.path.join(debug_dir, f"{cam}_01_raw_bgr.png"), image_hwc)
+            # lerobot's OpenCVCamera returns RGB; cv2.imwrite expects BGR.
+            cv2.imwrite(os.path.join(debug_dir, f"{cam}_01_camera.png"), cv2.cvtColor(image_hwc, cv2.COLOR_RGB2BGR))
 
-            image_resized = cv2.resize(image_hwc, (224, 224))
-            cv2.imwrite(os.path.join(debug_dir, f"{cam}_02_resized_bgr.png"), image_resized)
-
-            image_rgb = cv2.cvtColor(image_resized, cv2.COLOR_BGR2RGB)
-            cv2.imwrite(os.path.join(debug_dir, f"{cam}_03_resized_rgb.png"), image_resized)
-
-            image_chw = np.transpose(image_rgb, (2, 0, 1))
-            cv2.imwrite(
-                os.path.join(debug_dir, f"{cam}_04_final_chw_as_hwc.png"),
-                np.transpose(image_chw, (1, 2, 0))[:, :, ::-1],
-            )
+            image_chw = np.transpose(cv2.cvtColor(image_hwc, cv2.COLOR_BGR2RGB), (2, 0, 1))
+            # The wire array read as BGR, which is what CLIENT_SCHEMA.md says it is.
+            # If that is right this file shows true colours, identical to _01; if the
+            # colours are swapped here, the wire is not BGR and the schema is wrong.
+            cv2.imwrite(os.path.join(debug_dir, f"{cam}_02_wire_read_as_bgr.png"), np.transpose(image_chw, (1, 2, 0)))
 
             images[cam] = image_chw
 
-        logger.info(f"Debug images saved to '{debug_dir}/'  ({len(cameras) * 4} files)")
+        logger.info(f"Debug images saved to '{debug_dir}/'  ({len(cameras) * 2} files)")
 
         observation = {
             "state": joint_positions,

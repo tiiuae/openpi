@@ -88,12 +88,11 @@ These are deployment-correctness issues the code cannot check for you:
    remap (e.g. `secondary=cam_left_wrist`) to match how you trained — guessing
    wrong here degrades the policy badly.
 
-3. **Image resolution.** The client downsamples to `224×224` (a pi0 requirement)
-   at `main.py` line ~171: `cv2.resize(image_hwc, (224, 224))`. ACT was trained at
-   `480×640`. The server upscales back to `480×640`, but you lose detail. For best
-   results change that line to `cv2.resize(image_hwc, (640, 480))` (W,H) so the
-   client sends full resolution. The server's `--image_height/--image_width`
-   default to `480×640`; keep them matched to training.
+3. **Image resolution.** The client sends frames at native camera resolution
+   (`480×640`) without resizing, so nothing needs changing in `main.py`. The
+   server resizes to its `--image_height/--image_width`, which default to
+   `480×640`; keep them matched to training. (Older clients downsampled to
+   `224×224` and the server had to upscale back, losing detail.)
 
 ## Notes
 
