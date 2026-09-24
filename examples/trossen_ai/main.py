@@ -289,12 +289,17 @@ class TrossenOpenPIBridge:
         cameras = list(self.robot._cameras_ft.keys())
         images = {}
         for cam in cameras:
-            image_hwc = observation_dict[cam]
+            # lerobot's OpenCVCamera already returns RGB (color_mode defaults to
+            # RGB), and every model was trained on RGB, so the frame is sent with
+            # its channels untouched. There used to be a cv2.cvtColor(BGR2RGB)
+            # here, which swapped an already-RGB frame into BGR on the wire and
+            # left each server to flip it back — five of seven server paths did
+            # not, and fed their model a blue table. Servers must not flip.
+            image_rgb = observation_dict[cam]
             if self.starvla:
-                image_rgb = np.array(Image.fromarray(cv2.cvtColor(image_hwc, cv2.COLOR_BGR2RGB)).resize((224, 224)))
+                image_rgb = np.array(Image.fromarray(image_rgb).resize((224, 224)))
             else:
-                image_resized = cv2.resize(image_hwc, DEFAULT_TRAINING_SIZE, interpolation=cv2.INTER_LANCZOS4)
-                image_rgb = cv2.cvtColor(image_resized, cv2.COLOR_BGR2RGB)
+                image_rgb = cv2.resize(image_rgb, DEFAULT_TRAINING_SIZE, interpolation=cv2.INTER_LANCZOS4)
             images[cam] = np.transpose(image_rgb, (2, 0, 1))
         return {"state": joint_positions, "images": images, "prompt": task_prompt}
 

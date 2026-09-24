@@ -52,7 +52,9 @@ def capture(task_prompt: str, output_path: str) -> None:
         joint_pos_keys = [k for k in observation_dict.keys() if k.endswith(".pos")]
         joint_positions = np.array([observation_dict[k] for k in joint_pos_keys])
 
-        # Resize and convert camera images (BGR -> RGB, HWC -> CHW)
+        # Same image path as main.py's _build_observation(): resized to 224x224,
+        # channels left as the camera delivered them (RGB), so a capture is what
+        # the live client really sends.
         import os
 
         debug_dir = "debug"
@@ -61,24 +63,18 @@ def capture(task_prompt: str, output_path: str) -> None:
         cameras = list(robot._cameras_ft.keys())
         images = {}
         for cam in cameras:
-            image_hwc = observation_dict[cam]
-            cv2.imwrite(os.path.join(debug_dir, f"{cam}_01_raw_bgr.png"), image_hwc)
-
-            image_resized = cv2.resize(image_hwc, (224, 224))
-            cv2.imwrite(os.path.join(debug_dir, f"{cam}_02_resized_bgr.png"), image_resized)
-
-            image_rgb = cv2.cvtColor(image_resized, cv2.COLOR_BGR2RGB)
-            cv2.imwrite(os.path.join(debug_dir, f"{cam}_03_resized_rgb.png"), image_resized)
-
+            image_rgb = observation_dict[cam]  # lerobot's OpenCVCamera returns RGB
+            image_rgb = cv2.resize(image_rgb, (224, 224), interpolation=cv2.INTER_LANCZOS4)
             image_chw = np.transpose(image_rgb, (2, 0, 1))
+            # cv2.imwrite expects BGR, so convert for the file only. This PNG
+            # should show true colours; if it does not, the camera is not RGB.
             cv2.imwrite(
-                os.path.join(debug_dir, f"{cam}_04_final_chw_as_hwc.png"),
-                np.transpose(image_chw, (1, 2, 0))[:, :, ::-1],
+                os.path.join(debug_dir, f"{cam}_wire_true_colour.png"),
+                cv2.cvtColor(np.transpose(image_chw, (1, 2, 0)), cv2.COLOR_RGB2BGR),
             )
-
             images[cam] = image_chw
 
-        logger.info(f"Debug images saved to '{debug_dir}/'  ({len(cameras) * 4} files)")
+        logger.info(f"Debug images saved to '{debug_dir}/'  ({len(cameras)} files)")
 
         observation = {
             "state": joint_positions,

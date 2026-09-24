@@ -52,9 +52,12 @@ print({k: v.shape for k, v in obs["images"].items()})
 # {'cam_high': (3, 224, 224), 'cam_right_wrist': (3, 224, 224), 'cam_left_wrist': (3, 224, 224)}
 ```
 
-⚠️ The image arrays are **channel-first (3, H, W), uint8, BGR** — see the color
-order note in `CLIENT_SCHEMA.md` §2. If your model expects RGB (it almost
-certainly does), flip the channel axis server-side.
+⚠️ The image arrays are **channel-first (3, H, W), uint8, RGB** — see the color
+order note in `CLIENT_SCHEMA.md` §2. Do not flip channels server-side.
+
+The bundled `captured_request_2026-08-13.msgpack` predates that and is **BGR**.
+Recapture with `capture_request.py` to test against what the client sends now,
+or use `visualize_request.py --legacy-bgr` to view the old one.
 
 ## Replaying against your server
 

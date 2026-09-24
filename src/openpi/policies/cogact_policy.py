@@ -76,9 +76,10 @@ class CogACTClientPolicy(BasePolicy):
         else:
             cam_high = image_data
 
-        # Match openvlaoft_policy: ensure HWC uint8 and swap BGR -> RGB.
+        # Ensure HWC uint8. No channel swap: The trossen client sends RGB (see examples/trossen_ai/CLIENT_SCHEMA.md), so the frame is passed on as-is.
+        # A swap here used to undo the client's own BGR swap; with both gone the
+        # model still gets RGB, but through zero conversions instead of two.
         cam_high = _ensure_hwc_uint8(cam_high)
-        cam_high = cam_high[..., ::-1]
 
         # Encode to PNG in-memory.
         img_buf = io.BytesIO()
