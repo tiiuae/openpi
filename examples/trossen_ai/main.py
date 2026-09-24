@@ -56,6 +56,11 @@ DEFAULT_REALSENSE_SETTINGS = Path(__file__).parent / "realsense_settings.json"
 RATE_SUMMARY_PERIOD_S = 5.0
 # The pinned status line costs no log lines, so it can refresh briskly.
 RATE_STATUS_PERIOD_S = 1.0
+# How long the control loop will hold its pose waiting for the policy to produce
+# an action for the current step before it stops driving and pauses. One chunk at
+# 25 Hz is about a second, so half a second of nothing means the policy is behind
+# or the server is gone, not that a step was merely late.
+STARVED_HOLD_BUDGET_S = 0.5
 
 
 class TrossenOpenPIBridge:
@@ -369,7 +374,7 @@ class TrossenOpenPIBridge:
         self._last_action = target
         return target
 
-    def _hold_pose(self, paused: bool) -> tuple[np.ndarray, bool]:
+    def _hold_pose(self, *, paused: bool) -> tuple[np.ndarray, bool]:
         """Pose to command when the policy has nothing for this step.
 
         This used to be ``np.zeros(action_dim)``. Zero is not "do nothing": it
@@ -625,7 +630,7 @@ class TrossenOpenPIBridge:
                             break
                     a_t = self.ensemble.get_action(self.episode_step)
                     if a_t is None:
-                        a_t, paused = self._hold_pose(paused)
+                        a_t, paused = self._hold_pose(paused=paused)
                         if paused:
                             prompt_listener.set_paused(True)
                             continue
