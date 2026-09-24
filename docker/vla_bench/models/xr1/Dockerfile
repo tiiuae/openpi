@@ -36,6 +36,14 @@ RUN pip install --no-cache-dir --no-deps -e /opt/src/xr1 \
 #    7-D absolute joint targets the robot client expects.
 COPY docker/vla_bench/models/xr1/export_xr1_dataset.py /opt/xr1_tools/export_xr1_dataset.py
 
+# 4. a C compiler, needed AT RUN TIME, not at build time. XR-1's Qwen3-VL uses liger_kernel's RMSNorm,
+#    a Triton kernel, and on its first launch Triton JIT-compiles a small C helper module
+#    (triton/backends/nvidia/driver.py::CudaUtils) with the system compiler. Without one the FIRST
+#    inference dies with "RuntimeError: Failed to find C compiler" -- the image builds, imports and loads
+#    the 11 GB checkpoint fine, so nothing short of an actual forward pass on a GPU catches it. Python
+#    headers are already in the base. (lingbot_v2 on the same base has build-essential for crcmod.)
+RUN apt-get update && apt-get install -y --no-install-recommends build-essential && apt-get clean
+
 COPY packages/openpi-client /opt/openpi-client
 COPY docker/vla_bench/server /app
 

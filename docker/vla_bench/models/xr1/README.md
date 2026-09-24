@@ -48,28 +48,52 @@ the 60-D statistics from the mounted `normalize.json`. Regenerate it if you retr
 every weight comes from the checkpoint, so `/hf` only has to hold the config/tokenizer/processor files
 of `Qwen/Qwen3-VL-4B-Instruct` (~12 MB), not the multi-GB safetensors.
 
-## Verification status — built, pipeline-verified, **not** replay-verified
+## Verification status — **verified, bit-exact** (2026-09-24)
 
-Honest accounting, because "it builds" is not the bar the rest of these images were held to.
+`--probe` against the real mounted checkpoint (the H30_10k_seed1000 step-10000 ZeRO-2 blob): **ok**,
+`(30, 7)`, 184.7 s to load off Lustre, 2849 ms first call (includes lazy CUDA/Triton init).
 
-**Verified.** The image builds; `mibot` imports; the 11 GB DeepSpeed blob loads and
-`load_state_dict(..., strict=True)` accepts all 1135 tensors. The whole observation pipeline was then
-compared against the validated venv, tensor by tensor, on identical inputs
-(`openpi_integration/tools/xr1_pipeline_probe.py` in the benchmark workspace, run once in each): the
-`resize_image` output, the full Qwen3-VL chat payload (`input_ids`, `attention_mask`, `pixel_values`,
-`image_grid_thw`), the 60-D `compose_state` vector, its q01/q99 normalisation, the action mask, the
-mean/std/q01/q99 tables and the packed-60 → absolute-7 `unpack_action` inverse all hash **identically**,
-on the same torch 2.8.0+cu128 / transformers 4.57.1 / numpy 2.1.3.
+The 170-query replay of the five reference episodes (`39,102,120,163,167`, rate 20) through this image,
+driven by the same `deploy_eval/client.py` that produced the benchmark's numbers, reproduces the recorded
+reference **bit-exactly**: every aggregate metric matches to 17 significant digits, and element by element
+**all 35,700 predicted values over the 170 queries are identical (max |delta| = 0.000e+00)**. The adapter
+seeds torch per call, so this is the expected result and the strongest one available: the containerised
+computation *is* the validated venv's computation.
 
-There is no CPU fallback to lean on here: XR-1 builds its Qwen3-VL backbone with
-`_attn_implementation="flash_attention_2"`, so `device=cpu` fails at construction with "Flash
-Attention 2 is not available on CPU". The hash comparison above is what stands in for it.
+| aggregate metric | reference | container | delta |
+|---|---:|---:|---:|
+| `mae_joints_rad` | 0.015562274124142775 | 0.015562274124142775 | 0.00 % |
+| `rmse_joints_rad` | 0.03316962031435663 | 0.03316962031435663 | 0.00 % |
+| `mae_gripper_m` | 0.0011287973737922677 | 0.0011287973737922677 | 0.00 % |
+| `mae_normalised` | 0.06254925006435862 | 0.06254925006435862 | 0.00 % |
+| `traj_mae_joints_rad` | 0.011623176484654144 | 0.011623176484654144 | 0.00 % |
 
-**Not verified.** `--probe` and the 170-query replay. XR-1's bf16 weights need **~11-12 GB of VRAM**
-and the build host had **7.83 GB free per card** for the whole session (another user's 8-GPU job held
-73.3 GB of each A100). The probe fails at exactly that point, in `model.eval().to(device)`, with
-`torch.OutOfMemoryError ... this process has 7.62 GiB memory in use`. Nothing about the image is
-implicated. Re-run
-`openpi_integration/tools/verify_container.sh xr1 <ckpt> 39,102,120,163,167` on a card with 16 GB free
-and compare against `results/deploy_eval/xr1/metrics.json`; the adapter seeds torch per call, so unlike
-the LeRobot policies here this one should reproduce its reference exactly rather than approximately.
+Command (benchmark workspace; the XR-1 dataset derivative that holds `normalize.json` lives under
+`data/`, so `data_dir` is overridden to it):
+
+```bash
+GPU=3 openpi_integration/tools/verify_container.sh xr1 \
+  "/models/xr1/runs/H30_10k_seed1000/project_xiaomi-robotics-1/H30_10k_seed1000/epoch=0-step=10000.ckpt/checkpoint/mp_rank_00_model_states.pt" \
+  39,102,120,163,167 8851 \
+  -e 'VLA_BENCH_ADAPTER_KWARGS={"repo_dir":"/opt/src/xr1","model_dir":"/opt/xr1_tools","data_dir":"/data/xr1/right7_2view_v1","device":"cuda:0","chunk_len":30,"exec_len":30,"seed":1000}'
+```
+
+**The one thing the first GPU run caught: the image had no C compiler.** XR-1's Qwen3-VL uses
+`liger_kernel`'s RMSNorm, a Triton kernel, and Triton JIT-compiles a small C helper
+(`triton/backends/nvidia/driver.py::CudaUtils`) the first time it launches anything. The image built,
+imported and loaded the 11 GB checkpoint cleanly and then died on the first forward pass with
+`RuntimeError: Failed to find C compiler`. The Dockerfile now installs `build-essential` (after the pip
+layers; `pip freeze` of the rebuilt image is identical to the one before, 118 packages). Nothing short of
+a real inference on a GPU would have found this, which is why "it builds and loads" was never the bar.
+
+Earlier evidence, still true: the whole observation pipeline hashes identically to the validated venv
+(`openpi_integration/tools/xr1_pipeline_probe.py`), and `load_state_dict(..., strict=True)` accepts all
+1135 tensors. There is no CPU fallback: the Qwen3-VL backbone is built with
+`_attn_implementation="flash_attention_2"`.
+
+Server-side latency during the replay was 443 ms p50 (mean 456 ms) with another user's process resident on
+the same A100; the recorded reference measured 284 ms p50. Take latency
+from the benchmark's deployment guide, not from this verification run.
+
+Image `vla-bench-xr1:latest`: **10.06 GB** (`docker image inspect`, 10,061,596,190 bytes; 9.78 GB before
+the compiler was added).
