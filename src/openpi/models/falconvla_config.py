@@ -1,5 +1,5 @@
 import dataclasses
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Literal
 
 from typing_extensions import override
 
@@ -38,8 +38,20 @@ class FalconVLAConfig(_model.BaseModelConfig):
     unnorm_key: str = "libero"
     num_bins: int = 256
     use_proprio_projector: bool = True
-    proprio_dim: int=14
-    proprio_history_window: int=1
+    proprio_history_window: int = 1
+
+    # Which arm of the robot's bimanual vector this checkpoint drives: "left" is dims 0:7,
+    # "right" is dims 7:14, "both" is the full vector. This selects the proprio slice read from
+    # the live state and where predicted actions are written back.
+    arm: Literal["both", "left", "right"] = "both"
+    # Width of the command the robot expects back (bimanual ALOHA = 14).
+    robot_action_dim: int = 14
+    # Proprio width the checkpoint was trained with (its config.json `proprio_dim`). Channels the
+    # robot cannot supply are filled with the training mean.
+    proprio_dim: int | None = None
+    # Channels that never moved during collection (e.g. the unused arm); pinned to the training
+    # mean so the conditioning stays in-distribution.
+    static_proprio_indices: tuple[int, ...] | None = None
 
 
 
