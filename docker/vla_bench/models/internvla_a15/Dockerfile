@@ -85,6 +85,41 @@ print("qwen3_5 overlay verified:", m.__file__)
 PYCHECK
 
 # ---------------------------------------------------------------------------------------------
+# 4a. Triton: the EXACT build the validated venv has, not the base image's. Both say "3.6.0", but
+#     pytorch/pytorch:2.10.0-cuda12.8-cudnn9-runtime ships a different build of libtriton.so /
+#     libproton.so (same size, different bytes) from the PyPI wheel the venv installed. Every Python
+#     source file is identical; the difference matters because Triton's on-disk cache key starts
+#     with triton_key(), a hash that includes libtriton.so -- so with the base image's build, NONE of
+#     the autotune decisions in 4b are ever found and every process re-benchmarks the fla kernels.
+#     This is the wheel recorded in VLA-SOTA/models/internvla_a15/runs/wheels/aria2_wheels.txt,
+#     pinned by sha256.
+# ---------------------------------------------------------------------------------------------
+RUN pip install --no-cache-dir --no-deps --force-reinstall \
+      "triton @ https://files.pythonhosted.org/packages/ab/a8/cdf8b3e4c98132f965f88c2313a4b493266832ad47fb52f23d14d4f86bb5/triton-3.6.0-cp312-cp312-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl#sha256=74caf5e34b66d9f3a429af689c1c7128daba1d8208df60e81106b115c00d6fca" \
+ && python -c "import triton; print('triton', triton.__version__, triton.__file__)"
+
+# ---------------------------------------------------------------------------------------------
+# 4b. the Triton AUTOTUNE DECISIONS the benchmark's numbers were measured with. Load-bearing for
+#     reproducibility, not speed. Qwen3.5's gated-delta-net layers run flash-linear-attention (fla)
+#     Triton kernels, and fla autotunes them with cache_results=True (FLA_CACHE_RESULTS defaults to 1):
+#     the first process to hit a kernel benchmarks its candidate block configs and persists the winner
+#     under TRITON_CACHE_DIR. Different block configs sum in a different order, so the winner changes
+#     the NUMBERS. The validated venv and the reference SLURM job share one persistent cache
+#     (VLA-SOTA/.cache/triton, via guardrails.sh) holding these 38 decisions, so every host run
+#     picks the same configs and is bit-reproducible when seeded. A container with an empty cache (or
+#     with the base image's Triton build, see 4a) re-benchmarks in every process and picks by timing:
+#     measured, two seeded container runs then differ from each other in ~90 % of the returned values
+#     (<= 6.8e-3 rad). With 4a + these files, two seeded container runs each match the seeded host
+#     path bit-for-bit (35,700/35,700 values) and TRITON_PRINT_AUTOTUNING=1 reports no autotuning.
+#     The cache key includes the GPU target and ptxas version (triton/runtime/autotuner.py
+#     check_disk_cache), so these A100 (sm_80) decisions are only used on sm_80 with this Triton;
+#     any other card misses and autotunes as usual. Triton also writes compiled kernels here at run
+#     time, so the directory must stay writable (it is, inside the container layer).
+# ---------------------------------------------------------------------------------------------
+COPY docker/vla_bench/models/internvla_a15/assets/triton_autotune /opt/triton_cache
+ENV TRITON_CACHE_DIR=/opt/triton_cache
+
+# ---------------------------------------------------------------------------------------------
 # 5. openpi's own wire codec, so the msgpack bytes match production exactly
 # ---------------------------------------------------------------------------------------------
 COPY packages/openpi-client /opt/openpi-client
