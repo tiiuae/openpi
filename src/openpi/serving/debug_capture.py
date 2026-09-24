@@ -144,7 +144,17 @@ class DebugCapturePolicy(_base_policy.BasePolicy):
     # -- internals ---------------------------------------------------------
 
     def _install_model_input_hook(self) -> bool:
-        """For openpi's Policy: capture the output of its input transforms."""
+        """For openpi's Policy: capture the output of its input transforms.
+
+        Only openpi's own Policy class (pi0/pi05) runs _input_transform in
+        infer(). FalconVLAPolicy also builds one but never calls it, so hooking
+        it would promise model_input_*.png files that never appear; for
+        FalconVLA the wire images are what reaches its processor.
+        """
+        from openpi.policies import policy as _policy  # noqa: PLC0415 - heavy import, only when capturing
+
+        if not isinstance(self._policy, _policy.Policy):
+            return False
         transform = getattr(self._policy, "_input_transform", None)
         if transform is None:
             return False

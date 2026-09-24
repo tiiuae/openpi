@@ -136,6 +136,31 @@ def test_policies_without_openpi_transforms_still_get_wire_images(tmp_path):
     assert not list(_call_dir(tmp_path).glob("model_input_*.png"))
 
 
+class _UnusedTransformPolicy:
+    """Like FalconVLAPolicy: builds an input transform but never calls it."""
+
+    @property
+    def metadata(self) -> dict:
+        return {}
+
+    def __init__(self) -> None:
+        self._input_transform = lambda data: data
+
+    def infer(self, obs: dict, **kwargs) -> dict:
+        return {"actions": np.zeros((25, 7), dtype=np.float32)}
+
+
+def test_a_policy_that_never_runs_its_transform_is_not_hooked(tmp_path, caplog):
+    """No model_input_*.png is promised, or written, for FalconVLA-style policies."""
+    with caplog.at_level("INFO"):
+        policy = DebugCapturePolicy(_UnusedTransformPolicy(), str(tmp_path))
+    assert "model_input" not in caplog.text
+    policy.infer(_obs())
+    policy.flush()
+    assert (_call_dir(tmp_path) / "wire_cam_high.png").exists()
+    assert not list(_call_dir(tmp_path).glob("model_input_*.png"))
+
+
 def test_calls_are_numbered_and_actions_pass_through(tmp_path):
     inner = _TransformOnlyPolicy()
     policy = DebugCapturePolicy(inner, str(tmp_path))
