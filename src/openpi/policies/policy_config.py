@@ -49,15 +49,17 @@ def create_trained_policy(
     weight_path = os.path.join(checkpoint_dir, "model.safetensors")
     is_pytorch = os.path.exists(weight_path)
 
-    # Special handling for FalconVLA models, which are PyTorch-based but require a different loading mechanism
-    if "falconvla" in checkpoint_dir.stem.split("-")[0].lower():
-        is_pytorch = False  # FalconVLA models are handled separately in create_falconvla_policy
+    # FalconVLA is PyTorch-based but ships as a HuggingFace export, so it needs its own loader.
+    # Keyed off the config rather than the directory name, which varies between exports.
+    is_falconvla = train_config.model.model_type == _model.ModelType.FALCONVLA
+    if is_falconvla:
+        is_pytorch = False
 
     logging.info("Loading model...")
     if is_pytorch:
         model = train_config.model.load_pytorch(train_config, weight_path)
         model.paligemma_with_expert.to_bfloat16_for_selected_params("bfloat16")
-    elif "falconvla" in checkpoint_dir.stem.split("-")[0].lower():
+    elif is_falconvla:
         return create_falconvla_policy(
             train_config,
             checkpoint_dir, 
@@ -70,7 +72,7 @@ def create_trained_policy(
     else:
         model = train_config.model.load(_model.restore_params(checkpoint_dir / "params", dtype=jnp.bfloat16))
     data_config = train_config.data.create(train_config.assets_dirs, train_config.model)
-    if norm_stats is None and not("falconvla" in checkpoint_dir.stem.split("-")[0].lower()):
+    if norm_stats is None and not is_falconvla:
         # We are loading the norm stats from the checkpoint instead of the config assets dir to make sure
         # that the policy is using the same normalization stats as the original training process.
         if data_config.asset_id is None:
