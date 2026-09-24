@@ -386,6 +386,9 @@ class AsyncPolicyWorker:
                 continue
             obs, query_step = item
             try:
+                # Timing lives in the client (see timed_policy_client.py), which
+                # can get between packing, the wire and unpacking. Wrapping the
+                # call here could only ever produce one number mixing all three.
                 response = self._client.infer(obs)
                 # Validated before it reaches the ensemble: an empty chunk used to
                 # satisfy wait_for_first() while providing no action, and a NaN

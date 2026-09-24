@@ -125,6 +125,7 @@ class BasePromptListener(ABC):
         self._task = default_prompt
         self._paused = False
         self._rate_hz: float | None = None
+        self._latency: str | None = None
         self._rec_state: str | None = None  # None | "recording" | "pending"
         self._rec_steps = 0
         self._saving: str | None = None
@@ -149,6 +150,16 @@ class BasePromptListener(ABC):
     def set_rate(self, rate_hz: float) -> None:
         with self._lock:
             self._rate_hz = rate_hz
+
+    def set_latency(self, summary: str | None) -> None:
+        """Show rolling inference timings (p50/p95, server vs client overhead).
+
+        A line per inference call would be 3-5 log lines a second competing with
+        whatever the operator is typing, and a single number cannot show the
+        spread that makes latency look erratic in the first place.
+        """
+        with self._lock:
+            self._latency = summary
 
     def set_recording(self, state: str | None, steps: int) -> None:
         """Mirror the EpisodeRecorder state ("recording"/"pending"/idle) on the status line."""
@@ -311,6 +322,7 @@ class PinnedPromptListener(BasePromptListener):
         with self._lock:
             buffer, paused, task, rate_hz = self._buffer, self._paused, self._task, self._rate_hz
             rec_state, rec_steps, saving = self._rec_state, self._rec_steps, self._saving
+            latency = self._latency
 
         if paused:
             status = Text.assemble(
@@ -325,6 +337,9 @@ class PinnedPromptListener(BasePromptListener):
                 (" · task: ", "dim"),
                 (f"{task!r}", "italic"),
             )
+        if latency is not None and not paused:
+            status.append(" · ", style="dim")
+            status.append(latency, style="cyan")
         if rec_state == "recording":
             status.append(" · ", style="dim")
             status.append(f"● REC {rec_steps} steps", style="bold red")

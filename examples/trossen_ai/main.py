@@ -28,11 +28,11 @@ import cv2
 from episode_recorder import EpisodeRecorder
 from lerobot.cameras.opencv.configuration_opencv import OpenCVCameraConfig
 from lerobot.robots import make_robot_from_config
+from latency import LatencyTracker
 from lerobot_robot_trossen.config_bi_widowxai_follower import BiWidowXAIFollowerRobotConfig
 import motion_limits
 from motion_limits import JointLimitError
 import numpy as np
-from openpi_client import websocket_client_policy
 from PIL import Image
 from policy_reply import validate_actions
 from realsense_settings import apply_realsense_settings
@@ -46,6 +46,7 @@ from scripted_motions import JOINTS_PER_ARM
 from scripted_motions import ScriptedMotions
 from scripted_motions import parse_command
 import terminal_ui
+from timed_policy_client import TimedWebsocketClientPolicy
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
@@ -100,9 +101,13 @@ class TrossenOpenPIBridge:
         self.dt = 1.0 / control_frequency
         self.test_mode = test_mode
 
+        # The client itself times each phase of a call (pack / wire / unpack) and
+        # files the split here, so no caller has to wrap infer() in a timer.
+        self.latency = LatencyTracker()
+
         logger.info(f"Connecting to policy server at {policy_server_host}:{policy_server_port}")
-        self.policy_client = websocket_client_policy.WebsocketClientPolicy(
-            host=policy_server_host, port=policy_server_port
+        self.policy_client = TimedWebsocketClientPolicy(
+            host=policy_server_host, port=policy_server_port, latency=self.latency
         )
 
         robot_config = BiWidowXAIFollowerRobotConfig(
@@ -247,10 +252,14 @@ class TrossenOpenPIBridge:
         if now - self._last_rate_log < period or not self._rate_window:
             return
         mean_s = sum(self._rate_window) / len(self._rate_window)
+        latency_summary = self.latency.summary()
         if pinned:
             self._prompt_listener.set_rate(1 / mean_s)
+            self._prompt_listener.set_latency(latency_summary)
         else:
             message = f"step {self.episode_step}: {mean_s * 1e3:.1f}ms/step ({1 / mean_s:.0f} Hz avg)"
+            if latency_summary is not None:
+                message += f" | {latency_summary}"
             if self._recorder is not None and self._recorder.is_recording:
                 message += f" | ● REC {self._recorder.steps} steps"
             if self.test_mode == "test" and self._last_action is not None:
@@ -590,6 +599,9 @@ class TrossenOpenPIBridge:
 
         prompt_listener = None
         paused = False
+        # Measures how late a background thread wakes, which is what separates
+        # "the server is slow" from "this process is starved".
+        self.latency.lag.start()
         if self.async_inference:
             self._policy_worker.start()
             if self.motions is not None:
@@ -755,6 +767,7 @@ class TrossenOpenPIBridge:
                 self._log_rate_summary(loop_s)
 
         finally:
+            self.latency.lag.stop()
             if self.async_inference:
                 self._policy_worker.stop()
             if prompt_listener is not None:
