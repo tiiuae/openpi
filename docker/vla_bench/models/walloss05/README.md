@@ -73,29 +73,41 @@ this image returns the same numbers. Expect ~580 ms per inference on an A100 (bf
 two 256 px views) and ~8 GB of weights — that is **1.7 Hz**, not the tech report's figure; quote the
 measurement, not the paper, if a deployment gate depends on rate.
 
-## Verification status — loads and builds its batch, **not** replay-verified
+## Verification status — **verified, bit-exact** (2026-09-24)
 
-**Verified.** Builds, including the nvcc step (62 s), and `_cuda_ext.is_available()` passes inside the
-image. `--probe` against the real mounted checkpoint then gets all the way through the load: the
-training collator is rebuilt from the YAML, `LeRobotDatasetMetadata` reads the baked-in `meta/`, the
-checkpoint is resolved and overlaid, the normalizers are built **under the `right7_2view_v1` key** (the
-adapter raises rather than fall back to another dataset's scale, so this is a real check), the model
-config is built from `<ckpt>/config.json`, the processors load, the token embeddings are resized and
-the state dict loads with **no missing tensors**. Run with `device=cpu` it goes further still and
-reaches the vision tower inside `generate_flow_action`, which means `_vision_preprocess`, the collator
-batch build and the `<|action|>` / `<|propri|>` token-id assertions all pass too.
+`--probe` against the real mounted epoch-20 checkpoint (`eval_ckpt/ep19`, the plain-file copy of run
+directory `19`): **ok**, `(30, 7)`, 108.2 s to load, 657 ms first call. The 2026-09-18 attempt had
+stopped at `model.to(self.device)` with 44 MiB free on a card another job held; on a free A100 it loads
+and serves with nothing changed in the image.
 
-**Not verified.** Inference, and therefore the 170-query replay. Two independent walls:
+The 170-query replay of the five reference episodes (`39,102,120,163,167`, rate 20) through this image,
+driven by the same `deploy_eval/client.py` that produced the benchmark's numbers, reproduces the recorded
+reference **bit-exactly**: every aggregate metric matches to 17 significant digits, and element by element
+**all 35,700 predicted values over the 170 queries are identical (max |delta| = 0.000e+00)**. The adapter
+seeds torch at warmup (seed, one throwaway pass, re-seed), so the same query sequence draws the same
+noise; bit-exact is the expected result, and it means the CUDA-13 image, the in-image nvcc build of the
+wall-x operators, the baked-in `meta/` and the `/tmp` datasets cache all reproduce the validated venv.
 
-* On GPU it dies at `model.to(self.device)` (`adapters/walloss05.py:201`) with **7.60 GiB in use and
-  44 MiB free**. ENV.md measures the weights alone at 7.76 GiB bf16 and the peak at 7.96 GiB, and the
-  build host had 7.83 GB free on every card for the whole session (another user's 8-GPU job held
-  73.3 GB of each A100). **This one is within ~0.3 GB of running** — a card with 9 GB free is enough.
-* On CPU it dies in `wall_x/model/core/ops/_cuda_wrappers.py::get_token_counts_kernel`: wall-x
-  dispatches `rot_pos_emb` to its compiled CUDA operator unconditionally and ships no CPU path, so
-  there is no CPU fallback for this model.
+| aggregate metric | reference | container | delta |
+|---|---:|---:|---:|
+| `mae_joints_rad` | 0.02970975193236513 | 0.02970975193236513 | 0.00 % |
+| `rmse_joints_rad` | 0.0383539216046684 | 0.0383539216046684 | 0.00 % |
+| `mae_gripper_m` | 0.0016492825877318026 | 0.0016492825877318026 | 0.00 % |
+| `mae_normalised` | 0.12923127253742614 | 0.12923127253742614 | 0.00 % |
+| `traj_mae_joints_rad` | 0.028363796192193952 | 0.028363796192193952 | 0.00 % |
 
-Finish it with
-`openpi_integration/tools/verify_container.sh walloss05 /models/walloss05/eval_ckpt/ep19 39,102,120,163,167`
-and compare against `results/deploy_eval/walloss05/metrics.json`. Because the adapter seeds torch at
-warmup, this model should match its reference exactly rather than approximately.
+Command (benchmark workspace):
+`GPU=3 openpi_integration/tools/verify_container.sh walloss05 /models/walloss05/eval_ckpt/ep19 39,102,120,163,167 8852`
+-- it mounts `/hf` read-only, and the image's own `HF_DATASETS_CACHE=/tmp/hf_datasets` keeps the
+`datasets` FileLock off that mount.
+
+Server-side latency during the replay: 668 ms p50 (mean 703 ms), against 625 ms p50 in the recorded
+reference -- take the rate from the benchmark's deployment guide, not from a verification run on a shared
+node.
+
+Two walls recorded earlier are unchanged and are properties of wall-x, not of the image: there is **no CPU
+path** (`rot_pos_emb` dispatches to the compiled CUDA operator unconditionally), and the build compiles
+for **sm_80 only** unless `CUDA_ARCH_LIST` is widened.
+
+Image `vla-bench-walloss05:latest`: **15.68 GB** (`docker image inspect`, 15,675,319,509 bytes), on the
+13.36 GB `torch210-cu130` devel base.
