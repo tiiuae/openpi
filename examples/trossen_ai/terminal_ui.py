@@ -21,8 +21,7 @@ from __future__ import annotations
 from abc import ABC
 from abc import abstractmethod
 import atexit
-from collections.abc import Callable
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable
 import logging
 import os
 import select
