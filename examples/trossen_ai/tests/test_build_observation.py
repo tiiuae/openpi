@@ -1,10 +1,10 @@
 """Offline tests for the observation the client sends to the policy server.
 
-Images now go out at the camera's native resolution and the server resizes.
-These tests pin three things a server depends on: the size is untouched, the
-pixels are not resampled, and the channel order is exactly what it was before
-(servers built against CLIENT_SCHEMA.md flip BGR back to RGB, so changing it
-would silently swap their colours).
+Images go out exactly as the camera produced them: native resolution, RGB,
+untouched. The server resizes and must not flip. These tests pin what a server
+depends on: the size is untouched, the pixels are not resampled, and the
+channels arrive in the camera's RGB order. (The client used to swap them into
+BGR, and five of seven server paths never flipped them back.)
 
 The bridge is built with ``__new__`` so no robot, camera or server is involved.
 Needs the client venv, since ``main`` imports lerobot.
@@ -48,21 +48,18 @@ def test_images_are_sent_at_native_resolution():
         assert request["images"][cam].dtype == np.uint8
 
 
-def test_pixels_are_not_resampled():
-    """Every pixel survives exactly; only the channel axis moves and swaps."""
+def test_pixels_are_sent_untouched():
+    """Every pixel survives exactly: only the channel axis moves (HWC -> CHW),
+    nothing is resampled and nothing is swapped."""
     raw = _raw_observation()
     request = _bridge()._build_observation(raw, "pick up the cup")
     for cam in CAMERAS:
-        sent = request["images"][cam]
-        # Channel c on the wire is channel (2 - c) from the camera, pixel for pixel.
-        for channel in range(3):
-            np.testing.assert_array_equal(sent[channel], raw[cam][:, :, 2 - channel])
+        np.testing.assert_array_equal(request["images"][cam], np.transpose(raw[cam], (2, 0, 1)))
 
 
-def test_channel_order_on_the_wire_is_unchanged():
-    """Pinned to the previous client's order, minus only the resize. The camera
-    returns RGB and the client's swap puts BGR on the wire; servers flip it
-    back. A red camera pixel must still arrive with red in the last channel."""
+def test_the_wire_is_rgb():
+    """A red camera pixel arrives red: channel 0. Under the old client it
+    arrived in channel 2, and most servers fed that to their model as blue."""
     raw = _raw_observation()
     for cam in CAMERAS:
         raw[cam][:] = 0
@@ -70,9 +67,9 @@ def test_channel_order_on_the_wire_is_unchanged():
     request = _bridge()._build_observation(raw, "pick up the cup")
     for cam in CAMERAS:
         sent = request["images"][cam]
-        assert sent[2].min() == 255  # red lands in channel 2: BGR on the wire
-        assert sent[0].max() == 0
+        assert sent[0].min() == 255  # red stays in channel 0: RGB on the wire
         assert sent[1].max() == 0
+        assert sent[2].max() == 0
 
 
 @pytest.mark.parametrize(("height", "width"), [(480, 640), (720, 1280), (224, 224), (300, 500)])

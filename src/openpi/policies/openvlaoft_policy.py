@@ -37,10 +37,10 @@ def _ensure_hwc_uint8(image: Any) -> np.ndarray:
 def _save_debug_image(img: np.ndarray, path: Path) -> None:
     """Save a raw array (HWC or CHW, any numeric dtype) as a PNG for debugging.
 
-    Assumes channels are in BGR order (OpenCV convention) and converts to RGB for PIL.
+    Channels are RGB, as the trossen client sends them, which is what PIL expects.
     """
     hwc = _ensure_hwc_uint8(img)
-    Image.fromarray(hwc[..., ::-1]).save(path)
+    Image.fromarray(hwc).save(path)
 
 
 class OpenVLAOFTClientPolicy(BasePolicy):
@@ -100,10 +100,10 @@ class OpenVLAOFTClientPolicy(BasePolicy):
             cam_left_wrist = _ensure_hwc_uint8(cam_left_wrist)
             cam_right_wrist = _ensure_hwc_uint8(cam_right_wrist)
 
-            # Rectify the colors (BGR -> RGB)
-            cam_high = cam_high[..., ::-1]
-            cam_left_wrist = cam_left_wrist[..., ::-1]
-            cam_right_wrist = cam_right_wrist[..., ::-1]
+            # No channel swap: The trossen client sends RGB (see examples/trossen_ai/CLIENT_SCHEMA.md), so the frame is passed on as-is.
+            # This swap used to cancel the client's BGR swap, and the OFT
+            # server's prepare_images_for_vla then swapped a second time,
+            # so the model received BGR. Both swaps are removed together.
 
             # # Save images after conversion for debugging
             # _save_debug_image(cam_high,        step_dir / "openvlaoft_policy__cam_high__after.png")

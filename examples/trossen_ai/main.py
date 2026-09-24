@@ -24,7 +24,6 @@ import time
 from action_ensemble import ActionLogger
 from action_ensemble import AsyncPolicyWorker
 from action_ensemble import make_ensemble
-import cv2
 from episode_recorder import EpisodeRecorder
 from latency import LatencyTracker
 from lerobot.cameras.opencv.configuration_opencv import OpenCVCameraConfig
@@ -497,19 +496,19 @@ class TrossenOpenPIBridge:
         cameras = list(self.robot._cameras_ft.keys())
         images = {}
         for cam in cameras:
-            # Frames go out at the camera's native resolution. Resizing is the
-            # server's job: each backend resizes the way its model was trained
-            # (openpi's ResizeImages letterboxes to 224x224, ACT resizes to its
-            # own training size), and a client-side squash to 224x224 both
-            # distorted the aspect ratio and threw detail away before any of
-            # them got the chance.
+            # Frames go out exactly as the camera produced them: native
+            # resolution, RGB channel order, untouched.
             #
-            # The channel swap is deliberately unchanged. The camera already
-            # returns RGB, so this makes the wire BGR — but every server built
-            # against CLIENT_SCHEMA.md flips it back, and dropping the swap here
-            # alone would silently reverse their colours.
-            image = cv2.cvtColor(observation_dict[cam], cv2.COLOR_BGR2RGB)
-            images[cam] = np.transpose(image, (2, 0, 1))
+            # Resizing is the server's job: each backend resizes the way its
+            # model was trained (openpi's ResizeImages letterboxes to 224x224,
+            # ACT resizes to its own training size), and a client-side squash to
+            # 224x224 distorted the aspect ratio and threw detail away first.
+            #
+            # No channel swap: lerobot's OpenCVCamera already returns RGB, and
+            # every model was trained on RGB. A cv2.cvtColor(BGR2RGB) here used
+            # to swap the frame into BGR on the wire, and five of seven server
+            # paths never flipped it back. Servers must not flip.
+            images[cam] = np.transpose(observation_dict[cam], (2, 0, 1))
         return {"state": joint_positions, "images": images, "prompt": task_prompt}
 
     def move_to_start_position(self, goal_position: np.ndarray, duration: float = 5.0):
