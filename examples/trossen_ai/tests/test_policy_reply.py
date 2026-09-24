@@ -17,7 +17,6 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from policy_reply import (  # noqa: E402
     MAX_PLAUSIBLE_HORIZON,
     PolicyReplyError,
-    server_timing,
     validate_actions,
 )
 
@@ -96,16 +95,3 @@ def test_a_single_step_chunk_is_valid():
 def test_integer_actions_are_accepted_and_converted():
     actions = validate_actions({"actions": np.ones((3, DIM), dtype=np.int32)}, action_dim=DIM)
     assert actions.dtype == np.float64
-
-
-# -- server timing -------------------------------------------------------------
-
-
-def test_server_timing_is_returned_when_present():
-    assert server_timing({"actions": _chunk(), "server_timing": {"infer_ms": 12.5}}) == {"infer_ms": 12.5}
-
-
-@pytest.mark.parametrize("reply", [{"actions": _chunk()}, {"server_timing": "nope"}, None, "string"])
-def test_missing_server_timing_is_not_an_error(reply):
-    """Backends other than openpi's own server may send none."""
-    assert server_timing(reply) == {}

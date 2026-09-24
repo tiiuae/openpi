@@ -76,16 +76,3 @@ def validate_actions(
         rows = np.unique(np.where(~np.isfinite(array))[0]).tolist()
         raise PolicyReplyError(f"'actions' contains non-finite values on rows {rows[:8]} — clamping cannot fix NaN")
     return array
-
-
-def server_timing(reply: object) -> dict:
-    """The server's own timing block, or an empty dict when it sends none.
-
-    openpi's websocket server reports how long the model itself took; other
-    backends may not. Absent timing is normal, never an error.
-    """
-    if isinstance(reply, Mapping):
-        timing = reply.get("server_timing")
-        if isinstance(timing, Mapping):
-            return dict(timing)
-    return {}
