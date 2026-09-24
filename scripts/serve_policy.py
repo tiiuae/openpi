@@ -11,6 +11,7 @@ from openpi.policies import openvla_policy as _openvla_policy
 from openpi.policies import openvlaoft_policy as _openvlaoft_policy
 from openpi.policies import policy as _policy
 from openpi.policies import policy_config as _policy_config
+from openpi.serving import debug_capture as _debug_capture
 from openpi.serving import websocket_policy_server
 from openpi.training import config as _config
 
@@ -75,6 +76,11 @@ class Args:
     port: int = 8800
     # Record the policy's behavior for debugging.
     record: bool = False
+    # Save the images every call receives, to check their size and colour:
+    # <debug_dir>/run_<time>/call_NNNNN/wire_<camera>.png (as sent by the
+    # client), model_input_<key>.png (pi0/pi05: after openpi's transforms, what
+    # the model gets) and meta.json. Off by default. See serving/debug_capture.py.
+    debug_dir: str | None = None
 
     # Specifies how to load the policy. If not provided, the default policy for the environment will be used.
     policy: Checkpoint | AutoCheckpoint | Default = dataclasses.field(default_factory=Default)
@@ -185,6 +191,11 @@ def create_policy(args: Args) -> _policy.Policy:
 def main(args: Args) -> None:
     policy = create_policy(args)
     policy_metadata = policy.metadata
+
+    # Save what the policy receives. Wraps the policy itself, before the
+    # recorder, so it can reach openpi's input transforms.
+    if args.debug_dir:
+        policy = _debug_capture.DebugCapturePolicy(policy, args.debug_dir)
 
     # Record the policy's behavior.
     if args.record:
