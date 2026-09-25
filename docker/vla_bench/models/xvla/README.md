@@ -15,15 +15,22 @@ docker build -f docker/vla_bench/models/xvla/Dockerfile -t vla-bench-xvla:latest
 ```bash
 WEIGHTS_DIR=/opt/vla_weights HF_CACHE_DIR=$HOME/.cache/huggingface \
   docker/vla_bench/run.sh xvla --probe
-docker/vla_bench/run.sh xvla --checkpoint /models/xvla/020000/pretrained_model
+docker/vla_bench/run.sh xvla                       # the image default /models/xvla is the checkpoint
 ```
 
-The checkpoint is the LeRobot `pretrained_model/` directory.
+The checkpoint is the LeRobot `pretrained_model/` directory. The benchmark's upload set
+(`VLA-SOTA/repo/scripts/upload_checkpoints.sh`) puts its contents directly under `xvla/`, so with
+`WEIGHTS_DIR` pointing at a download of that set the image default needs no `--checkpoint`.
 
 ## Three things specific to this model
 
-**Hub cache needed.** The policy resolves `lerobot/xvla-base` and its vision backbone by repo id at load
-time, so `/hf` must be mounted (`run.sh` does it) or the container has to reach huggingface.co.
+**Hub cache needed, for one tokenizer only.** The Florence-2 backbone is built from the inline config in the
+checkpoint's `config.json`; `lerobot/xvla-base` and the vision backbone are **not** touched at load. The one
+thing resolved by repo id is the preprocessor's tokenizer, `facebook/bart-large` (config + tokenizer files,
+2.7 MB; main = `cb48c136…`). A plain `hf download facebook/bart-large` pulls 5.5 GB of weights in four formats
+that are never read, so use `hf download facebook/bart-large --include "*.json" "*.txt"`. Without it the load
+fails with `ValueError: Failed to instantiate processor step 'tokenizer_processor'`. (Deployment audit
+2026-09-25: `--probe` passes with nothing but the upload set and that one repo mounted, `--network none`.)
 
 **Camera names are pinned, not guessed.** Training renamed `cam_high -> image` and
 `cam_right_wrist -> image2`, and that rename is baked into `policy_preprocessor.json`. The image passes

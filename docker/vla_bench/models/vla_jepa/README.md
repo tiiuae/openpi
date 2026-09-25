@@ -15,8 +15,11 @@ docker build -f docker/vla_bench/models/vla_jepa/Dockerfile -t vla-bench-vla_jep
 ```bash
 WEIGHTS_DIR=/opt/vla_weights HF_CACHE_DIR=$HOME/.cache/huggingface \
   docker/vla_bench/run.sh vla_jepa --probe
-docker/vla_bench/run.sh vla_jepa --checkpoint /models/vla_jepa/020000/pretrained_model
+docker/vla_bench/run.sh vla_jepa                   # the image default /models/vla_jepa is the checkpoint
 ```
+
+The benchmark's upload set (`VLA-SOTA/repo/scripts/upload_checkpoints.sh`) puts the `pretrained_model/`
+contents directly under `vla_jepa/`, so the image default needs no `--checkpoint`.
 
 ## Two things specific to this model
 
@@ -27,7 +30,16 @@ still lists `PreSnapGripperProcessorStep` and `BinarizeGripperProcessorStep`. Le
 dimension 6 to a binary open/closed — this robot's gripper is a *continuous carriage position in
 metres*, so the gripper output is destroyed. `VLA_BENCH_ADAPTER_KWARGS.drop_postprocessor_steps` removes
 them by class name, which reproduces the from-config pipeline exactly while keeping the baked-in camera
-rename and the normalisation statistics. Do not remove that kwarg.
+rename and the normalisation statistics. Do not remove that kwarg, and remember that overriding
+`VLA_BENCH_ADAPTER_KWARGS` replaces the whole JSON, so an override must carry it too: measured 2026-09-25,
+without it every predicted gripper value is exactly **1.0 m** (valid range 0-0.044 m) while the joints are
+unchanged -- the server starts and serves normally.
 
-**Hub cache needed.** The backbone (`facebook/vjepa2-vitl-fpc64-256`, plus `lerobot/VLA-JEPA-Pretrain`)
-is resolved by repo id at load time, so `/hf` must be mounted.
+**Hub cache needed: two repos, with their weights.** `Qwen/Qwen3-VL-2B-Instruct` (config `qwen_model_name`,
+4.3 GB, main = `89644892…`) and `facebook/vjepa2-vitl-fpc64-256` (`jepa_encoder_name`, main = `b3c1679b…`) are
+both loaded with `from_pretrained`, weights included -- the checkpoint overwrites them afterwards, but a missing
+weight file is a hard `OSError: … does not appear to have a file named pytorch_model.bin or model.safetensors`.
+For V-JEPA2 only `model.safetensors` + the JSON configs are read (1.3 GB); a plain download also pulls the
+5.1 GB `original/model.pth`, so use `hf download facebook/vjepa2-vitl-fpc64-256 --include "*.json" "model.safetensors"`.
+`lerobot/VLA-JEPA-Pretrain` is **not** needed (it is only a PEFT naming field). Deployment audit 2026-09-25:
+`--probe` passes with nothing but the upload set and these two repos mounted, `--network none`.

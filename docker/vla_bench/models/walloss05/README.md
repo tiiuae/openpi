@@ -13,9 +13,18 @@ docker build -f docker/vla_bench/models/walloss05/Dockerfile -t vla-bench-wallos
 ## Run
 
 ```bash
-WEIGHTS_DIR=/opt/vla_weights docker/vla_bench/run.sh walloss05 --probe \
-  --checkpoint /models/walloss05/eval_ckpt/ep19
+WEIGHTS_DIR=/opt/vla_weights HF_CACHE_DIR=$HOME/.cache/huggingface \
+  docker/vla_bench/run.sh walloss05 --probe --checkpoint /models/walloss05
 ```
+
+`--checkpoint` is required with the benchmark's upload set (`VLA-SOTA/repo/scripts/upload_checkpoints.sh`),
+which puts the checkpoint files directly under `walloss05/`. The image default `/models/walloss05/eval_ckpt/ep19`
+is the cluster's layout, and without `--checkpoint` the server stops with `checkpoint not found inside the
+container`. Deployment audit 2026-09-25: with `--checkpoint /models/walloss05`, the upload set alone and only the
+Qwen2.5-VL-3B config/tokenizer files in `/hf`, `--probe` passes offline, and the output is identical, value for
+value, to the verified `eval_ckpt/ep19` configuration. The shipped `config.yml` is the original training yml;
+the model reads only a few dead keys from it (`processor_path`/`config_path` overlays that lose to the baked
+yml), so its `/lustre1` paths are harmless.
 
 The checkpoint is the directory holding `model.safetensors`, `config.json`, `config.yml`,
 `norm_stats.json`, `normalizer_{action,propri}.pth`, `preprocessor_config.json` and the tokenizer
@@ -33,7 +42,9 @@ mounted checkpoint (`build_model_config` reads `<ckpt>/config.json`, and
 collator** loads its own processor first, from the `model.processor_path` in the YAML, and then adds
 `<|propri|>` and `<|action|>` to that base vocabulary itself — so `/hf` must hold
 `Qwen/Qwen2.5-VL-3B-Instruct` at revision `66285546d2b821cf421d4f5eb2576359d3770cd3` (config,
-tokenizer and preprocessor only; the multi-GB safetensors are not read). `run.sh` mounts the cache.
+tokenizer and preprocessor only; the multi-GB safetensors are not read):
+`hf download Qwen/Qwen2.5-VL-3B-Instruct --revision 66285546d2b821cf421d4f5eb2576359d3770cd3 --include "*.json" "*.txt"`
+(12 MB). The yml names the snapshot directory, so that exact revision is required. `run.sh` mounts the cache.
 Substituting the checkpoint's merged tokenizer here is a different tokenizer and a different image
 processor, which is why the YAML names the snapshot explicitly.
 

@@ -14,12 +14,15 @@ docker build -f docker/vla_bench/models/internvla_a15/Dockerfile -t vla-bench-in
 
 ```bash
 WEIGHTS_DIR=/opt/vla_weights HF_CACHE_DIR=$HOME/.cache/huggingface \
-  docker/vla_bench/run.sh internvla_a15 --probe \
-    --checkpoint /models/internvla_a15/<run>/checkpoints/015000/pretrained_model
+  docker/vla_bench/run.sh internvla_a15 --probe     # the image default /models/internvla_a15 is the checkpoint
 ```
 
 The checkpoint is the run's `pretrained_model/` directory; it also supplies `stats.json` (the state
-and action mean/std) and `train_config.json` (which selects the un-normalisation mode).
+and action mean/std) and `train_config.json` (which selects the un-normalisation mode). The benchmark's upload
+set (`VLA-SOTA/repo/scripts/upload_checkpoints.sh`) puts its contents directly under `internvla_a15/`, so the
+image default needs no `--checkpoint`. The absolute `wan_*`/`vae_path` keys in `config.json` and
+`external_stats_path` in `train_config.json` are not read at inference. The shipped `stats.json` is numerically
+identical to that external file, and it is the one used.
 
 ## Five things specific to this model
 
@@ -44,11 +47,15 @@ pure-PyTorch equivalents when they do not. The reference numbers were measured w
 present. The naive `v{version}` release URL 404s for causal-conv1d, which is the only reason this
 model ever looked like it needed an nvcc build from source — it does not.
 
-**`HF_HUB_OFFLINE=0`, deliberately.** The chat processor is resolved by repo id (`Qwen/Qwen3.5-2B`)
-and transformers makes a metadata call that strict offline mode refuses, so the image matches the eval
-job and leaves offline mode off. With `/hf` mounted nothing is actually downloaded. Set
-`HF_HUB_OFFLINE=1` to forbid the network outright and accept that the load fails if the cache is
-incomplete.
+**Offline mode works; `/hf` needs exactly one repo.** The image sets `HF_HUB_OFFLINE=0`, but `run.sh`
+overrides it to `1` whenever the cache directory exists. Deployment audit, 2026-09-25: with `HF_HUB_OFFLINE=1`,
+`--network none`, the upload set and nothing but `Qwen/Qwen3.5-2B` in `/hf`, `--probe` passes. Its output is
+identical, value for value (seeded), to the verified online configuration. So the "metadata call that strict
+offline mode refuses" does not happen on this path. `Qwen/Qwen3.5-2B` is needed in full, 4.6 GB, because
+`from_pretrained` reads the weights before the checkpoint overwrites them. It is resolved by repo id, so
+download `main` and check that `refs/main` is `15852e8c16360a2fea060d615a32b45270f8a8fc`. `hf download --revision
+<sha>` writes no `refs/main`, and the offline lookup then fails. `physical-intelligence/fast`,
+`InternRobotics/InternVLA-A1.5-base` and Wan2.2 are not touched at inference.
 
 **The Triton build and its autotune decisions are part of the numbers.** Qwen3.5's gated-delta-net
 layers run flash-linear-attention (`fla`) Triton kernels, and `fla` autotunes them with

@@ -19,10 +19,13 @@ WEIGHTS_DIR=/opt/vla_weights docker/vla_bench/run.sh smolvla  # serve on :8800
 ```
 
 The checkpoint is the LeRobot `pretrained_model/` directory (`config.json`, `model.safetensors`,
-`policy_{pre,post}processor*`). Mount its parent as `WEIGHTS_DIR` and point at it:
+`policy_{pre,post}processor*`). The benchmark's upload set (`VLA-SOTA/repo/scripts/upload_checkpoints.sh`)
+puts those files directly under `smolvla/`, so with `WEIGHTS_DIR` pointing at a download of that set the
+image default `/models/smolvla` is the checkpoint and no `--checkpoint` is needed. For any other layout, point
+at the directory that holds `config.json`:
 
 ```bash
-docker/vla_bench/run.sh smolvla --checkpoint /models/smolvla/020000/pretrained_model
+docker/vla_bench/run.sh smolvla --checkpoint /models/smolvla/<dir-with-config.json>
 ```
 
 ## Two things specific to this model

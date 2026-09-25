@@ -14,17 +14,27 @@ docker build -f docker/vla_bench/models/xr1/Dockerfile -t vla-bench-xr1:latest .
 
 ```bash
 WEIGHTS_DIR=/opt/vla_weights HF_CACHE_DIR=$HOME/.cache/huggingface \
-  docker/vla_bench/run.sh xr1 --probe --checkpoint /models/xr1/mp_rank_00_model_states.pt
+  docker/vla_bench/run.sh xr1 --probe --checkpoint /models/xr1/checkpoint/mp_rank_00_model_states.pt
 ```
+
+In the benchmark's upload set (`VLA-SOTA/repo/scripts/upload_checkpoints.sh`) the blob is
+`xr1/checkpoint/mp_rank_00_model_states.pt`. The image default `/models/xr1/mp_rank_00_model_states.pt` does not
+exist there, so `--checkpoint` is required.
 
 The checkpoint is a **single `.pt` file**: the DeepSpeed ZeRO-2 model-states blob. Stage 2 keeps every
 parameter unsharded on every rank, so that one file already holds the full bf16 state dict under
 `"module"` — no `zero_to_fp32.py` conversion is needed or performed.
 
-Beside it, mount the run's dataset metadata at `/models/xr1/data/`. Only two files are read:
+Beside it, the adapter reads the run's dataset metadata from `/models/xr1/data/`. Only two files are read:
 `normalize.json` (mean/std and q01/q99 over the packed 60-D vector, and `action_length`, which must be
-30) and `manifest.json` (which records `wrist_encoding`). The `json/` and `videos/` subtrees of that
-dataset are not touched. Point `data_dir` somewhere else by overriding `VLA_BENCH_ADAPTER_KWARGS`.
+30) and `manifest.json` (only its `wrist_encoding`, `additive`). The `json/` and `videos/` subtrees of that
+dataset are not touched. `upload_checkpoints.sh` ships both files as `xr1/data/` since 2026-09-25. Before that,
+the upload set failed at load with `FileNotFoundError: [Errno 2] No such file or directory:
+'/models/xr1/data/normalize.json'`. To point `data_dir` somewhere else, override `VLA_BENCH_ADAPTER_KWARGS`,
+which replaces the whole JSON, so copy every key. With both files in place `--probe` passes offline with
+nothing but the upload set and the Qwen3-VL-4B config/tokenizer files in `/hf`. Its output is identical, value
+for value, to the verified `epoch=0-step=10000` configuration (the shipped `last.ckpt` blob holds byte-identical
+tensors).
 
 ## Four things specific to this model
 
@@ -46,7 +56,11 @@ the 60-D statistics from the mounted `normalize.json`. Regenerate it if you retr
 
 **The Qwen3-VL-4B weights are not needed, only its processor.** XR-1 builds the VLM `_from_config` and
 every weight comes from the checkpoint, so `/hf` only has to hold the config/tokenizer/processor files
-of `Qwen/Qwen3-VL-4B-Instruct` (~12 MB), not the multi-GB safetensors.
+of `Qwen/Qwen3-VL-4B-Instruct` (~12 MB), not the multi-GB safetensors:
+`hf download Qwen/Qwen3-VL-4B-Instruct --include "*.json" "*.txt"`. It is resolved by repo id, not by revision,
+so check that the cache's `refs/main` is `ebb281ec70b05090aa6165b016eac8ec08e71b17` (the verified snapshot). A
+newer `main` would silently change the prompt/image processing. Downloading with `--revision <sha>` does not
+write `refs/main`, and the offline lookup then fails.
 
 ## Verification status — **verified, bit-exact** (2026-09-24)
 
