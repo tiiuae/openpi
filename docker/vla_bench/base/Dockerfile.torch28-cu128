@@ -1,0 +1,40 @@
+# VLA-bench shared base — torch28-cu128
+# Built once, reused by every model on this torch version (xr1).
+#
+#   docker build -f docker/vla_bench/base/Dockerfile.torch28-cu128 -t vla-bench-base:torch28-cu128 .
+#
+# WHY THIS ONE IS NOT FROM pytorch/pytorch. The pytorch/pytorch images for torch 2.7-2.9 are Ubuntu
+# 22.04 with **Python 3.11**, while every environment these reference numbers were measured in is
+# Python 3.12 — and several of the pins are cp312-only (tifffile's current releases require >= 3.12;
+# GR00T's flash-attn release wheel for torch 2.9 has no cp311 build at all). Ubuntu 24.04 ships
+# Python 3.12, and the torch wheels bundle their own CUDA runtime, which is exactly how the
+# benchmark's venvs were built — no CUDA module is loaded on the cluster either.
+FROM ubuntu:24.04
+
+ENV DEBIAN_FRONTEND=noninteractive \
+    PYTHONUNBUFFERED=1 \
+    PIP_BREAK_SYSTEM_PACKAGES=1 \
+    PIP_ROOT_USER_ACTION=ignore \
+    PIP_RETRIES=10 \
+    PIP_TIMEOUT=120 \
+    TOKENIZERS_PARALLELISM=false \
+    HF_HUB_DISABLE_XET=1 \
+    OPENPI_CLIENT_SRC=/opt/openpi-client/src
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        python3.12 python3.12-dev python3-pip \
+        git ffmpeg libgl1 libglib2.0-0t64 ca-certificates curl \
+    && rm -rf /var/lib/apt/lists/* \
+    && ln -sf /usr/bin/python3.12 /usr/local/bin/python \
+    && ln -sf /usr/bin/python3.12 /usr/local/bin/python3 \
+    && python -V
+
+# The exact build the validated venv has. Retried because the 700 MB cudnn wheel truncates on a busy link.
+RUN for i in 1 2 3; do pip install --no-cache-dir  torch==2.8.0 torchvision==0.23.0 torchaudio==2.8.0 && break || sleep 20; done \
+    && python -c "import torch, torchvision; print(torch.__version__, torchvision.__version__)"
+
+# The wire codec and the websocket layer. msgpack_numpy is copied in from openpi at build time so the
+# bytes on the wire are identical to production rather than a re-implementation.
+RUN pip install --no-cache-dir "websockets>=12" msgpack numpy pillow
+
+WORKDIR /app
