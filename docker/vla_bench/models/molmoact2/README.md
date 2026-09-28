@@ -28,19 +28,25 @@ Inference is ~260 ms.
 
 ## Two things specific to this model
 
-**The checkpoint names its base model by path, twice, and the upload set repoints both.** `checkpoint_path`
+**The checkpoint names its base model by path, twice, and the deployer repoints both.** `checkpoint_path`
 is in `config.json` (read by the policy) and in `policy_preprocessor.json` (step `molmoact2_pack_inputs`, which
 loads the tokenizer and processor from it); the two are read independently. As trained, both held the
 absolute path of the `allenai/MolmoAct2` snapshot in the training host's HF cache. Anywhere else
 `resolve_checkpoint_location` hands that string to `snapshot_download` as a repo id, and the load dies with
 `HFValidationError: Repo id must be in the form 'repo_name' or 'namespace/repo_name': '/lustre1/…'`
-(deployment audit, 2026-09-25). Since then `upload_checkpoints.sh` ships both files with
-`checkpoint_path = /hf/hub/models--allenai--MolmoAct2/snapshots/e432d85f6e039edca44afb93c262f3084ab72a9c`,
-the same snapshot under this image's `/hf` mount. So the workstation needs exactly
+(deployment audit, 2026-09-25). The upload set ships both files exactly as trained (the upload script's
+2026-09-25 rewrite was reverted on 2026-09-28: configs are never rewritten on the way out). **Before the first
+start, set `checkpoint_path` in both files to
+`/hf/hub/models--allenai--MolmoAct2/snapshots/e432d85f6e039edca44afb93c262f3084ab72a9c`**, the same snapshot under
+this image's `/hf` mount; `VLA-SOTA/results/deployment/CONFIG_PATHS_TO_CHANGE.md` has the file:key list and a
+one-line command. Edit a real copy: a hardlink copy shares the inode, so an in-place edit also changes the original.
+So the workstation needs exactly
 `hf download allenai/MolmoAct2 --revision e432d85f6e039edca44afb93c262f3084ab72a9c` (21.8 GB, not gated; the
 weights are overwritten by the checkpoint but they are read, so the snapshot must be complete) in
-`HF_CACHE_DIR`, and nothing else. With that, `--probe` passes offline with nothing but the upload set mounted,
-and its output is identical, value for value, to the verified configuration. Two things that do not work:
+`HF_CACHE_DIR`, and nothing else. With that edit, `--probe` passes offline with nothing but the upload set
+mounted (re-verified 2026-09-28). Seeded output is not reproducible across processes for this model: two runs of the
+same image differ in ~150 of 210 values, max 4e-3, for the previous image as for this one. So "identical" is not
+the bar here. The 2026-09-25 audit happened to see two matching runs. Two things that do not work:
 mounting the cache at the old absolute path through `run.sh` (its extra arguments go to the server, not to
 `docker run`), and a repo id plus `checkpoint_revision` (huggingface_hub 1.31's `snapshot_download` lists the
 repo tree even with `HF_HUB_OFFLINE=1` and raises `OfflineModeIsEnabled`).

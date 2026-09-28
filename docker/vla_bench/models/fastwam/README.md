@@ -32,7 +32,7 @@ Under the weights mount:
 
 | path in the container | what it is |
 |---|---|
-| `/models/fastwam/run/config.yaml` | the run's fully-resolved Hydra config, with the two cluster paths repointed (below) |
+| `/models/fastwam/run/config.yaml` | the run's fully-resolved Hydra config, as trained; the deployer repoints one path in it (below) |
 | `/models/fastwam/run/dataset_stats.json` | min/max normalisation for state and action |
 | `/models/fastwam/ActionDiT_linear_interp_Wan22_alphascale_1024hdim.pt` | the 2 GB ActionDiT backbone the model is built from; generated, not downloadable |
 | `/models/fastwam/text_embeds_cache/right7_2view/` | 4 precomputed T5 embeddings, ~4 MB |
@@ -57,17 +57,19 @@ them, so they must be present.
 
 ## Two things that will bite you
 
-**The training `config.yaml` carries absolute paths from the training machine, and the upload set
-repoints them.** `model.action_dit_pretrained_path` names the 2 GB ActionDiT backbone by its cluster path, and
+**The training `config.yaml` carries absolute paths from the training machine, and the deployer repoints
+one of them.** `model.action_dit_pretrained_path` names the 2 GB ActionDiT backbone by its cluster path, and
 `create_fastwam` raises `FileNotFoundError: action_dit_pretrained_path does not exist: /lustre1/…` when it is
-absent (deployment audit, 2026-09-25: this happened even after the backbone itself was added to the upload).
-`upload_checkpoints.sh` therefore writes `run/config.yaml` with that key and `data.train.text_embedding_cache_dir`
-pointed at `/models/fastwam/...`; everything else is the training config byte for byte, and the untouched
-original stays at `/models/fastwam/config.yaml`. If you mount the model anywhere other than `/models/fastwam`,
-edit those two keys. The remaining absolute paths (`output_dir`, `data.train.dataset_dirs`) are
-dataloader-side and are not read at inference. With these fixes `--probe` passes with nothing but the upload
-set and the `diffsynth` tree mounted, and its output is identical, value for value, to the verified
-configuration.
+absent (deployment audit, 2026-09-25; re-measured 2026-09-28 on the upload set as shipped). The upload set ships
+`run/config.yaml` exactly as trained (the upload script's 2026-09-25 rewrite was reverted on 2026-09-28: configs
+are never rewritten on the way out). **Before the first start, set `model.action_dit_pretrained_path` in
+`run/config.yaml` to `/models/fastwam/ActionDiT_linear_interp_Wan22_alphascale_1024hdim.pt`**
+(`VLA-SOTA/results/deployment/CONFIG_PATHS_TO_CHANGE.md`). Edit a real copy, not a hardlink. It is the only path
+that is read: the adapter instantiates `cfg.model` alone, takes the T5 cache from its own `text_embed_cache` kwarg,
+and reads only geometry from `data.train`. So `data.train.text_embedding_cache_dir`, `output_dir` and
+`data.train.dataset_dirs` may keep their cluster values. With that one edit `--probe` passes with nothing but the
+upload set and the `diffsynth` tree mounted, and its output is identical, value for value, to the verified
+configuration (re-verified 2026-09-28).
 
 **An uncached instruction is a hard failure, not a fallback.** The model is built with
 `load_text_encoder=false`, so prompts are looked up in the T5 embedding cache by
