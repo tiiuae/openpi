@@ -4,7 +4,8 @@
 Speaks the protocol that examples/trossen_ai/main.py uses, as specified in
 examples/trossen_ai/CLIENT_SCHEMA.md. One process per checkpoint; the robot client needs no change.
 
-  connect   server sends ONE msgpack metadata dict, immediately
+  connect   adapter.reset() if the adapter defines it (a new connection is a new episode), then the server
+            sends ONE msgpack metadata dict, immediately
   request   flat {"state": (D,) float, "images": {cam: (3,H,W) uint8 BGR}, "prompt": str}
   response  flat {"actions": (horizon, action_dim) float, ...}  2-D, top level, un-normalised
 
@@ -137,7 +138,22 @@ class Server:
         self.calls += 1
         return {"actions": act, "server_timing": {"infer_ms": dt * 1000.0}}
 
+    def reset(self) -> None:
+        """Episode boundary. The robot client opens one websocket per episode, so a new connection is a new
+        episode: an adapter that keeps state across calls (observation history, previously issued commands,
+        an action queue) defines reset() and is cleared here. Stateless adapters define nothing and are
+        unaffected. A reset that fails is loud: serving a new episode on stale history would be silent."""
+        fn = getattr(self.a, "reset", None)
+        if callable(fn):
+            fn()
+            log.info("adapter.reset() called for a new connection")
+
     async def handler(self, ws):
+        try:
+            self.reset()
+        except Exception:
+            await ws.send(traceback.format_exc())
+            raise
         await ws.send(self.packer.pack(self.metadata()))
         prev = None
         while True:

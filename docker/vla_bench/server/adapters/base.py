@@ -14,6 +14,11 @@ class PolicyAdapter:
     def warmup(self) -> None:
         pass
 
+    def reset(self) -> None:
+        """Clear per-episode state. vla_server.py calls this on every new websocket connection (one connection =
+        one episode). Stateless adapters leave it as a no-op; an adapter that keeps history overrides it."""
+        pass
+
     def predict(self, obs: dict) -> np.ndarray:
         raise NotImplementedError
 
