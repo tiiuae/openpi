@@ -105,6 +105,31 @@ channel axis) before inference. Since the client cannot be changed, do this at
 the server boundary. The starVLA server's `_bgr_to_rgb()` in
 `websocket_policy_server.py` handles it.
 
+### 2.2 Optional: observation history (`--send_history N`, off by default)
+
+Only when the client is started with `--send_history N` (N > 0) does the request carry one more top-level
+key. Without the flag the request is exactly the dict above, byte for byte, so no existing server is affected.
+It exists for policies that condition on the recent past rather than on one frame -- FLUX 3 Action needs
+`N = 8` -- because a server sees an observation only when the client queries (every `--rate_of_inference`
+ticks in sync mode, about once per inference in async mode) and so cannot rebuild the ticks in between.
+
+```python
+"history": {
+    "state":         np.ndarray,  # (N, D) float64: measured joint positions at ticks t-N+1 .. t (last row == "state")
+    "command":       np.ndarray,  # (N, D) float64: the command sent to the robot on the tick BEFORE each of those
+                                  #   ticks, as execute_action() sent it (arm freezing applied; in async mode the
+                                  #   ensemble-blended action, not the raw chunk the server returned)
+    "oldest_images": {cam: np.ndarray},  # (3, H, W) uint8 per camera, tick t-N+1, same resize and BGR as "images"
+    "ticks":         int,         # N
+    "valid":         int,         # real ticks in the window; the rest repeat the episode's first tick
+}
+```
+
+With the flag the client observes the robot on **every** control tick (in sync mode it otherwise reads it only
+when it queries). At the first tick of an episode, and after a pause or a scripted motion, the window is filled
+with that tick's observation and its measured state stands in for the command -- the padding FLUX's own control
+loop uses. See `observation_history.py`.
+
 ---
 
 ## 3. Response: action chunk (server → client)

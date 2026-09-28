@@ -30,6 +30,7 @@ from lerobot.cameras.opencv.configuration_opencv import OpenCVCameraConfig
 from lerobot.robots import make_robot_from_config
 from lerobot_robot_trossen.config_bi_widowxai_follower import BiWidowXAIFollowerRobotConfig
 import numpy as np
+from observation_history import HistoryWindow
 from openpi_client import websocket_client_policy
 from PIL import Image
 from realsense_settings import apply_realsense_settings
@@ -75,6 +76,7 @@ class TrossenOpenPIBridge:
         gripper_indices: list[int] | None = None,
         record_dir: str | None = None,
         record_repo_id: str = "local/trossen_eval",
+        send_history: int = 0,
     ):
         self.starvla = starvla
         self.control_frequency = control_frequency
@@ -147,6 +149,18 @@ class TrossenOpenPIBridge:
 
         self.use_left_arm_only = use_left_arm_only
         self.use_right_arm_only = use_right_arm_only
+
+        # Opt-in (--send_history N, default 0 = off): observation history for policies that condition on the
+        # last N control ticks (FLUX 3 Action: N = 8). Off, nothing below touches the request or the loop.
+        self._history = HistoryWindow(send_history) if send_history > 0 else None
+        if self._history is not None:
+            logger.info(
+                "Sending a %d-tick observation history with every request: request['history'] = {state (%d, D), "
+                "command (%d, D), oldest_images, ticks, valid}. The robot is observed on every control tick.",
+                send_history,
+                send_history,
+                send_history,
+            )
 
         # Keyword-triggered canned motions (home / grippers / wrist twist / wave).
         # They assume the 14-dim bimanual layout, so they stay off for anything else.
@@ -273,12 +287,16 @@ class TrossenOpenPIBridge:
             # instruction you are typing). Run with --debug to see every action.
             logger.debug(f"TEST MODE: Would execute action: {full_action}")
             self._last_action = full_action
+            if self._history is not None:
+                self._history.command_sent(full_action)
             return full_action
         if self.test_mode == "autonomous":
             joint_features = list(self.robot._joint_ft.keys())
             action_dict = {k: full_action[i] for i, k in enumerate(joint_features)}
 
             self.robot.send_action(action_dict)
+            if self._history is not None:
+                self._history.command_sent(full_action)
         else:
             logger.error(f"Unknown mode: {self.test_mode}. No action executed.")
         return full_action
@@ -360,6 +378,8 @@ class TrossenOpenPIBridge:
             paused = True
             self.ensemble.reset()
             self._policy_worker.flush()
+            if self._history is not None:
+                self._history.reset()
             if self._prompt_listener is not None:
                 self._prompt_listener.set_paused(True)
             logger.info("Policy paused — type an instruction (Enter alone = default) to resume")
@@ -381,6 +401,8 @@ class TrossenOpenPIBridge:
             self.ensemble.reset()
         if self.action_logger is not None:
             self.action_logger.reset()
+        if self._history is not None:
+            self._history.reset()
         is_first_step = True
 
         if self.use_left_arm_only or self.use_right_arm_only:
@@ -431,6 +453,8 @@ class TrossenOpenPIBridge:
                                 paused = True
                                 self.ensemble.reset()
                                 self._policy_worker.flush()
+                                if self._history is not None:
+                                    self._history.reset()
                                 if command.name == "hold" and self._recorder is not None:
                                     # Pausing in place is the end of the take; other
                                     # motions keep recording (their frames are captured
@@ -466,6 +490,9 @@ class TrossenOpenPIBridge:
                     # Submit fresh observation every step — non-blocking
                     raw_obs = self.robot.get_observation()
                     obs = self._build_observation(raw_obs, task_prompt)
+                    if self._history is not None:
+                        self._history.record(obs)
+                        obs = self._history.attach(obs)
                     self._policy_worker.submit(obs, self.episode_step)
                     if is_first_step:
                         logger.info("Waiting for first inference result...")
@@ -478,8 +505,15 @@ class TrossenOpenPIBridge:
 
                 else:
                     # Synchronous: request new chunk every rate_of_inference steps
+                    if self._history is not None:
+                        # History needs EVERY tick observed, not only the ticks that query.
+                        tick_observation = self._build_observation(self.robot.get_observation(), task_prompt)
+                        self._history.record(tick_observation)
                     if self.current_action_chunk is None or self.action_chunk_idx >= self.rate_of_inference:
-                        observation = self._build_observation(self.robot.get_observation(), task_prompt)
+                        if self._history is not None:
+                            observation = self._history.attach(tick_observation)
+                        else:
+                            observation = self._build_observation(self.robot.get_observation(), task_prompt)
                         logger.info(f"Step {self.episode_step}: Requesting new action chunk")
                         response = self.policy_client.infer(observation)
                         self.current_action_chunk = response["actions"][:, : self.action_dim]
@@ -641,6 +675,15 @@ if __name__ == "__main__":
         help="repo_id stored in the recorded dataset's metadata",
     )
     parser.add_argument(
+        "--send_history",
+        type=int,
+        default=0,
+        metavar="N",
+        help="Opt-in, default 0 (off). Observe the robot on every control tick and send the last N ticks with each "
+        "request as request['history'] (states, the command sent before each, the oldest tick's images). Only for "
+        "policies that condition on history -- FLUX 3 Action needs 8. See observation_history.py.",
+    )
+    parser.add_argument(
         "--debug",
         action="store_true",
         help="Log every control step (per-step timing and, in test mode, every action). "
@@ -667,6 +710,7 @@ if __name__ == "__main__":
         raw_gripper=not args.ensemble_gripper,
         record_dir=args.record_dir,
         record_repo_id=args.record_repo_id,
+        send_history=args.send_history,
     )
 
     try:
