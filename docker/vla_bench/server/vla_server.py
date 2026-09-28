@@ -209,6 +209,12 @@ def merge_adapter_kwargs(defaults: dict, user: dict) -> dict:
 
 
 def build_adapter(spec: str, kwargs: dict):
+    # Hub revision pins (VLA_BENCH_HUB_PINS, per image) must be in place before the adapter module, and with it
+    # huggingface_hub, is imported: the library reads HF_HUB_CACHE / HF_HUB_OFFLINE once, at import.
+    from adapters import hub_pins
+    pins = hub_pins.apply_from_env()
+    if pins:
+        log.info("hub pins: %s", json.dumps(pins))
     mod, cls = spec.split(":")
     mod = mod if mod.startswith("adapters.") else f"adapters.{mod}"
     return getattr(importlib.import_module(mod), cls)(**kwargs)

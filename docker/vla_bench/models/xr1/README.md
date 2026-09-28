@@ -58,10 +58,9 @@ the 60-D statistics from the mounted `normalize.json`. Regenerate it if you retr
 **The Qwen3-VL-4B weights are not needed, only its processor.** XR-1 builds the VLM `_from_config` and
 every weight comes from the checkpoint, so `/hf` only has to hold the config/tokenizer/processor files
 of `Qwen/Qwen3-VL-4B-Instruct` (~12 MB), not the multi-GB safetensors:
-`hf download Qwen/Qwen3-VL-4B-Instruct --include "*.json" "*.txt"`. It is resolved by repo id, not by revision,
-so check that the cache's `refs/main` is `ebb281ec70b05090aa6165b016eac8ec08e71b17` (the verified snapshot). A
-newer `main` would silently change the prompt/image processing. Downloading with `--revision <sha>` does not
-write `refs/main`, and the offline lookup then fails.
+`hf download Qwen/Qwen3-VL-4B-Instruct --revision ebb281ec70b05090aa6165b016eac8ec08e71b17 --include "*.json" "*.txt"`.
+The model resolves it by repo id. **Pinned (since 2026-09-28).** The image sets `VLA_BENCH_HUB_PINS`, so the server serves `Qwen/Qwen3-VL-4B-Instruct` at exactly `ebb281ec70b05090aa6165b016eac8ec08e71b17`, the verified snapshot, whatever the cache's `refs/main` says, and stops at startup with the `hf download --revision` command if that snapshot is missing. Either way of seeding the cache works: a plain download of `main`, or the same with `--revision <sha>`. Verified 2026-09-28 with a cache that has no `refs/main`: `--probe` passes; the
+pre-pin image fails on that cache.
 
 ## Verification status — **verified, bit-exact** (2026-09-24)
 

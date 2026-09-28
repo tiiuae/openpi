@@ -47,7 +47,12 @@ COPY docker/vla_bench/server /app
 # Adapter kwargs are the ones the reference metrics were produced with
 # (VLA-SOTA/repo/scripts/eval/jobs/xvla.cfg). rename_map feeds the ORIGINAL dataset key names and lets the
 # checkpoint's own baked-in rename step map cam_high -> image and cam_right_wrist -> image2.
+# VLA_BENCH_HUB_PINS: the Hub repos this policy loads BY NAME, pinned to the revision it trained and was verified
+# with (models/<m>/PROVENANCE.md). vla_server.py serves exactly that snapshot from the /hf cache (an overlay
+# under /tmp; nothing is written to /hf) and stops with the `hf download --revision` command if it is missing,
+# so a newer upstream `main` cannot silently change the tokenizer or processor. See server/adapters/hub_pins.py.
 ENV VLA_BENCH_MODEL=xvla \
+    VLA_BENCH_HUB_PINS='{"facebook/bart-large":{"revision":"cb48c1365bd826bd521f650dc2e0940aee54720c","allow_patterns":["*.json","*.txt"]}}' \
     VLA_BENCH_ADAPTER=lerobot_policy:LeRobotAdapter \
     VLA_BENCH_ADAPTER_KWARGS_DEFAULTS='{"device":"cuda","dtype":"bfloat16","chunk_len":30,"exec_len":30,"rename_map":{"primary":"observation.images.cam_high","wrist":"observation.images.cam_right_wrist"}}' \
     VLA_BENCH_CHECKPOINT=/models/xvla \

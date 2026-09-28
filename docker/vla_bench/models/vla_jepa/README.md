@@ -45,3 +45,4 @@ For V-JEPA2 only `model.safetensors` + the JSON configs are read (1.3 GB); a pla
 5.1 GB `original/model.pth`, so use `hf download facebook/vjepa2-vitl-fpc64-256 --include "*.json" "model.safetensors"`.
 `lerobot/VLA-JEPA-Pretrain` is **not** needed (it is only a PEFT naming field). Deployment audit 2026-09-25:
 `--probe` passes with nothing but the upload set and these two repos mounted, `--network none`.
+**Pinned (since 2026-09-28).** The image sets `VLA_BENCH_HUB_PINS`, so the server serves both repos at exactly `89644892e4d85e24eaac8bacfd4f463576704203` and `b3c1679b7c34d3255ef3547f27c7b226aefab26f`, whatever the cache's `refs/main` says, and stops at startup with the `hf download --revision` command if that snapshot is missing. Either way of seeding the cache works: the commands above, or the same with `--revision <sha>`.

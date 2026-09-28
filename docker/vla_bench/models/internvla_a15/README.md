@@ -52,9 +52,8 @@ overrides it to `1` whenever the cache directory exists. Deployment audit, 2026-
 `--network none`, the upload set and nothing but `Qwen/Qwen3.5-2B` in `/hf`, `--probe` passes. Its output is
 identical, value for value (seeded), to the verified online configuration. So the "metadata call that strict
 offline mode refuses" does not happen on this path. `Qwen/Qwen3.5-2B` is needed in full, 4.6 GB, because
-`from_pretrained` reads the weights before the checkpoint overwrites them. It is resolved by repo id, so
-download `main` and check that `refs/main` is `15852e8c16360a2fea060d615a32b45270f8a8fc`. `hf download --revision
-<sha>` writes no `refs/main`, and the offline lookup then fails. `physical-intelligence/fast`,
+`from_pretrained` reads the weights before the checkpoint overwrites them. It is resolved by repo id.
+**Pinned (since 2026-09-28).** The image sets `VLA_BENCH_HUB_PINS`, so the server serves `Qwen/Qwen3.5-2B` at exactly `15852e8c16360a2fea060d615a32b45270f8a8fc`, whatever the cache's `refs/main` says, and stops at startup with the `hf download --revision` command if that snapshot is missing. Either way of seeding the cache works: `hf download Qwen/Qwen3.5-2B`, or the same with `--revision <sha>`. `physical-intelligence/fast`,
 `InternRobotics/InternVLA-A1.5-base` and Wan2.2 are not touched at inference.
 
 **The Triton build and its autotune decisions are part of the numbers.** Qwen3.5's gated-delta-net

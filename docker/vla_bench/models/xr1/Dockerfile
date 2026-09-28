@@ -47,7 +47,12 @@ RUN apt-get update && apt-get install -y --no-install-recommends build-essential
 COPY packages/openpi-client /opt/openpi-client
 COPY docker/vla_bench/server /app
 
+# VLA_BENCH_HUB_PINS: the Hub repos this policy loads BY NAME, pinned to the revision it trained and was verified
+# with (models/<m>/PROVENANCE.md). vla_server.py serves exactly that snapshot from the /hf cache (an overlay
+# under /tmp; nothing is written to /hf) and stops with the `hf download --revision` command if it is missing,
+# so a newer upstream `main` cannot silently change the tokenizer or processor. See server/adapters/hub_pins.py.
 ENV VLA_BENCH_MODEL=xr1 \
+    VLA_BENCH_HUB_PINS='{"Qwen/Qwen3-VL-4B-Instruct":{"revision":"ebb281ec70b05090aa6165b016eac8ec08e71b17","allow_patterns":["*.json","*.txt"]}}' \
     VLA_BENCH_ADAPTER=xr1_policy:XR1Adapter \
     VLA_BENCH_ADAPTER_KWARGS_DEFAULTS='{"repo_dir":"/opt/src/xr1","model_dir":"/opt/xr1_tools","data_dir":"/models/xr1/data","device":"cuda:0","chunk_len":30,"exec_len":30,"seed":1000}' \
     VLA_BENCH_CHECKPOINT=/models/xr1/mp_rank_00_model_states.pt \

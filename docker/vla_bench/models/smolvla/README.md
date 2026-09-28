@@ -36,6 +36,7 @@ policy rebuilds that backbone — and the preprocessor's tokenizer — from the 
 time it loads. `run.sh` mounts `HF_CACHE_DIR` at `/hf` for exactly this; without it the container
 must reach huggingface.co. Pre-seed with
 `hf download HuggingFaceTB/SmolVLM2-500M-Video-Instruct --exclude "onnx/*"` (~1.9 GB).
+**Pinned (since 2026-09-28).** The image sets `VLA_BENCH_HUB_PINS`, so the server serves that repo at exactly `7b375e1b73b11138ff12fe22c8f2822d8fe03467`, the revision it trained with, whatever the cache's `refs/main` says, and stops at startup with the `hf download --revision` command if that snapshot is missing. Either way of seeding the cache works: the command above, or the same with `--revision <sha>`.
 
 **The camera names are pinned, not guessed.** Training renamed `cam_high -> camera1` and
 `cam_right_wrist -> camera2`, and that rename is baked into `policy_preprocessor.json`. The image

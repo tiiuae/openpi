@@ -31,6 +31,8 @@ thing resolved by repo id is the preprocessor's tokenizer, `facebook/bart-large`
 that are never read, so use `hf download facebook/bart-large --include "*.json" "*.txt"`. Without it the load
 fails with `ValueError: Failed to instantiate processor step 'tokenizer_processor'`. (Deployment audit
 2026-09-25: `--probe` passes with nothing but the upload set and that one repo mounted, `--network none`.)
+**Pinned (since 2026-09-28).** The image sets `VLA_BENCH_HUB_PINS`, so the server serves the tokenizer at exactly `cb48c1365bd826bd521f650dc2e0940aee54720c`, whatever the cache's `refs/main` says, and stops at startup with the `hf download --revision` command if that snapshot is missing. Either way of seeding the cache works: the command above, or the same with `--revision <sha>`. With no cache mounted and the network up, the pinned revision is downloaded at startup and the process then
+goes offline (verified 2026-09-28).
 
 **Camera names are pinned, not guessed.** Training renamed `cam_high -> image` and
 `cam_right_wrist -> image2`, and that rename is baked into `policy_preprocessor.json`. The image passes

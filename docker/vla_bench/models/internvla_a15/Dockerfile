@@ -137,7 +137,12 @@ COPY docker/vla_bench/server /app
 #     (Qwen/Qwen3.5-2B) and transformers makes a metadata call that strict offline mode refuses. With
 #     /hf mounted nothing is actually downloaded; set HF_HUB_OFFLINE=1 to forbid the network outright
 #     and accept that the load fails if the cache is incomplete.
+# VLA_BENCH_HUB_PINS: the Hub repos this policy loads BY NAME, pinned to the revision it trained and was verified
+# with (models/<m>/PROVENANCE.md). vla_server.py serves exactly that snapshot from the /hf cache (an overlay
+# under /tmp; nothing is written to /hf) and stops with the `hf download --revision` command if it is missing,
+# so a newer upstream `main` cannot silently change the tokenizer or processor. See server/adapters/hub_pins.py.
 ENV VLA_BENCH_MODEL=internvla_a15 \
+    VLA_BENCH_HUB_PINS='{"Qwen/Qwen3.5-2B":"15852e8c16360a2fea060d615a32b45270f8a8fc"}' \
     VLA_BENCH_ADAPTER=internvla_a15:InternVLAA15Adapter \
     VLA_BENCH_ADAPTER_KWARGS_DEFAULTS='{"repo_dir":"/opt/src","device":"cuda","dtype":"bfloat16","chunk_len":30,"exec_len":30,"robot_type":"trossen_ai_mobile","inference_backend":"standard","action_loss_only":true}' \
     VLA_BENCH_CHECKPOINT=/models/internvla_a15 \

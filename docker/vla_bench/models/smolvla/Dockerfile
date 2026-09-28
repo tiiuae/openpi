@@ -47,7 +47,12 @@ COPY docker/vla_bench/server /app
 # Adapter kwargs are the ones the reference metrics were produced with
 # (VLA-SOTA/repo/scripts/eval/jobs/smolvla.cfg). rename_map pins cam_high/cam_right_wrist to the
 # checkpoint's camera1/camera2 slots instead of relying on name heuristics.
+# VLA_BENCH_HUB_PINS: the Hub repos this policy loads BY NAME, pinned to the revision it trained and was verified
+# with (models/<m>/PROVENANCE.md). vla_server.py serves exactly that snapshot from the /hf cache (an overlay
+# under /tmp; nothing is written to /hf) and stops with the `hf download --revision` command if it is missing,
+# so a newer upstream `main` cannot silently change the tokenizer or processor. See server/adapters/hub_pins.py.
 ENV VLA_BENCH_MODEL=smolvla \
+    VLA_BENCH_HUB_PINS='{"HuggingFaceTB/SmolVLM2-500M-Video-Instruct":{"revision":"7b375e1b73b11138ff12fe22c8f2822d8fe03467","ignore_patterns":["onnx/*"]}}' \
     VLA_BENCH_ADAPTER=lerobot_policy:LeRobotAdapter \
     VLA_BENCH_ADAPTER_KWARGS_DEFAULTS='{"device":"cuda","dtype":"bfloat16","chunk_len":30,"exec_len":30,"rename_map":{"primary":"observation.images.cam_high","wrist":"observation.images.cam_right_wrist"}}' \
     VLA_BENCH_CHECKPOINT=/models/smolvla \
