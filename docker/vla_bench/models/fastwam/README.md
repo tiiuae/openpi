@@ -44,9 +44,11 @@ Under the weights mount:
 hub-cache layout**, so `hf download` must write it with `--local-dir`:
 
 ```bash
-hf download Wan-AI/Wan2.2-TI2V-5B --revision 921dbaf3f1674a56f47e83fb80a34bac8a8f203e \
-  --include "diffusion_pytorch_model-*.safetensors" "Wan2.2_VAE.pth" \
-  --local-dir "$HF_CACHE_DIR/diffsynth/Wan-AI/Wan2.2-TI2V-5B"
+# one pattern per command: hf >= 1.0 takes one value per --include
+for pat in "diffusion_pytorch_model-*.safetensors" "Wan2.2_VAE.pth"; do
+  hf download Wan-AI/Wan2.2-TI2V-5B --revision 921dbaf3f1674a56f47e83fb80a34bac8a8f203e \
+    --include "$pat" --local-dir "$HF_CACHE_DIR/diffsynth/Wan-AI/Wan2.2-TI2V-5B"
+done
 ```
 
 If a file is missing, the error is misleading: `ValueError: Cannot detect model type for wan_video_dit.

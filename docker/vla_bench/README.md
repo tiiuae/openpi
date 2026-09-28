@@ -20,7 +20,10 @@ docker/vla_bench/run.sh gr00t                   # serve on :8800
 Then point the robot client at it as usual:
 
 ```bash
-python examples/trossen_ai/main.py --host <server-host> --port 8800 --task_prompt "..."
+# --use_right_arm_only is required (without it the left arm is commanded to zeros);
+# take --control_freq and sync/async from the model's deployment guide
+python examples/trossen_ai/main.py --policy_host <server-host> --policy_port 8800 --use_right_arm_only \
+    --control_freq <F> --task_prompt "..."
 ```
 
 ## Weights are not in the images

@@ -22,8 +22,11 @@ GitHub and PyPI. Image: 9.62 GB. No weights inside.
 | `$HF_CACHE_DIR` | `/hf` | the two frozen encoders, NOT in the upload set — download once (11.4 GB, public, no token): |
 
 ```bash
-HF_HOME=$HF_CACHE_DIR hf download black-forest-labs/flux-3-action-base \
-    --revision eb267865d35e49e4066bde4936237f8d9f15a68c --include video_vae.safetensors "text_encoder/*"
+# one pattern per command: hf >= 1.0 takes one value per --include
+for pat in video_vae.safetensors "text_encoder/*"; do
+  HF_HOME=$HF_CACHE_DIR hf download black-forest-labs/flux-3-action-base \
+      --revision eb267865d35e49e4066bde4936237f8d9f15a68c --include "$pat"
+done
 ```
 
 ## Probe, then serve

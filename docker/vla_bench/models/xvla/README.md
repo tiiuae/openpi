@@ -28,7 +28,8 @@ The checkpoint is the LeRobot `pretrained_model/` directory. The benchmark's upl
 checkpoint's `config.json`; `lerobot/xvla-base` and the vision backbone are **not** touched at load. The one
 thing resolved by repo id is the preprocessor's tokenizer, `facebook/bart-large` (config + tokenizer files,
 2.7 MB; main = `cb48c136…`). A plain `hf download facebook/bart-large` pulls 5.5 GB of weights in four formats
-that are never read, so use `hf download facebook/bart-large --include "*.json" "*.txt"`. Without it the load
+that are never read, so run `hf download facebook/bart-large --include "*.json"` and then the same with `--include "*.txt"`
+(one pattern per command: hf ≥ 1.0 takes one value per `--include`). Without it the load
 fails with `ValueError: Failed to instantiate processor step 'tokenizer_processor'`. (Deployment audit
 2026-09-25: `--probe` passes with nothing but the upload set and that one repo mounted, `--network none`.)
 **Pinned (since 2026-09-28).** The image sets `VLA_BENCH_HUB_PINS`, so the server serves the tokenizer at exactly `cb48c1365bd826bd521f650dc2e0940aee54720c`, whatever the cache's `refs/main` says, and stops at startup with the `hf download --revision` command if that snapshot is missing. Either way of seeding the cache works: the command above, or the same with `--revision <sha>`. With no cache mounted and the network up, the pinned revision is downloaded at startup and the process then

@@ -42,7 +42,9 @@ keeps `drop_postprocessor_steps`. Only setting `drop_postprocessor_steps` itself
 both loaded with `from_pretrained`, weights included -- the checkpoint overwrites them afterwards, but a missing
 weight file is a hard `OSError: … does not appear to have a file named pytorch_model.bin or model.safetensors`.
 For V-JEPA2 only `model.safetensors` + the JSON configs are read (1.3 GB); a plain download also pulls the
-5.1 GB `original/model.pth`, so use `hf download facebook/vjepa2-vitl-fpc64-256 --include "*.json" "model.safetensors"`.
+5.1 GB `original/model.pth`, so run `hf download facebook/vjepa2-vitl-fpc64-256 --include "*.json"` and then
+`hf download facebook/vjepa2-vitl-fpc64-256 --include model.safetensors` (one pattern per command: hf ≥ 1.0 takes one
+value per `--include`, and a second bare value is read as a file name).
 `lerobot/VLA-JEPA-Pretrain` is **not** needed (it is only a PEFT naming field). Deployment audit 2026-09-25:
 `--probe` passes with nothing but the upload set and these two repos mounted, `--network none`.
 **Pinned (since 2026-09-28).** The image sets `VLA_BENCH_HUB_PINS`, so the server serves both repos at exactly `89644892e4d85e24eaac8bacfd4f463576704203` and `b3c1679b7c34d3255ef3547f27c7b226aefab26f`, whatever the cache's `refs/main` says, and stops at startup with the `hf download --revision` command if that snapshot is missing. Either way of seeding the cache works: the commands above, or the same with `--revision <sha>`.

@@ -70,12 +70,12 @@ def _folder(repo: str) -> str:
 
 
 def download_command(repo: str, spec: dict) -> str:
-    cmd = f"hf download {repo} --revision {spec['revision']}"
-    if spec.get("allow_patterns"):
-        cmd += " --include " + " ".join(f'"{p}"' for p in spec["allow_patterns"])
-    if spec.get("ignore_patterns"):
-        cmd += " --exclude " + " ".join(f'"{p}"' for p in spec["ignore_patterns"])
-    return cmd
+    # One --include pattern per command: hf >= 1.0 takes one value per flag (a second bare value is read as a
+    # file name) and hf < 1.0 keeps only the last of repeated flags; one pattern per call works on both.
+    base = f"hf download {repo} --revision {spec['revision']}"
+    base += "".join(f' --exclude "{p}"' for p in spec.get("ignore_patterns") or [])
+    includes = spec.get("allow_patterns") or []
+    return " && ".join(f'{base} --include "{p}"' for p in includes) if includes else base
 
 
 _DOWNLOAD = ("import json, sys\n"

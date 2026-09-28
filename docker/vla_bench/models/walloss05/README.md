@@ -43,8 +43,8 @@ collator** loads its own processor first, from the `model.processor_path` in the
 `<|propri|>` and `<|action|>` to that base vocabulary itself — so `/hf` must hold
 `Qwen/Qwen2.5-VL-3B-Instruct` at revision `66285546d2b821cf421d4f5eb2576359d3770cd3` (config,
 tokenizer and preprocessor only; the multi-GB safetensors are not read):
-`hf download Qwen/Qwen2.5-VL-3B-Instruct --revision 66285546d2b821cf421d4f5eb2576359d3770cd3 --include "*.json" "*.txt"`
-(12 MB). The yml names the snapshot directory, so that exact revision is required. `run.sh` mounts the cache.
+`hf download Qwen/Qwen2.5-VL-3B-Instruct --revision 66285546d2b821cf421d4f5eb2576359d3770cd3 --include "*.json"`, then the
+same command with `--include "*.txt"` (12 MB; one pattern per command: hf ≥ 1.0 takes one value per `--include`). The yml names the snapshot directory, so that exact revision is required. `run.sh` mounts the cache.
 Substituting the checkpoint's merged tokenizer here is a different tokenizer and a different image
 processor, which is why the YAML names the snapshot explicitly.
 
