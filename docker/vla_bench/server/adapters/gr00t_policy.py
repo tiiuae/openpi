@@ -26,6 +26,21 @@ Two failure modes seen during Phase-2 bring-up are handled here explicitly:
 
 Style follows adapters/openvla_oft.py: heavy imports happen in warmup(), not at module import, so `eval.py` can
 import every adapter module in an environment that only has numpy.
+
+Backbone (2026-09-28). The checkpoint's config.json and processor/processor_config.json name the backbone by Hub
+repo id, `model_name = "nvidia/Cosmos-Reason2-2B"`, and they ship unmodified. Loaded by that name, transformers
+4.57.3 calls `huggingface_hub.model_info()` on the gated repo while it builds the tokenizer (`_patch_mistral_regex`,
+no offline guard), so the policy could not start offline, and online it needed an access token. The adapter
+therefore ALWAYS hands GR00T a local directory, passing `model_name=<dir>` to the two from_pretrained calls
+Gr00tPolicy makes (in memory; no file is rewritten):
+  * `backbone` (the image default is /models/gr00t/cosmos-reason2-2b): the Cosmos-Reason2-2B snapshot shipped
+    inside the upload set, at the revision this model trained against;
+  * `backbone=None`: `backbone_repo` at exactly `backbone_revision`, taken from the Hugging Face cache
+    (downloaded first if online).
+GR00T's get_backbone_cls() only accepts a model_name containing "nvidia/Cosmos-Reason2" (or "Qwen/Qwen3-VL"), so
+the directory is reached through a symlink `<tmp>/nvidia/Cosmos-Reason2-2B`. A local directory also takes
+transformers' `_is_local` branch, which makes no Hub call. Verified 2026-09-28: output identical to the audit's
+verified configuration, value for value, with --network none and no /hf mount.
 """
 from __future__ import annotations
 
@@ -39,6 +54,36 @@ from .base import PolicyAdapter
 
 DEFAULT_STATE_SLICES = {"single_arm": (0, 6), "gripper": (6, 7)}
 DEFAULT_VIDEO_MAP = {"primary": "front", "wrist": "wrist"}
+BACKBONE_REPO = "nvidia/Cosmos-Reason2-2B"
+BACKBONE_REVISION = "9ce19a195e423419c349abfc86fd07178b230561"   # models/gr00t/PROVENANCE.md; what training loaded
+_BACKBONE_NAME_MARKERS = ("nvidia/Cosmos-Reason2", "Qwen/Qwen3-VL")  # gr00t_n1d7.get_backbone_cls()
+
+
+def _backbone_alias(local_dir: Path, repo: str) -> str:
+    """A path to `local_dir` that get_backbone_cls() accepts: it must CONTAIN the org/name of the repo."""
+    if any(m in str(local_dir) for m in _BACKBONE_NAME_MARKERS):
+        return str(local_dir)
+    import tempfile
+    alias = Path(tempfile.mkdtemp(prefix="gr00t_backbone_")) / repo
+    alias.parent.mkdir(parents=True, exist_ok=True)
+    alias.symlink_to(local_dir.resolve(), target_is_directory=True)
+    return str(alias)
+
+
+class _FromPretrainedWith:
+    """Stands in for AutoModel / AutoProcessor inside gr00t.policy.gr00t_policy while Gr00tPolicy.__init__ runs,
+    adding keyword arguments to its from_pretrained() calls (which it makes with none). A kwarg matching a
+    config attribute overrides that attribute in memory: `model_name` for Gr00tN1d7Config, and the
+    processor's `model_name` override key in Gr00tN1d7Processor.from_pretrained."""
+
+    def __init__(self, auto, **extra):
+        self._auto, self._extra = auto, extra
+
+    def from_pretrained(self, path, *args, **kwargs):
+        return self._auto.from_pretrained(path, *args, **{**self._extra, **kwargs})
+
+    def __getattr__(self, name):
+        return getattr(self._auto, name)
 
 
 def _as_hwc(img: np.ndarray) -> np.ndarray:
@@ -63,7 +108,8 @@ class Gr00tAdapter(PolicyAdapter):
     def __init__(self, checkpoint: str, repo_dir: str, embodiment_tag: str = "new_embodiment",
                  device: str = "cuda:0", chunk_len: int = 30, exec_len: int | None = None,
                  dataset_dir: str | None = None, modality_config: str | None = None,
-                 backbone: str | None = None, video_map: dict | None = None,
+                 backbone: str | None = None, backbone_repo: str = BACKBONE_REPO,
+                 backbone_revision: str = BACKBONE_REVISION, video_map: dict | None = None,
                  state_slices: dict | None = None):
         """
         checkpoint      : the HF-Trainer checkpoint dir (must hold config.json, the model safetensors and either
@@ -72,7 +118,8 @@ class Gr00tAdapter(PolicyAdapter):
         dataset_dir     : optional LeRobot v2.1 derivative used for training. Only needed by the fallback path
                           (checkpoint without percentiles in its statistics, or without the embodiment tag).
         modality_config : optional right7_config.py — only needed by the same fallback path.
-        backbone        : optional local dir overriding the config's `model_name` (nvidia/Cosmos-Reason2-2B).
+        backbone        : local dir holding the Cosmos-Reason2-2B snapshot (config, weights, tokenizer, processor).
+                          None: `backbone_repo` at `backbone_revision` from the Hugging Face cache instead.
         """
         self.ckpt = Path(checkpoint)
         self.repo_dir = str(repo_dir)
@@ -83,6 +130,13 @@ class Gr00tAdapter(PolicyAdapter):
         self.dataset_dir = dataset_dir
         self.modality_config = modality_config
         self.backbone = backbone
+        self.backbone_repo, self.backbone_revision = backbone_repo, backbone_revision
+        self.backbone_dir = None        # resolved local directory, set in warmup()
+        if backbone is not None and not (Path(backbone) / "config.json").is_file():
+            raise FileNotFoundError(
+                f"backbone={backbone} holds no config.json. It must be the {backbone_repo} snapshot (revision "
+                f"{backbone_revision}); the benchmark's upload set ships it as gr00t/cosmos-reason2-2b/. To take it "
+                f"from the Hugging Face cache instead, set the adapter kwarg backbone to null.")
         self.video_map = dict(video_map or DEFAULT_VIDEO_MAP)
         self.state_slices = {k: tuple(v) for k, v in (state_slices or DEFAULT_STATE_SLICES).items()}
         self._policy = None
@@ -110,10 +164,30 @@ class Gr00tAdapter(PolicyAdapter):
 
         self._torch = torch
         self._tag = EmbodimentTag.resolve(self.embodiment_tag_str)
+        if self.backbone is not None:
+            local, source = Path(self.backbone), "adapter kwarg backbone"
+        else:
+            from .hub_pins import pinned_snapshot
+            local = pinned_snapshot(self.backbone_repo, self.backbone_revision)
+            source = f"Hugging Face cache, {self.backbone_repo}@{self.backbone_revision}"
+        self.backbone_dir = _backbone_alias(local, self.backbone_repo)
+        self._backbone_source = f"{source} -> {local}"
+        print(f"gr00t backbone: {self._backbone_source} (as model_name {self.backbone_dir})", flush=True)
         try:
-            self._policy = Gr00tPolicy(embodiment_tag=self._tag, model_path=str(self.ckpt),
-                                       device=self.device, strict=True)
+            import gr00t.policy.gr00t_policy as gp
+            saved = gp.AutoModel, gp.AutoProcessor
+            gp.AutoModel = _FromPretrainedWith(saved[0], model_name=self.backbone_dir)
+            gp.AutoProcessor = _FromPretrainedWith(saved[1], model_name=self.backbone_dir)
+            try:
+                self._policy = Gr00tPolicy(embodiment_tag=self._tag, model_path=str(self.ckpt),
+                                           device=self.device, strict=True)
+            finally:
+                gp.AutoModel, gp.AutoProcessor = saved
             self._loaded_via = "Gr00tPolicy.__init__"
+            used = (self._policy.model.config.model_name, getattr(self._policy.processor, "model_name", None))
+            if used != (self.backbone_dir, self.backbone_dir):
+                raise RuntimeError(f"backbone override did not take effect: model/processor model_name = {used}, "
+                                   f"expected {self.backbone_dir}")
         except (ValueError, KeyError) as e:
             # Base checkpoints have no NEW_EMBODIMENT entry, and pre-fix statistics have no q01/q99.
             if self.dataset_dir is None or self.modality_config is None:
@@ -157,12 +231,9 @@ class Gr00tAdapter(PolicyAdapter):
         stats = LeRobotEpisodeLoader(self.dataset_dir, modality_cfg).get_dataset_statistics()
         stats = _add_percentiles(stats, self.dataset_dir)
 
-        model_kwargs = {"model_name": self.backbone} if self.backbone else {}
-        model = AutoModel.from_pretrained(str(self.ckpt), **model_kwargs)
+        model = AutoModel.from_pretrained(str(self.ckpt), model_name=self.backbone_dir)
         model.eval().to(device=self.device, dtype=torch.bfloat16)
-        proc_kwargs = {"modality_configs": {self._tag.value: modality_cfg}}
-        if self.backbone:
-            proc_kwargs["model_name"] = self.backbone
+        proc_kwargs = {"modality_configs": {self._tag.value: modality_cfg}, "model_name": self.backbone_dir}
         processor = AutoProcessor.from_pretrained(str(self.ckpt), **proc_kwargs)
         processor.set_statistics({self._tag.value: stats}, override=True)
         processor.eval()
@@ -203,6 +274,7 @@ class Gr00tAdapter(PolicyAdapter):
         d = super().info()
         d.update({"name": self.name, "checkpoint": str(self.ckpt), "embodiment_tag": self.embodiment_tag_str,
                   "loaded_via": self._loaded_via, "video_map": self.video_map,
+                  "backbone": getattr(self, "_backbone_source", None), "backbone_model_name": self.backbone_dir,
                   "state_slices": {k: list(v) for k, v in self.state_slices.items()},
                   "action_keys": getattr(self, "_action_keys", None)})
         return d

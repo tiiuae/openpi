@@ -34,9 +34,13 @@ COPY docker/vla_bench/server /app
 # fallback, and this checkpoint's own statistics.json already carries the q01/q99 percentiles the
 # N1.7 processor needs. The state slices the dataset would have supplied (single_arm 0:6,
 # gripper 6:7) are the adapter's defaults and were checked against meta/modality.json.
+#
+# backbone: the gated nvidia/Cosmos-Reason2-2B snapshot (revision 9ce19a19..., the one training loaded) ships
+# INSIDE the upload set at gr00t/cosmos-reason2-2b/, so the policy starts with no network, no /hf mount and
+# no Hub token. Set it to null to take the same pinned revision from the /hf cache instead.
 ENV VLA_BENCH_MODEL=gr00t \
     VLA_BENCH_ADAPTER=gr00t_policy:Gr00tAdapter \
-    VLA_BENCH_ADAPTER_KWARGS_DEFAULTS='{"repo_dir":"/opt/model","device":"cuda:0","chunk_len":30,"exec_len":30}' \
+    VLA_BENCH_ADAPTER_KWARGS_DEFAULTS='{"repo_dir":"/opt/model","device":"cuda:0","chunk_len":30,"exec_len":30,"backbone":"/models/gr00t/cosmos-reason2-2b"}' \
     VLA_BENCH_CHECKPOINT=/models/gr00t \
     VLA_BENCH_PORT=8800 \
     VLA_BENCH_PAD_TO=14 \
