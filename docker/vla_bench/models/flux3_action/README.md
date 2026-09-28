@@ -64,6 +64,8 @@ Robot client (all required): `--use_right_arm_only --control_freq 30 --send_hist
 - 170-query replay of episodes 39,102,120,163,167 (stride 20) through this image vs the host reference:
   **bit-exact, 35,700 / 35,700 values**, single-frame (image as shipped) and with history (image + the patch
   above, mounted over `/app/vla_server.py` for the run).
+- Latency in the image: 1342 ms p50 single-frame; history path 1331 ms p50 with `OMP_NUM_THREADS=8` (now the
+  image default) vs 1542 ms without it (all bit-exact); the host venv measured 1320 ms.
 - Upload set alone (staged tree at `/models/flux3_action`, a 14-file HF cache at `/hf`, `--network none`):
   `--probe` ok; seeded values identical (210 / 210) to the full-workspace configuration with the image defaults,
   with the two keys rewritten to `/hf` paths, and with them rewritten to Hub specs; `config.json` as produced

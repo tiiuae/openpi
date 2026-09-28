@@ -61,6 +61,9 @@ COPY docker/vla_bench/server /app
 #    Set FLUX_VIDEO_VAE= and FLUX_TEXT_ENCODER= (empty) to use the export's config.json paths instead.
 #    history "auto": a request that carries the robot client's --send_history 8 window is served with it; one
 #    that does not gets the authors' padded single-observation path (README.md, gotcha 1).
+#    OMP_NUM_THREADS=8, as the benchmark's host runs used: without it torch's CPU ops (the uint8 -> float step of the
+#    8 history frames runs on the CPU, by the authors' design) spread over every core and the history path measured
+#    1542 ms p50 in this image instead of 1331 ms with it (host: 1320 ms). Outputs bit-exact either way.
 # ---------------------------------------------------------------------------------------------
 ENV VLA_BENCH_MODEL=flux3_action \
     VLA_BENCH_ADAPTER=flux3_action:Flux3ActionAdapter \
@@ -71,6 +74,7 @@ ENV VLA_BENCH_MODEL=flux3_action \
     FLUX_TEXT_ENCODER=/hf/hub/models--black-forest-labs--flux-3-action-base/snapshots/eb267865d35e49e4066bde4936237f8d9f15a68c/text_encoder \
     VLA_BENCH_PORT=8800 \
     VLA_BENCH_PAD_TO=14 \
+    OMP_NUM_THREADS=8 \
     HF_HOME=/hf
 
 EXPOSE 8800
