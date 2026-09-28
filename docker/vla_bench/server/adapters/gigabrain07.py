@@ -22,6 +22,16 @@ inference_config.json) — the EMA weights the authors deploy, not the ~14 GB FS
 
 embodiment_id 8 is the slot this benchmark's right-arm 7-D embodiment was trained into
 (num_embodiments 9; rows 0-7 are the pretrained GigaBrain-0.7 embodiments).
+
+Prompt (fixed 2026-09-28). Training rendered 'Task: <t>, Control mode: joint, End effector: gripper,
+State: <|propri|>;' -- the run set prompt_cfg.end_effector_override="gripper", and the trainer recorded it in
+model_ema/inference_config.json. The author's get_policy() ignores that key and derives the segment from the
+delta mask instead (infer_end_effector_type_from_delta_mask), which returns None for this single-arm mask
+[T]*6+[F], so it serves the prompt WITHOUT ', End effector: gripper'. The deployment audit measured the cost on
+the benchmark replay: joint MAE 0.0077496 as served vs 0.0068355 with the trained prompt (-11.8 %). By default
+this adapter now serves the value the checkpoint recorded (end_effector="checkpoint"); end_effector="author"
+reproduces the author's server (and the benchmark numbers recorded before the fix); any other string is
+forced as is.
 """
 from __future__ import annotations
 import importlib.util, os, sys
@@ -71,6 +81,41 @@ def _patch_image_transform() -> list:
     return dropped_names
 
 
+def _trained_end_effector(mod, checkpoint: str) -> tuple:
+    """The end-effector segment the checkpoint was TRAINED with: prompt_cfg.end_effector_override from the
+    inference_config.json sidecar, read with the author's own resolver and loader. (value, sidecar path)."""
+    from giga_models.pipelines.vla.giga_brain_0.giga_brain_0_utils import load_inference_config
+    ckpt_dir = mod._resolve_model_dir(checkpoint)
+    prompt_cfg = load_inference_config(ckpt_dir).get("prompt_cfg") or {}
+    return prompt_cfg.get("end_effector_override"), os.path.join(ckpt_dir, "inference_config.json")
+
+
+def _get_policy_with_end_effector(mod, end_effector, **get_policy_kwargs):
+    """Call the author's get_policy() with its end-effector prompt segment set to `end_effector`.
+
+    get_policy() imports infer_end_effector_type_from_delta_mask from giga_brain_0_utils at call time and uses
+    its return value for the prompt transform and for the per-request server-owned values alike, so replacing
+    that module attribute for the duration of the call changes exactly that one value. It is restored
+    afterwards. Returns (policy, what the author's inference would have served)."""
+    import giga_models.pipelines.vla.giga_brain_0.giga_brain_0_utils as U
+    real = U.infer_end_effector_type_from_delta_mask
+    seen = {}
+
+    def _trained(delta_mask, *a, **kw):
+        seen["author"] = real(delta_mask, *a, **kw)
+        return end_effector
+
+    U.infer_end_effector_type_from_delta_mask = _trained
+    try:
+        policy = mod.get_policy(**get_policy_kwargs)
+    finally:
+        U.infer_end_effector_type_from_delta_mask = real
+    if "author" not in seen:
+        raise RuntimeError("get_policy() no longer calls infer_end_effector_type_from_delta_mask; the end-effector "
+                           "prompt fix in adapters/gigabrain07.py must be re-derived for this giga-models version")
+    return policy, seen["author"]
+
+
 def _load_author_module(repo_dir: str, model_dir: str):
     for p in (model_dir, repo_dir):
         if p and p not in sys.path:
@@ -90,7 +135,7 @@ class GigaBrain07Adapter(PolicyAdapter):
                  fast_tokenizer_path: str, norm_stats_path: str, embodiment_id: int = 8,
                  robot_type: str = "trossen_ai_mobile", original_action_dim: int = 7,
                  chunk_len: int = 30, exec_len: int = 30, dtype: str = "bfloat16",
-                 device: str = "cuda:0", seed: int | None = 1000):
+                 device: str = "cuda:0", seed: int | None = 1000, end_effector: str | None = "checkpoint"):
         self.name = f"gigabrain07:{checkpoint}"
         self.chunk_len, self.exec_len = int(chunk_len), int(exec_len)
         self.checkpoint, self.device, self.dtype, self.seed = checkpoint, device, dtype, seed
@@ -102,7 +147,7 @@ class GigaBrain07Adapter(PolicyAdapter):
         mod = _load_author_module(repo_dir, model_dir)
         self._mod = mod
         self.compat_dropped_kwargs = _patch_image_transform()
-        self.policy = mod.get_policy(
+        policy_kwargs = dict(
             model_path=checkpoint,
             pretrained_path=tokenizer_path,
             fast_tokenizer_path=fast_tokenizer_path,
@@ -113,6 +158,22 @@ class GigaBrain07Adapter(PolicyAdapter):
             original_action_dim=self.original_action_dim,
             expected_state_dim=self.original_action_dim,
         )
+        served, source = None, None
+        if end_effector == "checkpoint":
+            served, source = _trained_end_effector(mod, checkpoint)
+            source = f"{source}: prompt_cfg.end_effector_override"
+        elif end_effector != "author":
+            served, source = end_effector, "adapter kwarg end_effector"
+        if served is None:
+            # "author", or a checkpoint that recorded no override: keep the author's server behaviour unchanged
+            self.policy = mod.get_policy(**policy_kwargs)
+            self.end_effector = {"mode": end_effector, "served": "inferred from the delta mask by get_policy()",
+                                 "source": source or "author's get_policy()"}
+        else:
+            self.policy, author = _get_policy_with_end_effector(mod, served, **policy_kwargs)
+            self.end_effector = {"mode": end_effector if end_effector == "checkpoint" else "forced",
+                                 "served": served, "source": source, "author_server_would_serve": author}
+        print(f"gigabrain07 prompt end effector: {self.end_effector}", flush=True)
         self.server_info = dict(getattr(self.policy, "server_info", {}))
         n_steps = int(getattr(self.policy, "n_action_steps", self.chunk_len))
         if n_steps != self.chunk_len:
@@ -147,5 +208,6 @@ class GigaBrain07Adapter(PolicyAdapter):
                   "dtype": self.dtype, "seed": self.seed,
                   "cameras": {"primary": CAM_HIGH, "wrist": CAM_WRIST},
                   "server_info": self.server_info,
-                  "compat_dropped_image_transform_kwargs": self.compat_dropped_kwargs})
+                  "compat_dropped_image_transform_kwargs": self.compat_dropped_kwargs,
+                  "prompt_end_effector": self.end_effector})
         return d

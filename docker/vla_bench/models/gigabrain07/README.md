@@ -50,13 +50,25 @@ this benchmark trained into, and the delta mask (`[T]*6 + [F]` — joints delta,
 keyed on it. For this checkpoint any other id stops the load with
 `KeyError: "No delta mask for embodiment_id=7; available keys: ['8']"` (measured).
 
-**Known serving defect: the served prompt is not the trained prompt.** Training rendered
+**The served prompt is the trained prompt (fixed 2026-09-28).** Training rendered
 `Task: <task>, Control mode: joint, End effector: gripper, State: <|propri|>;` (the run's config sets
 `end_effector_override="gripper"`, and `model_ema/inference_config.json` records it). The authors' server
 ignores that key: it infers the end effector from the delta mask, gets `None` for this single-arm mask, and drops
-`End effector: gripper` from every prompt. Nothing warns. Measured 2026-09-25 on the benchmark's five reference
-episodes: the image as shipped reproduces the recorded reference exactly (`mae_joints_rad` 0.0077496), and with
-the trained prompt forced (a process-local patch, `VLA-SOTA/openpi_integration/tools/audit_gigabrain07_ee_server.py`)
-it is 0.0068355, **-11.8 %**, with every aggregate metric 8-15 % better. The benchmark's GigaBrain row and this
-image both serve the degraded prompt. Fixing it is a one-line code change in the adapter or server (pass
-`prompt_cfg['end_effector_override']` through), not a deployment setting.
+`End effector: gripper` from every prompt, with no warning. Until 2026-09-28 this image and the benchmark's
+GigaBrain row both served that degraded prompt. The adapter now serves the value the checkpoint recorded
+(`"end_effector": "checkpoint"`, the default) and logs `gigabrain07 prompt end effector: {... 'served': 'gripper' ...}`
+at startup. `-e 'VLA_BENCH_ADAPTER_KWARGS={"end_effector":"author"}'` restores the authors' behaviour.
+
+Measured on the benchmark's five reference episodes (170 queries, rate 20):
+
+| | mae_joints_rad | rmse_joints_rad | mae_gripper_m | mae_normalised | traj_mae_joints_rad | worst step (rad) |
+|---|---:|---:|---:|---:|---:|---:|
+| authors' prompt (old benchmark row) | 0.0077496 | 0.0150149 | 0.0009684 | 0.0369241 | 0.0062118 | 0.2470 |
+| trained prompt (this image, new row) | **0.0068355** | 0.0137422 | 0.0008489 | 0.0328690 | 0.0052968 | 0.2842 |
+| change | **-11.80 %** | -8.48 % | -12.34 % | -10.98 % | -14.73 % | +15.06 % |
+
+The benchmark row was re-run on 2026-09-28 (SLURM 483515) with the fixed adapter. This image, served from the upload
+set alone on a network with no route off the host, reproduces it bit-exactly: 35,700/35,700 predicted values. Its
+seeded probe output equals the audit's forced-prompt run exactly, and with `end_effector=author` it equals the old
+served output exactly, so the fix changes the prompt and nothing else. The old row is kept as
+`results/deploy_eval/gigabrain07/*_oldprompt.*`.
