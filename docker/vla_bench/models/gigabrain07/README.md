@@ -28,7 +28,8 @@ The checkpoint is the trainer's **EMA export** (`config.json`, `diffusion_pytorc
 **Its sidecar config carries absolute host paths, and the image overrides them.**
 `inference_config.json` records the tokenizer, FAST tokenizer and norm-stats locations as absolute
 paths from the training machine, which do not exist in a container. The adapter passes all three to
-`get_policy()` explicitly, so `VLA_BENCH_ADAPTER_KWARGS` is what actually decides them: the two
+`get_policy()` explicitly, so the adapter kwargs (image defaults in `VLA_BENCH_ADAPTER_KWARGS_DEFAULTS`,
+overridable key by key through `VLA_BENCH_ADAPTER_KWARGS`) are what actually decide them: the two
 tokenizers resolve inside the `/hf` mount and **`norm_stats_path` must be present under the weights
 mount at `/models/gigabrain07/norm_stats_right7_emb8.json`**. The benchmark's upload set
 (`VLA-SOTA/repo/scripts/upload_checkpoints.sh`) ships it there, next to `model_ema/`. If it is missing, the load

@@ -30,8 +30,9 @@ Beside it, the adapter reads the run's dataset metadata from `/models/xr1/data/`
 30) and `manifest.json` (only its `wrist_encoding`, `additive`). The `json/` and `videos/` subtrees of that
 dataset are not touched. `upload_checkpoints.sh` ships both files as `xr1/data/` since 2026-09-25. Before that,
 the upload set failed at load with `FileNotFoundError: [Errno 2] No such file or directory:
-'/models/xr1/data/normalize.json'`. To point `data_dir` somewhere else, override `VLA_BENCH_ADAPTER_KWARGS`,
-which replaces the whole JSON, so copy every key. With both files in place `--probe` passes offline with
+'/models/xr1/data/normalize.json'`. To point `data_dir` somewhere else, set it alone:
+`-e 'VLA_BENCH_ADAPTER_KWARGS={"data_dir":"/somewhere"}'` is merged over the image defaults and keeps every other
+key (before 2026-09-28 it replaced the whole JSON). With both files in place `--probe` passes offline with
 nothing but the upload set and the Qwen3-VL-4B config/tokenizer files in `/hf`. Its output is identical, value
 for value, to the verified `epoch=0-step=10000` configuration (the shipped `last.ckpt` blob holds byte-identical
 tensors).

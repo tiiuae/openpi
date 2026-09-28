@@ -184,6 +184,30 @@ class Server:
             await s.serve_forever()
 
 
+def json_object(text: str, what: str) -> dict:
+    try:
+        d = json.loads(text or "{}")
+    except json.JSONDecodeError as e:
+        raise SystemExit(f"{what} is not valid JSON ({e}): {text!r}")
+    if not isinstance(d, dict):
+        raise SystemExit(f"{what} must be a JSON object, got {type(d).__name__}: {text!r}")
+    return d
+
+
+def merge_adapter_kwargs(defaults: dict, user: dict) -> dict:
+    """Image defaults, then the user's keys on top. Before 2026-09-28 a user-supplied VLA_BENCH_ADAPTER_KWARGS
+    REPLACED the image's whole JSON, so overriding one key silently dropped every other one. Measured on
+    vla_jepa: dropping drop_postprocessor_steps that way pins every gripper output to exactly 1.0 m and the
+    server serves normally. Top-level merge only: a nested value (rename_map, overrides) is replaced whole,
+    and a key set to null is passed to the adapter as None."""
+    merged = {**defaults, **user}
+    changed = sorted(k for k in user if k in defaults and user[k] != defaults[k])
+    added = sorted(k for k in user if k not in defaults)
+    log.info("adapter kwargs: %d image defaults, user overrides %s, user additions %s",
+             len(defaults), changed or "none", added or "none")
+    return merged
+
+
 def build_adapter(spec: str, kwargs: dict):
     mod, cls = spec.split(":")
     mod = mod if mod.startswith("adapters.") else f"adapters.{mod}"
@@ -194,7 +218,10 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--model", default=os.environ.get("VLA_BENCH_MODEL", ""))
     ap.add_argument("--adapter", default=os.environ.get("VLA_BENCH_ADAPTER", ""))
-    ap.add_argument("--adapter-kwargs", default=os.environ.get("VLA_BENCH_ADAPTER_KWARGS", "{}"))
+    ap.add_argument("--adapter-kwargs", default=os.environ.get("VLA_BENCH_ADAPTER_KWARGS", "{}"),
+                    help="JSON object MERGED OVER the image defaults (VLA_BENCH_ADAPTER_KWARGS_DEFAULTS): a key given "
+                         "here wins, a key not given keeps the image's value. The merge is top-level only, so a "
+                         "nested value such as rename_map is replaced whole. Env: VLA_BENCH_ADAPTER_KWARGS.")
     ap.add_argument("--checkpoint", default=os.environ.get("VLA_BENCH_CHECKPOINT", ""),
                     help="path INSIDE the container, e.g. /models/<model>/<ckpt>")
     ap.add_argument("--checkpoint-kwarg", default=os.environ.get("VLA_BENCH_CHECKPOINT_KWARG", "checkpoint"),
@@ -217,7 +244,9 @@ def main():
 
     if not a.model or not a.adapter:
         ap.error("--model and --adapter are required (or VLA_BENCH_MODEL / VLA_BENCH_ADAPTER)")
-    kwargs = json.loads(a.adapter_kwargs)
+    defaults = json_object(os.environ.get("VLA_BENCH_ADAPTER_KWARGS_DEFAULTS", "{}"), "VLA_BENCH_ADAPTER_KWARGS_DEFAULTS")
+    user = json_object(a.adapter_kwargs, "--adapter-kwargs / VLA_BENCH_ADAPTER_KWARGS")
+    kwargs = merge_adapter_kwargs(defaults, user)
     if a.checkpoint:
         kwargs.setdefault(a.checkpoint_kwarg, a.checkpoint)
         if not Path(a.checkpoint).exists():
@@ -243,7 +272,8 @@ def main():
         act = np.asarray(adapter.predict(obs))
         print(json.dumps({"probe": "ok", "model": a.model, "checkpoint": a.checkpoint, "task": a.probe_task,
                           "load_seconds": round(load_s, 1), "first_infer_ms": round((time.time() - t1) * 1000, 1),
-                          "action_shape": list(act.shape), "metadata": srv.metadata()}, indent=1))
+                          "action_shape": list(act.shape), "adapter_kwargs": kwargs,
+                          "metadata": srv.metadata()}, indent=1, default=str))
         return
     asyncio.run(srv.run(a.host, a.port))
 

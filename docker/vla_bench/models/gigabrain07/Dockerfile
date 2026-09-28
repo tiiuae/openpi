@@ -42,7 +42,7 @@ COPY docker/vla_bench/server /app
 ENV PYTHONPATH=/opt/model \
     VLA_BENCH_MODEL=gigabrain07 \
     VLA_BENCH_ADAPTER=gigabrain07:GigaBrain07Adapter \
-    VLA_BENCH_ADAPTER_KWARGS='{"repo_dir":"/opt/model","model_dir":"/opt/model","tokenizer_path":"/hf/hub/models--google--paligemma2-3b-pt-224/snapshots/96eeb174da13ca1a2b247e4d0867436296c36420","fast_tokenizer_path":"/hf/hub/models--physical-intelligence--fast/snapshots/ec4d7aa71691cac0b8bed6942be45684db2110f4","norm_stats_path":"/models/gigabrain07/norm_stats_right7_emb8.json","embodiment_id":8,"robot_type":"trossen_ai_mobile","original_action_dim":7,"chunk_len":30,"exec_len":30,"dtype":"bfloat16","device":"cuda:0","seed":1000}' \
+    VLA_BENCH_ADAPTER_KWARGS_DEFAULTS='{"repo_dir":"/opt/model","model_dir":"/opt/model","tokenizer_path":"/hf/hub/models--google--paligemma2-3b-pt-224/snapshots/96eeb174da13ca1a2b247e4d0867436296c36420","fast_tokenizer_path":"/hf/hub/models--physical-intelligence--fast/snapshots/ec4d7aa71691cac0b8bed6942be45684db2110f4","norm_stats_path":"/models/gigabrain07/norm_stats_right7_emb8.json","embodiment_id":8,"robot_type":"trossen_ai_mobile","original_action_dim":7,"chunk_len":30,"exec_len":30,"dtype":"bfloat16","device":"cuda:0","seed":1000}' \
     VLA_BENCH_CHECKPOINT=/models/gigabrain07/model_ema \
     VLA_BENCH_PORT=8800 \
     VLA_BENCH_PAD_TO=14 \

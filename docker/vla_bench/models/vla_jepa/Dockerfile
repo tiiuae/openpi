@@ -51,7 +51,7 @@ COPY docker/vla_bench/server /app
 # left in, they force the continuous carriage position to a binary open/closed and destroy dimension 6.
 ENV VLA_BENCH_MODEL=vla_jepa \
     VLA_BENCH_ADAPTER=lerobot_policy:LeRobotAdapter \
-    VLA_BENCH_ADAPTER_KWARGS='{"device":"cuda","dtype":"bfloat16","chunk_len":30,"exec_len":30,"rename_map":{"primary":"observation.images.cam_high","wrist":"observation.images.cam_right_wrist"},"drop_postprocessor_steps":["PreSnapGripperProcessorStep","BinarizeGripperProcessorStep"]}' \
+    VLA_BENCH_ADAPTER_KWARGS_DEFAULTS='{"device":"cuda","dtype":"bfloat16","chunk_len":30,"exec_len":30,"rename_map":{"primary":"observation.images.cam_high","wrist":"observation.images.cam_right_wrist"},"drop_postprocessor_steps":["PreSnapGripperProcessorStep","BinarizeGripperProcessorStep"]}' \
     VLA_BENCH_CHECKPOINT=/models/vla_jepa \
     VLA_BENCH_PORT=8800 \
     VLA_BENCH_PAD_TO=14 \

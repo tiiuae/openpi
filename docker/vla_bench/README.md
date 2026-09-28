@@ -82,6 +82,27 @@ client. Every server flips it back to RGB before inference.
 crashing on missing columns. These policies are **7-D right arm**: the server reads `state[7:14]` and
 writes predictions back into columns `7:14`, zeros elsewhere.
 
+## Adapter kwargs: image defaults, merged overrides
+
+Each image sets its adapter's constructor arguments as a JSON object in `VLA_BENCH_ADAPTER_KWARGS_DEFAULTS`
+(see its Dockerfile). To change one, pass only that key:
+
+```bash
+docker run ... -e 'VLA_BENCH_ADAPTER_KWARGS={"exec_len":10}' vla-bench-<model>    # or --adapter-kwargs '{...}'
+```
+
+The server merges the override **over** the defaults: a key you give wins, a key you do not give keeps the
+image's value. The merge is top-level, so a nested value such as `rename_map` is replaced whole, and a key set
+to `null` reaches the adapter as `None`. The startup log and the `--probe` output print the effective kwargs.
+Until 2026-09-28 an override *replaced* the whole JSON, which silently dropped every key it did not repeat; for
+`vla_jepa` that pinned every gripper output to 1.0 m while the server served normally.
+
+## Episode boundaries
+
+Each websocket connection is one episode. On every new connection the server calls the adapter's `reset()`
+before it sends the metadata dict. The twelve benchmark adapters keep no state between calls and inherit a
+no-op; an adapter that keeps history (frames, previously issued commands) clears it there.
+
 ## Verifying a backend before the robot
 
 `--probe` loads the checkpoint, runs one inference on a blank frame and prints the shape, load time and

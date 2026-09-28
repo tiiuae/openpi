@@ -61,7 +61,7 @@ COPY docker/vla_bench/server /app
 ENV VLA_BENCH_MODEL=openvla_oft \
     VLA_BENCH_ADAPTER=openvla_oft:OpenVLAOFTAdapter \
     VLA_BENCH_CHECKPOINT_KWARG=checkpoint_dir \
-    VLA_BENCH_ADAPTER_KWARGS='{"repo_dir":"/opt/model","chunk_len":30,"exec_len":30,"center_crop":true,"unnorm_key":"right7_2view_v1"}' \
+    VLA_BENCH_ADAPTER_KWARGS_DEFAULTS='{"repo_dir":"/opt/model","chunk_len":30,"exec_len":30,"center_crop":true,"unnorm_key":"right7_2view_v1"}' \
     VLA_BENCH_PORT=8800 \
     VLA_BENCH_PAD_TO=14 \
     HF_HOME=/hf \

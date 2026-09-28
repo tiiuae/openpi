@@ -36,7 +36,7 @@ COPY docker/vla_bench/server /app
 # gripper 6:7) are the adapter's defaults and were checked against meta/modality.json.
 ENV VLA_BENCH_MODEL=gr00t \
     VLA_BENCH_ADAPTER=gr00t_policy:Gr00tAdapter \
-    VLA_BENCH_ADAPTER_KWARGS='{"repo_dir":"/opt/model","device":"cuda:0","chunk_len":30,"exec_len":30}' \
+    VLA_BENCH_ADAPTER_KWARGS_DEFAULTS='{"repo_dir":"/opt/model","device":"cuda:0","chunk_len":30,"exec_len":30}' \
     VLA_BENCH_CHECKPOINT=/models/gr00t \
     VLA_BENCH_PORT=8800 \
     VLA_BENCH_PAD_TO=14 \

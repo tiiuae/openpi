@@ -87,7 +87,7 @@ COPY docker/vla_bench/server /app
 # under the weights mount.
 ENV VLA_BENCH_MODEL=lingbot_v2 \
     VLA_BENCH_ADAPTER=lingbot_v2:LingBotV2Adapter \
-    VLA_BENCH_ADAPTER_KWARGS='{"repo_dir":"/opt/src","robo_name":"right7_2view","chunk_len":30,"exec_len":30,"dtype":"bfloat16","use_compile":false,"device":"cuda:0","seed":1000,"qwen3vl_path":"/hf/hub/models--Qwen--Qwen3-VL-4B-Instruct/snapshots/ebb281ec70b05090aa6165b016eac8ec08e71b17"}' \
+    VLA_BENCH_ADAPTER_KWARGS_DEFAULTS='{"repo_dir":"/opt/src","robo_name":"right7_2view","chunk_len":30,"exec_len":30,"dtype":"bfloat16","use_compile":false,"device":"cuda:0","seed":1000,"qwen3vl_path":"/hf/hub/models--Qwen--Qwen3-VL-4B-Instruct/snapshots/ebb281ec70b05090aa6165b016eac8ec08e71b17"}' \
     VLA_BENCH_CHECKPOINT=/models/lingbot_v2/eval_ckpt/step16000/checkpoints/global_step_16000/hf_ckpt \
     VLA_BENCH_PORT=8800 \
     VLA_BENCH_PAD_TO=14 \

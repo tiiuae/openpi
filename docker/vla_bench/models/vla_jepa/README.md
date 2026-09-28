@@ -30,10 +30,12 @@ still lists `PreSnapGripperProcessorStep` and `BinarizeGripperProcessorStep`. Le
 dimension 6 to a binary open/closed — this robot's gripper is a *continuous carriage position in
 metres*, so the gripper output is destroyed. `VLA_BENCH_ADAPTER_KWARGS.drop_postprocessor_steps` removes
 them by class name, which reproduces the from-config pipeline exactly while keeping the baked-in camera
-rename and the normalisation statistics. Do not remove that kwarg, and remember that overriding
-`VLA_BENCH_ADAPTER_KWARGS` replaces the whole JSON, so an override must carry it too: measured 2026-09-25,
-without it every predicted gripper value is exactly **1.0 m** (valid range 0-0.044 m) while the joints are
-unchanged -- the server starts and serves normally.
+rename and the normalisation statistics. Do not remove that kwarg: measured 2026-09-25, without it every
+predicted gripper value is exactly **1.0 m** (valid range 0-0.044 m) while the joints are unchanged -- the
+server starts and serves normally. Until 2026-09-28 a `VLA_BENCH_ADAPTER_KWARGS` override replaced the image's
+whole JSON and so dropped this key silently. The image default now lives in `VLA_BENCH_ADAPTER_KWARGS_DEFAULTS`
+and an override is **merged over it** (see the top-level README), so `-e 'VLA_BENCH_ADAPTER_KWARGS={"chunk_len":30}'`
+keeps `drop_postprocessor_steps`. Only setting `drop_postprocessor_steps` itself (to `[]` or `null`) removes it.
 
 **Hub cache needed: two repos, with their weights.** `Qwen/Qwen3-VL-2B-Instruct` (config `qwen_model_name`,
 4.3 GB, main = `89644892…`) and `facebook/vjepa2-vitl-fpc64-256` (`jepa_encoder_name`, main = `b3c1679b…`) are

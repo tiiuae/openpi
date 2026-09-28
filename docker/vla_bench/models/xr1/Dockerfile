@@ -49,7 +49,7 @@ COPY docker/vla_bench/server /app
 
 ENV VLA_BENCH_MODEL=xr1 \
     VLA_BENCH_ADAPTER=xr1_policy:XR1Adapter \
-    VLA_BENCH_ADAPTER_KWARGS='{"repo_dir":"/opt/src/xr1","model_dir":"/opt/xr1_tools","data_dir":"/models/xr1/data","device":"cuda:0","chunk_len":30,"exec_len":30,"seed":1000}' \
+    VLA_BENCH_ADAPTER_KWARGS_DEFAULTS='{"repo_dir":"/opt/src/xr1","model_dir":"/opt/xr1_tools","data_dir":"/models/xr1/data","device":"cuda:0","chunk_len":30,"exec_len":30,"seed":1000}' \
     VLA_BENCH_CHECKPOINT=/models/xr1/mp_rank_00_model_states.pt \
     VLA_BENCH_PORT=8800 \
     VLA_BENCH_PAD_TO=14 \

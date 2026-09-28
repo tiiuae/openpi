@@ -39,6 +39,6 @@ must reach huggingface.co. Pre-seed with
 
 **The camera names are pinned, not guessed.** Training renamed `cam_high -> camera1` and
 `cam_right_wrist -> camera2`, and that rename is baked into `policy_preprocessor.json`. The image
-therefore passes the *original* dataset key names in `VLA_BENCH_ADAPTER_KWARGS.rename_map` and lets
+therefore passes the *original* dataset key names in the `rename_map` adapter kwarg and lets
 the checkpoint's own rename step do the mapping, instead of letting the adapter's name heuristics
 pick. Override the kwargs only if you retrain with different names.

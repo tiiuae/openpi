@@ -81,8 +81,8 @@ defaults to bf16; the image does the same, uncompiled, because that is how the b
 numbers were recorded and it is the path verified below. `torch.compile` is worth **3x**: measured on
 one A100 (SLURM 474923, `models/lingbot_v2/eval_probe/verify_and_latency.json`), bf16 + eager is
 **884 ms** median per call and bf16 + eager + `torch.compile` is **293 ms** median, after a **107 s**
-one-time graph capture on the first call. Enable it with `"use_compile": true` in
-`VLA_BENCH_ADAPTER_KWARGS` and budget the capture into startup (it lands on the first request, so send a
+one-time graph capture on the first call. Enable it with `-e 'VLA_BENCH_ADAPTER_KWARGS={"use_compile":true}'`
+(merged over the image defaults) and budget the capture into startup (it lands on the first request, so send a
 warm-up request before the robot needs an answer). The compiled path was measured in the host venv; it
 has **not** been replayed through this image, so treat its accuracy as unverified here. The image has
 the C toolchain and Python headers that inductor needs.

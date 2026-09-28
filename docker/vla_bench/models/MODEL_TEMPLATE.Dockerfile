@@ -39,9 +39,11 @@ COPY packages/openpi-client /opt/openpi-client
 # 5. the shared server and the adapters
 COPY docker/vla_bench/server /app
 
+# VLA_BENCH_ADAPTER_KWARGS_DEFAULTS holds the image's adapter kwargs. Do NOT set VLA_BENCH_ADAPTER_KWARGS here:
+# that is the deployer's override, which vla_server.py merges over these defaults key by key.
 ENV VLA_BENCH_MODEL=<model> \
     VLA_BENCH_ADAPTER=<adapter_module>:<AdapterClass> \
-    VLA_BENCH_ADAPTER_KWARGS='{}' \
+    VLA_BENCH_ADAPTER_KWARGS_DEFAULTS='{}' \
     VLA_BENCH_PORT=8800 \
     VLA_BENCH_PAD_TO=14 \
     HF_HOME=/hf
