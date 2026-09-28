@@ -14,17 +14,17 @@ docker build -f docker/vla_bench/models/walloss05/Dockerfile -t vla-bench-wallos
 
 ```bash
 WEIGHTS_DIR=/opt/vla_weights HF_CACHE_DIR=$HOME/.cache/huggingface \
-  docker/vla_bench/run.sh walloss05 --probe --checkpoint /models/walloss05
+  docker/vla_bench/run.sh walloss05 --probe          # image default: /models/walloss05
 ```
 
-`--checkpoint` is required with the benchmark's upload set (`VLA-SOTA/repo/scripts/upload_checkpoints.sh`),
-which puts the checkpoint files directly under `walloss05/`. The image default `/models/walloss05/eval_ckpt/ep19`
-is the cluster's layout, and without `--checkpoint` the server stops with `checkpoint not found inside the
-container`. Deployment audit 2026-09-25: with `--checkpoint /models/walloss05`, the upload set alone and only the
-Qwen2.5-VL-3B config/tokenizer files in `/hf`, `--probe` passes offline, and the output is identical, value for
-value, to the verified `eval_ckpt/ep19` configuration. The shipped `config.yml` is the original training yml;
-the model reads only a few dead keys from it (`processor_path`/`config_path` overlays that lose to the baked
-yml), so its `/lustre1` paths are harmless.
+The benchmark's upload set (`VLA-SOTA/repo/scripts/upload_checkpoints.sh`) puts the checkpoint files directly
+under `walloss05/`, which is the image default since 2026-09-28 (it was the cluster's `eval_ckpt/ep19`).
+Deployment audit 2026-09-25: the upload set alone and only the Qwen2.5-VL-3B config/tokenizer files in `/hf`
+pass `--probe` offline, and the output is identical, value for value, to the verified `eval_ckpt/ep19`
+configuration. Since 2026-09-28 the upload ships the run's own `config.yml` (the trainer's dump) unchanged, and
+the training yml beside it as `right7_2view_ep20.yml`; until then the training yml was linked over `config.yml`.
+The model reads only the checkpoint overlay's model keys from `config.yml` (`processor_path`, `config_path`, ...),
+and they only fill keys the baked yml leaves empty, so its `/lustre1` paths are never used.
 
 The checkpoint is the directory holding `model.safetensors`, `config.json`, `config.yml`,
 `norm_stats.json`, `normalizer_{action,propri}.pth`, `preprocessor_config.json` and the tokenizer

@@ -15,7 +15,7 @@ services:
       - "${PORT:-8800}:8800"
     command:
       - --checkpoint
-      - ${CHECKPOINT:-/models/internvla_a15/runs/2026_09_15_17_09_12-internvla_a1_5-right7_2view_v1-abs-a15_pretrain-cap15k-finetune/checkpoints/015000/pretrained_model}
+      - ${CHECKPOINT:-/models/internvla_a15}
     volumes:
       - ${WEIGHTS_DIR:-/opt/vla_weights}:/models:ro
       - ${HF_CACHE_DIR:-/opt/vla_hf_cache}:/hf:ro

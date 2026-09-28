@@ -17,14 +17,14 @@ docker build -f docker/vla_bench/models/fastwam/Dockerfile -t vla-bench-fastwam:
 
 ```bash
 WEIGHTS_DIR=/opt/vla_weights HF_CACHE_DIR=$HOME/.cache/huggingface \
-  docker/vla_bench/run.sh fastwam --probe --checkpoint /models/fastwam/checkpoints/weights/step_010920.pt
+  docker/vla_bench/run.sh fastwam --probe          # image default: /models/fastwam/checkpoints/weights/step_010920.pt
 ```
 
 The checkpoint is a **single `.pt` file** (the consolidated `{mot, proprio_encoder, step}` blob), not a
 directory. The sibling `checkpoints/state/` DeepSpeed tree (~85 GB) is training state and is not used. In the
 benchmark's upload set (`VLA-SOTA/repo/scripts/upload_checkpoints.sh`) it is
-`fastwam/checkpoints/weights/step_010920.pt`; the image default `/models/fastwam/weights.pt` does not exist
-there, so `--checkpoint` is required (without it: `checkpoint not found inside the container`).
+`fastwam/checkpoints/weights/step_010920.pt`, which is the image default since 2026-09-28 (it was
+`/models/fastwam/weights.pt`, which the upload set does not have), so no `--checkpoint` is needed.
 
 ## What this model needs beside the checkpoint — more than any other
 

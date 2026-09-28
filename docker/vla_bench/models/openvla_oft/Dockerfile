@@ -58,9 +58,15 @@ COPY packages/openpi-client /opt/openpi-client
 COPY docker/vla_bench/server /app
 
 # checkpoint_dir, not checkpoint: this adapter names the parameter differently from the rest.
+# VLA_BENCH_CHECKPOINT is the upload-set layout (the step-50000 checkpoint flat under openvla_oft/).
+# HF_MODULES_CACHE is moved OFF the /hf mount: the checkpoint's auto_map makes transformers copy its remote code
+# into $HF_MODULES_CACHE/transformers_modules/, and on a read-only /hf that died with
+# "OSError: [Errno 30] Read-only file system: '/hf/modules'" (deployment audit, 2026-09-25).
 ENV VLA_BENCH_MODEL=openvla_oft \
     VLA_BENCH_ADAPTER=openvla_oft:OpenVLAOFTAdapter \
     VLA_BENCH_CHECKPOINT_KWARG=checkpoint_dir \
+    VLA_BENCH_CHECKPOINT=/models/openvla_oft \
+    HF_MODULES_CACHE=/tmp/hf_modules \
     VLA_BENCH_ADAPTER_KWARGS_DEFAULTS='{"repo_dir":"/opt/model","chunk_len":30,"exec_len":30,"center_crop":true,"unnorm_key":"right7_2view_v1"}' \
     VLA_BENCH_PORT=8800 \
     VLA_BENCH_PAD_TO=14 \

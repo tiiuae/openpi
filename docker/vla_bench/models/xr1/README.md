@@ -14,12 +14,12 @@ docker build -f docker/vla_bench/models/xr1/Dockerfile -t vla-bench-xr1:latest .
 
 ```bash
 WEIGHTS_DIR=/opt/vla_weights HF_CACHE_DIR=$HOME/.cache/huggingface \
-  docker/vla_bench/run.sh xr1 --probe --checkpoint /models/xr1/checkpoint/mp_rank_00_model_states.pt
+  docker/vla_bench/run.sh xr1 --probe       # image default: /models/xr1/checkpoint/mp_rank_00_model_states.pt
 ```
 
 In the benchmark's upload set (`VLA-SOTA/repo/scripts/upload_checkpoints.sh`) the blob is
-`xr1/checkpoint/mp_rank_00_model_states.pt`. The image default `/models/xr1/mp_rank_00_model_states.pt` does not
-exist there, so `--checkpoint` is required.
+`xr1/checkpoint/mp_rank_00_model_states.pt`, which is the image default since 2026-09-28 (before, the default
+was `/models/xr1/mp_rank_00_model_states.pt` and `--checkpoint` was required).
 
 The checkpoint is a **single `.pt` file**: the DeepSpeed ZeRO-2 model-states blob. Stage 2 keeps every
 parameter unsharded on every rank, so that one file already holds the full bf16 state dict under

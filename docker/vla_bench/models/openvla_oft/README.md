@@ -19,29 +19,27 @@ out as (30, 7, 7); it does not silently fall back.
 ## Run
 
 ```bash
-# HF_CACHE_DIR must NOT exist (see "read-only cache" below); --checkpoint is mandatory (no image default)
-HF_CACHE_DIR=/nonexistent WEIGHTS_DIR=/opt/vla_weights_private \
-  docker/vla_bench/run.sh openvla_oft --probe --checkpoint /models/openvla_oft
-HF_CACHE_DIR=/nonexistent WEIGHTS_DIR=/opt/vla_weights_private \
-  docker/vla_bench/run.sh openvla_oft --checkpoint /models/openvla_oft
+# WEIGHTS_DIR must hold a PRIVATE, real (not hardlinked) copy: the loader writes into it (see below)
+WEIGHTS_DIR=/opt/vla_weights_private docker/vla_bench/run.sh openvla_oft --probe
+WEIGHTS_DIR=/opt/vla_weights_private docker/vla_bench/run.sh openvla_oft
 ```
 
 The checkpoint is a merged HF checkpoint directory (the step-50000 run, flat under `openvla_oft/` in the
-benchmark's upload set). The image sets no default checkpoint, so without `--checkpoint` the server stops with
-`TypeError: … missing 1 required positional argument: 'checkpoint_dir'`. It must contain
+benchmark's upload set). Since 2026-09-28 that is the image default, `/models/openvla_oft`; before, the image
+set none and the server stopped with `TypeError: … missing 1 required positional argument: 'checkpoint_dir'`.
+It must contain
 `dataset_statistics.json`, which holds the action/proprio normalisation bounds; the adapter refuses to start
 without it (`FileNotFoundError`). `unnorm_key` defaults to `right7_2view_v1`, the single key in that file.
 `lora_adapter/` is never read (the LoRA is already merged into the shards).
 
-**A read-only Hugging Face cache breaks it.** The checkpoint's `config.json` has an `auto_map` and the loader
-passes `trust_remote_code=True`, so transformers copies `{modeling,configuration,processing}_prismatic.py` into
-`$HF_HOME/modules/transformers_modules/<checkpoint-dir-name>/`. On a fresh cache that means creating
-`/hf/modules` on the read-only mount: `OSError: [Errno 30] Read-only file system: '/hf/modules'` (deployment
-audit, 2026-09-25). The cluster verification passed only because its cache already held that module
-directory. OFT resolves no Hub repo at all, so run it without `/hf`: point `HF_CACHE_DIR` at a directory that
-does not exist, `run.sh` then mounts no cache, and `/hf` is the container's own writable layer. Verified, with
-output identical value for value to the verified configuration. With plain `docker run`,
-`-e HF_MODULES_CACHE=/tmp/hf_modules` works too.
+**A read-only Hugging Face cache used to break it; the image now sets `HF_MODULES_CACHE=/tmp/hf_modules`.**
+The checkpoint's `config.json` has an `auto_map` and the loader passes `trust_remote_code=True`, so
+transformers copies `{modeling,configuration,processing}_prismatic.py` into
+`$HF_MODULES_CACHE/transformers_modules/<checkpoint-dir-name>/`, by default under `$HF_HOME/modules`. On a
+fresh cache that meant creating `/hf/modules` on the read-only mount: `OSError: [Errno 30] Read-only file
+system: '/hf/modules'` (deployment audit, 2026-09-25); the cluster verification passed only because its cache
+already held that module directory. With the module cache in the container's own `/tmp`, `run.sh`'s read-only
+`/hf` mount is harmless (OFT resolves no Hub repo at all, so `/hf` may also be absent).
 
 ## Two things specific to this model
 

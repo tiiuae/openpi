@@ -15,7 +15,7 @@ services:
       - "${PORT:-8800}:8800"
     command:
       - --checkpoint
-      - ${CHECKPOINT:-/models/xr1/model_states.pt}
+      - ${CHECKPOINT:-/models/xr1/checkpoint/mp_rank_00_model_states.pt}
     volumes:
       - ${WEIGHTS_DIR:-/opt/vla_weights}:/models:ro
       - ${HF_CACHE_DIR:-/opt/vla_hf_cache}:/hf:ro
