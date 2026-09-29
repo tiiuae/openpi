@@ -1,0 +1,37 @@
+# VLA-bench shared base — torch210-cu130
+# Built once, reused by every model on this torch version (walloss05).
+#
+#   docker build -f docker/vla_bench/base/Dockerfile.torch210-cu130 -t vla-bench-base:torch210-cu130 .
+#
+# WHY THIS ONE IS A *devel* IMAGE. wall-x is the only model in the set that compiles a CUDA extension
+# at install time: `pip install --no-build-isolation -e .` runs a `torch.utils.cpp_extension`
+# CUDAExtension build of wall_x/model/core/ops/csrc/*.cu, and `wall_x.model.core.ops._cuda_ext.load()`
+# raises at import if the resulting `_cuda_ext_bin*.so` is missing. That needs nvcc, which the
+# `-runtime` images do not ship, and torch's cpp_extension refuses a CUDA *major* mismatch — so it has
+# to be the CUDA 13 devel image to go with torch 2.10.0+cu130 (the venv used nvcc 13.1, this is 13.0;
+# same major, which is the requirement). Everything else here is identical to the other bases.
+FROM pytorch/pytorch:2.10.0-cuda13.0-cudnn9-devel
+
+ENV DEBIAN_FRONTEND=noninteractive \
+    PYTHONUNBUFFERED=1 \
+    PIP_BREAK_SYSTEM_PACKAGES=1 \
+    PIP_ROOT_USER_ACTION=ignore \
+    PIP_RETRIES=10 \
+    PIP_TIMEOUT=120 \
+    TOKENIZERS_PARALLELISM=false \
+    HF_HUB_DISABLE_XET=1 \
+    OPENPI_CLIENT_SRC=/opt/openpi-client/src
+
+# libglib2.0-0 was renamed libglib2.0-0t64 in Ubuntu 24.04 (noble), which the torch>=2.8 images use;
+# the torch 2.2/2.7 images are still jammy. Ask for whichever this base actually has.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        git ffmpeg libgl1 ca-certificates curl \
+    && (apt-get install -y --no-install-recommends libglib2.0-0t64 \
+        || apt-get install -y --no-install-recommends libglib2.0-0) \
+    && rm -rf /var/lib/apt/lists/*
+
+# The wire codec and the websocket layer. msgpack_numpy is copied in from openpi at build time so the
+# bytes on the wire are identical to production rather than a re-implementation.
+RUN pip install --no-cache-dir "websockets>=12" msgpack numpy pillow
+
+WORKDIR /app

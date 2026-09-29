@@ -1,0 +1,50 @@
+diff --git a/wall_x/trainer/adapters/vla_model_adapter.py b/wall_x/trainer/adapters/vla_model_adapter.py
+index 955c9dc..bcda3a5 100644
+--- a/wall_x/trainer/adapters/vla_model_adapter.py
++++ b/wall_x/trainer/adapters/vla_model_adapter.py
+@@ -1,5 +1,6 @@
+ import os
+ 
++import collections.abc as _abc
+ import torch
+ import torch.distributed as dist
+ from tqdm import tqdm
+@@ -981,7 +982,9 @@ def _move_batch(batch, device):
+     """Recursively move dict/list/tensor to device (VLA-local copy to keep
+     VLAdapter self-contained; base_adapter has a similar helper used by
+     validation)."""
+-    if isinstance(batch, dict):
++    if isinstance(batch, _abc.Mapping):
++        # NOTE(vla-bench 2026-09-15): see wall_x/trainer/utils/data.py - the
++        # lerobot collator returns a BatchFeature (UserDict), not a dict.
+         return {k: _move_batch(v, device) for k, v in batch.items()}
+     if isinstance(batch, list):
+         return [_move_batch(v, device) for v in batch]
+diff --git a/wall_x/trainer/utils/data.py b/wall_x/trainer/utils/data.py
+index 8ca974c..42800fb 100644
+--- a/wall_x/trainer/utils/data.py
++++ b/wall_x/trainer/utils/data.py
+@@ -4,6 +4,8 @@ from __future__ import annotations
+ 
+ from typing import Any
+ 
++import collections.abc
++
+ import torch
+ 
+ 
+@@ -32,7 +34,13 @@ def move_batch_to_device(
+         trainer uses pinned loaders; pass False if the dataloader hasn't
+         pinned memory.
+     """
+-    if isinstance(batch, dict):
++    if isinstance(batch, collections.abc.Mapping):
++        # NOTE(vla-bench 2026-09-15): the lerobot collator returns a transformers
++        # ``BatchFeature``, which subclasses ``UserDict`` and is therefore NOT a
++        # ``dict``. With the original ``isinstance(batch, dict)`` test this whole
++        # function was a no-op and every tensor stayed on CPU, so the first
++        # ``embed_tokens(input_ids)`` raised
++        # "Expected all tensors to be on the same device". Match on Mapping.
+         return {
+             k: move_batch_to_device(v, device, non_blocking=non_blocking)
+             for k, v in batch.items()

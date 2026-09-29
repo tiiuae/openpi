@@ -1,0 +1,56 @@
+# LingBot-VLA 2.0 robot config for the in-house right-arm benchmark embodiment.
+#
+# Dataset: $WS/data/lerobot_v3/right7_2view_v1 (LeRobot v3.0, 200 episodes, 139,662 frames, 30 fps)
+#   observation.state / action : 7-D ABSOLUTE joint targets
+#       [0:6] right arm joints 0..5 (radians)
+#       [6:7] gripper carriage (metres)
+#   cameras: observation.images.cam_high        (primary, fixed scene view)
+#            observation.images.cam_right_wrist (wrist view)
+#
+# Mapping into LingBot's 55-D canonical space (see lingbotvla/data/vla_data/README.md):
+#   arm.position       <- state/action [0:6]   (6 of the 14 canonical arm dims; the rest are
+#                                               zero-padded and masked out by state/action_joint_mask)
+#   effector.position  <- state/action [6:7]   (1 of the 2 canonical effector dims)
+#
+# subtract_state: False for BOTH entries because our actions are absolute joint targets,
+# not state-relative deltas. (The authors recommend True for arm.position on real-robot data
+# whose actions are deltas; ours are not - see ENV.md "Deviations".)
+#
+# Camera order matters: LingBot's depth/DINO distillation targets are computed from camera
+# index 0 only (lingbotvla/models/vla/vision_models/module_utils.py: pil_images[:, :1]), so the
+# fixed scene camera (cam_high -> camera_top) must be first.
+states:
+  - observation.state.arm.position:
+      origin_keys:
+        - observation.state:
+            start: 0
+            end: 6
+
+  - observation.state.effector.position:
+      origin_keys:
+        - observation.state:
+            start: 6
+            end: 7
+
+actions:
+  - action.arm.position:
+      origin_keys:
+        - action:
+            start: 0
+            end: 6
+      subtract_state: False
+
+  - action.effector.position:
+      origin_keys:
+        - action:
+            start: 6
+            end: 7
+      subtract_state: False
+
+images:
+  - observation.images.camera_top:
+      origin_keys: observation.images.cam_high
+  - observation.images.camera_wrist_right:
+      origin_keys: observation.images.cam_right_wrist
+
+norm_stats: assets/norm_stats/right7_2view.json
