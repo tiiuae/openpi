@@ -36,22 +36,25 @@ docker/vla_bench/run.sh flux3_action --probe     # loads (~40 s warm, ~150 s col
 docker/vla_bench/run.sh flux3_action             # serves ws://<host>:8800
 ```
 
-Robot client (all required): `--use_right_arm_only --control_freq 30 --send_history 8`, **synchronous** (never
-`--async_inference`), `--rate_of_inference 20` (default) or 30.
+Robot client (all required): `--use_right_arm_only --control_freq 30`, **synchronous** (never
+`--async_inference`), `--rate_of_inference 20` (default) or 30. Do not pass `--send_history`: the option was
+reverted (openpi `5295026`) and the current client stops at start-up with `unrecognized arguments`.
 
 ## Gotchas
 
-1. **The history does not reach the model yet.** FLUX conditions on 8 ticks (states, the commands sent before
-   them, the frames of the oldest and current tick), which the client sends with `--send_history 8`. The
-   committed `/app/vla_server.py` drops `request["history"]`, so this image serves the authors' padded
-   single-observation path whatever the client sends: measured +13.7 % joint MAE, +60 % gripper MAE on the
-   benchmark replay. The fix is `VLA-SOTA/results/deployment/flux3_action/vla_server_history.patch` (verified
-   bit-exact in this image, not applied here). The adapter logs which path it served (`first request served on
-   the history|single path`).
-2. **Never async.** ~1.32 s per chunk on an A100 is longer than the 1.00 s the chunk lasts at 30 Hz: in async mode
-   every chunk arrives after its steps have passed and the client sends **zero** joint targets. Synchronous
-   mode averages ~10 Hz at stride 20 (the arm pauses ~1.3 s per query). `--control_freq` must be 30: the history
-   spacing is 1/30 s.
+1. **The model is served single-frame.** FLUX conditions on 8 ticks (states, the commands sent before them, the
+   frames of the oldest and current tick). The robot client sends one observation per query: the opt-in
+   `--send_history 8` that sent the window was reverted (openpi `5295026`) and the current client has no such
+   option. This image therefore serves the authors' padded single-observation path, which on the legacy-wire
+   replay cost +13.7 % joint MAE and +60 % gripper MAE against the history path.
+   `VLA-SOTA/results/deployment/flux3_action/vla_server_history.patch` would forward a history that no client
+   sends now. The adapter logs the path it served (`first request served on the single path`).
+2. **Never async.** ~1.38 s per chunk on an A100 (native wire, loopback) is longer than the 1.00 s the chunk lasts
+   at 30 Hz: in async mode, after the first chunk the client finds no action for the following steps, holds the
+   last pose and pauses the policy within 0.5 s (and again after every resume). Synchronous mode averages ~10 Hz
+   at stride 20 (the arm stops ~1.4 s per query; the
+   client's `Hz avg` line does not count those stops). `--control_freq 30`: a 30-step chunk is 1.00 s of 30 fps
+   motion.
 3. **Encoder paths.** The export's `config.json` names the VAE and the text encoder by the training cluster's paths
    (`video_vae_id`, `text_encoder_id`), shipped as produced. The image ignores them: `FLUX_VIDEO_VAE` and
    `FLUX_TEXT_ENCODER` point the adapter at the snapshot above under `/hf`. To use the config instead, set both
@@ -62,7 +65,7 @@ Robot client (all required): `--use_right_arm_only --control_freq 30 --send_hist
    (1033 ms) changes outputs by up to 0.027 rad and is not enabled or verified.
 6. **Deterministic.** The authors re-seed the sampler on every call, so the same request gives the same chunk.
 
-## Verification (2026-09-28)
+## Verification (2026-09-28, on the legacy 224x224 BGR wire)
 
 - 170-query replay of episodes 39,102,120,163,167 (stride 20) through this image vs the host reference:
   **bit-exact, 35,700 / 35,700 values**, single-frame (image as shipped) and with history (image + the patch

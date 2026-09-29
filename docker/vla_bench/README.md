@@ -96,9 +96,13 @@ flip and does **not** resize. Each adapter resizes the native frame the way its 
 on the wire. `--no-flip-bgr` is still accepted and does nothing. The benchmark numbers for this wire are in
 `VLA-SOTA/results/deploy_eval/`; the old-wire numbers are kept under `results/deploy_eval/_legacy_wire/`.
 
-**Embodiment.** The client sends a **14-D** bimanual state and truncates responses with `[:, :14]`,
-crashing on missing columns. These policies are **7-D right arm**: the server reads `state[7:14]` and
-writes predictions back into columns `7:14`, zeros elsewhere.
+**Embodiment.** The client sends a **14-D** bimanual state and checks every reply
+(`examples/trossen_ai/policy_reply.py`): a chunk with fewer than 14 columns, NaN/inf, a wrong rank or no rows
+is refused. A synchronous run then ends and releases the arms without parking them; an asynchronous one drops
+the reply and runs on the chunks it already has (with none left it holds its last pose, and pauses after 0.5 s).
+These policies are **7-D right arm**:
+the server reads `state[7:14]` and writes predictions back into columns `7:14`, zeros elsewhere (hence the
+client's `--use_right_arm_only`).
 
 ## Adapter kwargs: image defaults, merged overrides
 
@@ -127,9 +131,14 @@ no-op; an adapter that keeps history (frames, previously issued commands) clears
 first-call latency. It exits non-zero if the mount or the environment is wrong. Run it for every model at
 the start of a session; it is much cheaper than discovering a broken mount mid-experiment.
 
+Without a robot, `assets/native_request_ep039/` is one request exactly as the current client sends it (three
+640x480 RGB frames, the 14-D state, a training instruction; its README gives the byte-level recipe). The
+deployment guides' step-7 checker sends it to a running server to measure the round trip and check the chunks.
+
 A stronger check, when you want it, is to replay recorded episodes through the running server and compare
-against the recorded reference numbers in `VLA-SOTA/results/deploy_eval/<model>/metrics.json`. A backend
-that does not reproduce its reference error is not correctly integrated, whatever the server reports.
+against the recorded reference numbers in `VLA-SOTA/results/deploy_eval/<model>/metrics.json` (the native wire,
+`repo/deploy_eval/client.py --wire native`; the legacy-wire references are under `_legacy_wire/<model>/`). A
+backend that does not reproduce its reference error is not correctly integrated, whatever the server reports.
 
 ## Jetson Orin
 

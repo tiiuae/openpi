@@ -42,7 +42,8 @@ The tokenizer path is a snapshot directory, so `/hf` must hold `google/paligemma
 path is only checked for being non-empty and is never opened while serving, so `physical-intelligence/fast` is
 not needed. Deployment audit 2026-09-25: `--probe` passes offline with nothing but the upload set and that one
 snapshot, and the benchmark replay through that setup reproduces the recorded reference exactly
-(`mae_joints_rad` 0.0077496). The upload set also carries `pytorch_model_fsdp.bin` (14 GB) and the trainer's
+(`mae_joints_rad` 0.0077496, the authors' prompt on the legacy 224x224 BGR wire; the new-wire numbers are in
+`VLA-SOTA/results/deploy_eval/gigabrain07/`). The upload set also carries `pytorch_model_fsdp.bin` (14 GB) and the trainer's
 RNG/scheduler files. None of them is read.
 
 **embodiment_id 8 is not a default.** The pretrained model has nine embodiment slots; slot 8 is the one

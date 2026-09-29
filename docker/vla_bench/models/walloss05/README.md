@@ -86,6 +86,8 @@ measurement, not the paper, if a deployment gate depends on rate.
 
 ## Verification status — **verified, bit-exact** (2026-09-24)
 
+Measured on the legacy 224x224 BGR wire, before 2026-09-29. The recorded reference below is now `VLA-SOTA/results/deploy_eval/_legacy_wire/walloss05/metrics.json`; the new-wire numbers are in `VLA-SOTA/results/deploy_eval/walloss05/`.
+
 `--probe` against the real mounted epoch-20 checkpoint (`eval_ckpt/ep19`, the plain-file copy of run
 directory `19`): **ok**, `(30, 7)`, 108.2 s to load, 657 ms first call. The 2026-09-18 attempt had
 stopped at `model.to(self.device)` with 44 MiB free on a card another job held; on a free A100 it loads

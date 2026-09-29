@@ -65,6 +65,8 @@ pre-pin image fails on that cache.
 
 ## Verification status — **verified, bit-exact** (2026-09-24)
 
+Measured on the legacy 224x224 BGR wire, before 2026-09-29. The recorded reference below is now `VLA-SOTA/results/deploy_eval/_legacy_wire/xr1/metrics.json`; the new-wire numbers are in `VLA-SOTA/results/deploy_eval/xr1/`.
+
 `--probe` against the real mounted checkpoint (the H30_10k_seed1000 step-10000 ZeRO-2 blob): **ok**,
 `(30, 7)`, 184.7 s to load off Lustre, 2849 ms first call (includes lazy CUDA/Triton init).
 

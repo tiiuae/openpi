@@ -100,6 +100,8 @@ as the container differs from the host, so compare this model on aggregate metri
 
 ## Verification -- **verified** against the recorded reference (2026-09-24)
 
+Measured on the legacy 224x224 BGR wire, before 2026-09-29. The recorded reference below is now `VLA-SOTA/results/deploy_eval/_legacy_wire/lingbot_v2/metrics.json`; the new-wire numbers are in `VLA-SOTA/results/deploy_eval/lingbot_v2/`.
+
 `--probe` against the real mounted checkpoint (`eval_ckpt/step16000/.../global_step_16000/hf_ckpt`, with
 the run's directory shape so `lingbotvla_cli.yaml` is found three levels up): **ok**, `(30, 7)`, 130.9 s
 to load, 4434 ms first call.

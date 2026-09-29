@@ -47,6 +47,8 @@ replay of this model against any recorded number.
 
 ## Run-to-run spread, measured
 
+Measured on the legacy 224x224 BGR wire, before 2026-09-29. The recorded reference below is now `VLA-SOTA/results/deploy_eval/_legacy_wire/xvla/metrics.json`; the new-wire numbers are in `VLA-SOTA/results/deploy_eval/xvla/`.
+
 Replaying the five reference episodes (`--episode-list 39,102,120,163,167 --rate-of-inference 20`,
 170 queries) **31 times** — 16 through the validated host path, 15 through this image:
 
@@ -67,7 +69,7 @@ without touching any committed code) makes the two paths agree exactly: **all 35
 across the 170 queries matched to 0.000e+00**, and every aggregate metric matched to 17 significant
 digits. The containerised computation is the venv's computation.
 
-**The recorded reference is a high draw.** `results/deploy_eval/xvla/metrics.json` has
+**The recorded reference is a high draw.** `results/deploy_eval/_legacy_wire/xvla/metrics.json` has
 `mae_joints_rad = 0.035281`, which is **+7.2 %** above the mean of the 16 host replays (z = +3.4) and
 above *all 31* replays, host and container alike. Most of that comes from one episode: on episode 167
 the reference is **+24 %** above a replay band that is itself only ±5 % wide, and six of its 34 queries

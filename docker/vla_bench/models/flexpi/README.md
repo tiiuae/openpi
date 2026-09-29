@@ -40,8 +40,9 @@ docker/vla_bench/run.sh flexpi             # serves ws://<host>:8800
 ```
 
 Robot client: `--use_right_arm_only --async_inference --ensemble_type exp --control_freq F`, with F taken from the
-guide's rule and your own measured latency. On an A100 that gives F = 17 Hz with this image as shipped (eager,
-~567 ms round trip) and 24 Hz with the compiled path in gotcha 4. Keep F ≤ 26 Hz on an A100.
+guide's rule and your own measured latency. On an A100 with the native wire that gives F = 17 Hz with this image
+as shipped (eager, 579 / 581 ms round trip p50 / p95); keep F ≤ 25 Hz there. The compiled path in gotcha 4 gave
+24 Hz on the legacy wire and was not re-measured on the native one.
 
 ## Gotchas
 
@@ -54,9 +55,9 @@ guide's rule and your own measured latency. On an A100 that gives F = 17 Hz with
 3. **Only the four training instructions work.** There is no text encoder in the image; prompts are looked up in the
    umT5 embedding cache. Any other string is a `FileNotFoundError`. Case and whitespace must match.
 4. **Compiled path (the authors' serve default).** Set `-e 'VLA_BENCH_ADAPTER_KWARGS={"torch_compile":true}'`. It
-   runs in 414 ms instead of 569 ms of server time on an A100. The compile is paid at start-up (51 s with a warm
-   inductor cache, several minutes cold). Its outputs are not bit-identical to eager (joint MAE 0.00594 vs 0.00597 rad
-   on the benchmark replay).
+   runs in 414 ms instead of 569 ms of server time on an A100 (legacy wire). The compile is paid at start-up (51 s
+   with a warm inductor cache, several minutes cold). Its outputs are not bit-identical to eager (joint MAE 0.00594
+   vs 0.00597 rad on the legacy-wire benchmark replay).
 5. **Not bit-exact from pass to pass.** Repeating the same request back to back gives the same chunk. A replay
    repeated after other requests differs in single bf16 steps (≤ 5.0e-3 rad) on 4–6 % of the values. cuDNN
    deterministic mode and `CUBLAS_WORKSPACE_CONFIG` do not remove this.
@@ -65,7 +66,7 @@ guide's rule and your own measured latency. On an A100 that gives F = 17 Hz with
    `pretrained_norm_stats`, `text_embedding_cache_dir`, `model.action_dit_pretrained_path`). None of them is read here.
    The adapter builds only the model and the processor, and it nulls `action_dit_pretrained_path` the way the authors' deploy does.
 
-## Verification (2026-09-29)
+## Verification (2026-09-29, on the legacy 224x224 BGR wire)
 
 This image was run from its enroot export under apptainer on a SLURM A100: every GPU on the docker host was held by
 another user's job, and docker must not run inside batch jobs. The run used the same filesystem, ENV, entrypoint and
