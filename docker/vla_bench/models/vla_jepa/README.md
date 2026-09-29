@@ -37,6 +37,12 @@ whole JSON and so dropped this key silently. The image default now lives in `VLA
 and an override is **merged over it** (see the top-level README), so `-e 'VLA_BENCH_ADAPTER_KWARGS={"chunk_len":30}'`
 keeps `drop_postprocessor_steps`. Only setting `drop_postprocessor_steps` itself (to `[]` or `null`) removes it.
 
+**Frames reach Qwen at native resolution, as in training.** The checkpoint config carries
+`resize_images_to=[224,224]`, which the policy applies only at inference (`predict_action` squashes each view to
+224x224); training fed the native 480x640 frames unresized (a 30x40 Qwen grid per view instead of 16x16). The
+image sets `overrides.resize_images_to=null` in its kwargs defaults so the served inputs equal training's. An
+override of `overrides` replaces that object whole, so keep the key if you set it.
+
 **Hub cache needed: two repos, with their weights.** `Qwen/Qwen3-VL-2B-Instruct` (config `qwen_model_name`,
 4.3 GB, main = `89644892…`) and `facebook/vjepa2-vitl-fpc64-256` (`jepa_encoder_name`, main = `b3c1679b…`) are
 both loaded with `from_pretrained`, weights included -- the checkpoint overwrites them afterwards, but a missing
