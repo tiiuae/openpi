@@ -16,6 +16,12 @@ block (chunk 30, action 7, proprio 7) to `prismatic/vla/constants.py` and stops 
 `constants = ALOHA_CONSTANTS` from overriding it. The build fails loudly if the constants do not come
 out as (30, 7, 7); it does not silently fall back.
 
+`patches/0002-no-double-bgr-flip-no-debug-dumps.patch` removes the submodule's `image[..., ::-1]` channel flip
+and its per-call PNG dumps: the client sends RGB and the server does not flip, so nothing may. **Native frames
+(2026-09-29):** the adapter first applies the RLDS builder's bicubic 256x256 squash (`rlds_resize`, on by
+default); the authors' JPEG round trip, lanczos resize to 224 and centre crop then reproduce the training images
+exactly.
+
 ## Run
 
 ```bash

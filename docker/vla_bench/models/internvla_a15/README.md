@@ -4,6 +4,11 @@ InternVLA-A1.5 (Qwen3.5-VL backbone + flow-matching action expert) on the right-
 embodiment. Predicts and executes **30 actions per call**. Source: `InternRobotics/InternVLA-A1`,
 cloned at a pinned SHA during the build.
 
+**Native frames (2026-09-29).** The client sends 640x480 RGB. The adapter letterboxes both views to 224x224
+(224x168 plus bars), exactly as training did (`letterbox`, on by default); the authors' serving backend alone
+passes frames through unresized. The verification numbers further down were measured on the old 224x224 wire;
+the current ones are in `VLA-SOTA/results/deploy_eval/internvla_a15/`.
+
 ## Build
 
 ```bash
