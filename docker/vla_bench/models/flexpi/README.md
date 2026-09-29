@@ -60,7 +60,7 @@ guide's rule and your own measured latency. On an A100 that gives F = 17 Hz with
 5. **Not bit-exact from pass to pass.** Repeating the same request back to back gives the same chunk. A replay
    repeated after other requests differs in single bf16 steps (≤ 5.0e-3 rad) on 4–6 % of the values. cuDNN
    deterministic mode and `CUBLAS_WORKSPACE_CONFIG` do not remove this.
-6. **Memory:** 15.5 GiB torch peak and 17.5 GB in nvidia-smi on an A100. Plan for ≥ 24 GB free.
+6. **Memory:** 15.5 GiB torch peak and 17.1 GiB (17,461 MiB) in nvidia-smi on an A100. Plan for ≥ 24 GB free.
 7. `config.yaml` ships as trained and still names training-host paths (`output_dir`, `data.*.dataset_dirs`,
    `pretrained_norm_stats`, `text_embedding_cache_dir`, `model.action_dit_pretrained_path`). None of them is read here.
    The adapter builds only the model and the processor, and it nulls `action_dit_pretrained_path` the way the authors' deploy does.
