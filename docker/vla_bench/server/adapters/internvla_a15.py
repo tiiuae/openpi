@@ -13,15 +13,26 @@ the code path the authors use to serve the policy to a robot from raw camera fra
   1. maps our two views onto the schema slots (`dataset_schemas/configs/trossen_ai_mobile.yaml`:
      cam_high -> image0, cam_right_wrist -> image1; slot image2 is filled with white and masked off, as
      `RemapImageKeyTransformFn` does at training time),
-  2. resizes with padding to 224x224 (`ResizeImagesWithPadFn`),
+  2. letterboxes both views to 224x224 (`ResizeImagesWithPadFn`, bilinear, 224x168 + 28-px bars for 640x480) --
+     see `letterbox` below: the backend alone does NOT do this,
   3. normalises the 7-D state with the checkpoint's own `stats.json` (mean/std),
   4. builds the eval-mode chat prompt with `InternVLAA15ChatProcessorTransformFn(mode="eval")`,
   5. calls `predict_action_chunk`, then un-normalises with mean/std (mode read from the checkpoint's
      `train_config.json`) and clips to the training action min/max.
 
-The only change is `_sample_to_inputs`, overridden to cast float tensors to the compute dtype so the weights and
-the batch agree — the same thing `models/internvla_a15/sanity_check.py::make_batch` does. Everything else is the
-authors' code.
+Two changes to the backend, everything else is the authors' code:
+  * `_sample_to_inputs`, overridden to cast float tensors to the compute dtype so the weights and the batch agree —
+    the same thing `models/internvla_a15/sanity_check.py::make_batch` does;
+  * `letterbox` (default on, 2026-09-29): the backend constructs `ResizeImagesWithPadFn(224, 224)` with an EMPTY
+    `mapping` -- it is never hydrated -- and that transform resizes only the keys in its mapping, so the backend passes
+    every frame through at the size it arrives. Training hydrated the same transform from the dataset schema
+    (trossen_ai_mobile: cam_high -> image0, cam_right_wrist -> image1) and letterboxed both views before the remap.
+    On the old 224x224 client wire this went unnoticed (right token count, squashed geometry); on the native 640x480
+    wire the model received unresized frames (a 30x40 Qwen grid instead of training's 16x16). The adapter gives the
+    backend the same transform with the image0/image1 slot keys, which is where `build_base_sample` holds the frames
+    when it calls it; image2 (the masked white filler) stays unresized, as in training. Checked against the trainer's
+    own dataset samples: `_scratch_newwire/internvla_verify_inputs.json`. `letterbox=False` reproduces the adapter as
+    it was before (the legacy-wire numbers).
 """
 from __future__ import annotations
 
@@ -38,7 +49,8 @@ class InternVLAA15Adapter(PolicyAdapter):
     def __init__(self, checkpoint: str, repo_dir: str, device: str = "cuda", dtype: str = "bfloat16",
                  chunk_len: int = 30, exec_len: int | None = 30, robot_type: str = "trossen_ai_mobile",
                  resize_size: int = 224, max_prompt_length: int = 650, inference_backend: str = "standard",
-                 action_loss_only: bool = True, vlm_model_path: str | None = None, stats_key: str | None = None):
+                 action_loss_only: bool = True, vlm_model_path: str | None = None, stats_key: str | None = None,
+                 letterbox: bool = True):
         backends_root = str(Path(repo_dir) / "evaluation" / "LIBERO")
         if backends_root not in sys.path:
             sys.path.insert(0, backends_root)
@@ -69,6 +81,12 @@ class InternVLAA15Adapter(PolicyAdapter):
                                 resize_size=resize_size, max_prompt_length=max_prompt_length,
                                 vlm_model_path=vlm_model_path, action_loss_only=action_loss_only,
                                 inference_backend=inference_backend)
+        self.letterbox = bool(letterbox)
+        if self.letterbox:
+            from lerobot.transforms.core import ResizeImagesWithPadFn
+            self.backend.resize = ResizeImagesWithPadFn(height=resize_size, width=resize_size, mapping={
+                "observation.images.image0": "observation.images.image0",
+                "observation.images.image1": "observation.images.image1"})
         # config.dtype is bfloat16 for this checkpoint; the backend leaves the weights as loaded and relies on
         # autocast. Cast explicitly so the reported VRAM and latency describe the bf16 deployment recipe the
         # README prescribes for the real robot (and the one sanity_check.py measured).
@@ -112,6 +130,7 @@ class InternVLAA15Adapter(PolicyAdapter):
                   "action_denorm_mode": self.backend.action_denorm_mode,
                   "inference_backend": getattr(self.cfg, "inference_backend", "?"),
                   "action_loss_only": bool(getattr(self.cfg, "action_loss_only", True)),
+                  "letterbox": self.letterbox,
                   "num_inference_steps": int(getattr(self.cfg, "num_inference_steps", -1)),
                   "dtype": str(self.torch_dtype)})
         return d

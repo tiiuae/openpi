@@ -17,6 +17,19 @@ import numpy as np
 from .base import PolicyAdapter
 
 OPENVLA_IMAGE_SIZE = 224   # openvla_utils.OPENVLA_IMAGE_SIZE
+# The training images were stored by models/openvla_oft/rlds_dataset_builder (right7_2view_v1_dataset_builder.py) as a
+# PIL BICUBIC squash of the 480x640 camera frame to 256x256, JPEG-encoded by TFDS; the RLDS pipeline then decoded them and
+# resized 256 -> 224 with lanczos3 + antialias. openvla_utils.prepare_images_for_vla only reproduces the second half
+# (JPEG round trip + lanczos3 to 224), so a native frame must first get the builder's bicubic 256 squash, as the
+# authors' own ALOHA client does (experiments/robot/aloha/aloha_utils.py). Checked value for value against the stored
+# RLDS images: _scratch_newwire/oft_verify_inputs.json.
+RLDS_IMAGE_SIZE = (256, 256)
+
+
+def rlds_resize(img: np.ndarray) -> np.ndarray:
+    """The RLDS builder's image step: PIL BICUBIC resize of the uint8 RGB frame to 256x256."""
+    from PIL import Image
+    return np.asarray(Image.fromarray(np.ascontiguousarray(img)).resize(RLDS_IMAGE_SIZE, resample=Image.BICUBIC))
 
 
 def _ensure_right7_constants() -> None:
@@ -29,13 +42,16 @@ class OpenVLAOFTAdapter(PolicyAdapter):
     name = "openvla_oft"
 
     def __init__(self, checkpoint_dir: str, repo_dir: str, chunk_len: int = 30,
-                 exec_len: int | None = None, center_crop: bool = True, unnorm_key: str = "right7_2view_v1"):
+                 exec_len: int | None = None, center_crop: bool = True, unnorm_key: str = "right7_2view_v1",
+                 rlds_resize: bool = True):
         _ensure_right7_constants()
         if repo_dir not in sys.path:
             sys.path.insert(0, repo_dir)
         self.ckpt = Path(checkpoint_dir)
         self.chunk_len, self.exec_len = chunk_len, exec_len
         self.center_crop, self.unnorm_key = center_crop, unnorm_key
+        # False reproduces the adapter before 2026-09-29 (the legacy-wire numbers were measured without this step)
+        self.rlds_resize = bool(rlds_resize)
         self._model = None
         stats = self.ckpt / "dataset_statistics.json"
         if not stats.is_file():
@@ -83,9 +99,10 @@ class OpenVLAOFTAdapter(PolicyAdapter):
 
     def predict(self, obs: dict) -> np.ndarray:
         from experiments.robot.robot_utils import get_action
+        prep = rlds_resize if self.rlds_resize else (lambda a: a)
         payload = {
-            "full_image": obs["primary"],
-            "wrist_image": obs["wrist"],
+            "full_image": prep(obs["primary"]),
+            "wrist_image": prep(obs["wrist"]),
             "state": np.asarray(obs["state"], dtype=np.float32),
         }
         actions = get_action(
