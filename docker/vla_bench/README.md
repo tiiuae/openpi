@@ -88,9 +88,13 @@ docker/vla_bench/
 
 Getting either of these wrong is silent, so they live in `server/vla_server.py` and nowhere else.
 
-**Colour and layout.** The client sends **channel-first BGR** at 224×224 — its `cv2.cvtColor(BGR2RGB)`
-runs on an already-RGB frame, which `examples/trossen_ai/CLIENT_SCHEMA.md` documents as unfixable on the
-client. Every server flips it back to RGB before inference.
+**Colour and layout.** The client sends **channel-first RGB at the camera's native resolution**
+(640×480 on the current robot; `cam_high`, `cam_right_wrist`, `cam_left_wrist`) and neither resizes nor
+swaps channels (`examples/trossen_ai/CLIENT_SCHEMA.md`). The server only transposes to HWC: it does **not**
+flip and does **not** resize. Each adapter resizes the native frame the way its model was trained.
+`--flip-bgr` is for legacy captures only: clients before 2026-09-29 squashed frames to 224×224 and put BGR
+on the wire. `--no-flip-bgr` is still accepted and does nothing. The benchmark numbers for this wire are in
+`VLA-SOTA/results/deploy_eval/`; the old-wire numbers are kept under `results/deploy_eval/_legacy_wire/`.
 
 **Embodiment.** The client sends a **14-D** bimanual state and truncates responses with `[:, :14]`,
 crashing on missing columns. These policies are **7-D right arm**: the server reads `state[7:14]` and
