@@ -7,9 +7,10 @@ Loads a msgpack file produced by capture_request.py, prints every field
 camera plus a side-by-side montage. Standalone: only numpy, msgpack and
 opencv-python are required.
 
-The images on the wire are channel-first (3, H, W) uint8 in BGR order (see
-CLIENT_SCHEMA.md §2); this script converts them to viewable PNGs. Pass
---assume-rgb if you are inspecting a file that was stored as RGB instead.
+The images on the wire are channel-first (3, H, W) uint8 in RGB order (see
+CLIENT_SCHEMA.md §2); this script converts them to viewable PNGs. Captures made
+before the client stopped swapping channels are BGR — pass --legacy-bgr for
+those, which includes the bundled captured_request_2026-08-13.msgpack.
 
 Usage:
     python visualize_request.py --input captured_request.msgpack
@@ -39,15 +40,15 @@ def load_request(path: str) -> dict:
         return msgpack.unpackb(f.read(), object_hook=_unpack_hook)
 
 
-def to_bgr_hwc(image_chw: np.ndarray, assume_rgb: bool) -> np.ndarray:
+def to_bgr_hwc(image_chw: np.ndarray, legacy_bgr: bool = False) -> np.ndarray:
     """Convert a wire image (3, H, W) to an (H, W, 3) BGR array for cv2."""
     hwc = np.transpose(image_chw, (1, 2, 0))
-    if assume_rgb:
-        hwc = hwc[:, :, ::-1]  # RGB -> BGR for cv2
+    if not legacy_bgr:
+        hwc = hwc[:, :, ::-1]  # wire RGB -> BGR for cv2
     return np.ascontiguousarray(hwc)
 
 
-def visualize(input_path: str, output_dir: str, assume_rgb: bool, show: bool) -> None:
+def visualize(input_path: str, output_dir: str, *, legacy_bgr: bool, show: bool) -> None:
     obs = load_request(input_path)
 
     print(f"File: {input_path} ({os.path.getsize(input_path):,} bytes)")
@@ -71,7 +72,7 @@ def visualize(input_path: str, output_dir: str, assume_rgb: bool, show: bool) ->
     panels = []
     for cam, chw in obs["images"].items():
         print(f"images[{cam!r}]: shape={chw.shape} dtype={chw.dtype} min={chw.min()} max={chw.max()}")
-        bgr = to_bgr_hwc(chw, assume_rgb=assume_rgb)
+        bgr = to_bgr_hwc(chw, legacy_bgr=legacy_bgr)
         out_path = os.path.join(output_dir, f"{cam}.png")
         cv2.imwrite(out_path, bgr)
         print(f"  -> {out_path}")
@@ -102,9 +103,15 @@ if __name__ == "__main__":
         help="Directory for exported PNGs (default: viz_<input file stem>/)",
     )
     parser.add_argument(
+        "--legacy-bgr",
+        action="store_true",
+        help="Treat stored images as BGR: for captures made before the client stopped swapping channels, "
+        "including the bundled captured_request_2026-08-13.msgpack",
+    )
+    parser.add_argument(
         "--assume-rgb",
         action="store_true",
-        help="Treat stored images as RGB instead of the default wire BGR",
+        help="No effect; RGB is now the default. Kept so existing commands still run.",
     )
     parser.add_argument("--show", action="store_true", help="Open a preview window (requires a display)")
     args = parser.parse_args()
@@ -114,4 +121,4 @@ if __name__ == "__main__":
         stem = os.path.splitext(os.path.basename(args.input))[0]
         output_dir = f"viz_{stem}"
 
-    visualize(input_path=args.input, output_dir=output_dir, assume_rgb=args.assume_rgb, show=args.show)
+    visualize(input_path=args.input, output_dir=output_dir, legacy_bgr=args.legacy_bgr, show=args.show)

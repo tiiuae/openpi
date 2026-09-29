@@ -93,3 +93,14 @@ def test_resolves_single_nested_subdir(tmp_path: pathlib.Path):
 def test_missing_config_json_raises(tmp_path: pathlib.Path):
     with pytest.raises(FileNotFoundError):
         falconvla_autoconfig.detect_falconvla_config(tmp_path)
+
+
+def test_single_arm_head_defaults_to_the_right_arm(tmp_path: pathlib.Path):
+    _write_checkpoint(tmp_path, config={**_BASE_CONFIG, "action_dim": 7})
+    assert falconvla_autoconfig.detect_falconvla_config(tmp_path).arm == "right"
+    assert falconvla_autoconfig.detect_falconvla_config(tmp_path, arm="left").arm == "left"
+
+
+def test_bimanual_head_keeps_both_arms(tmp_path: pathlib.Path):
+    _write_checkpoint(tmp_path)
+    assert falconvla_autoconfig.detect_falconvla_config(tmp_path).arm == "both"

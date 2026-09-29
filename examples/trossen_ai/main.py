@@ -24,33 +24,54 @@ import time
 from action_ensemble import ActionLogger
 from action_ensemble import AsyncPolicyWorker
 from action_ensemble import make_ensemble
-import cv2
 from episode_recorder import EpisodeRecorder
+from latency import LatencyTracker
 from lerobot.cameras.opencv.configuration_opencv import OpenCVCameraConfig
 from lerobot.robots import make_robot_from_config
 from lerobot_robot_trossen.config_bi_widowxai_follower import BiWidowXAIFollowerRobotConfig
+import motion_limits
+from motion_limits import JointLimitError
 import numpy as np
-from openpi_client import websocket_client_policy
-from PIL import Image
+from policy_reply import validate_actions
 from realsense_settings import apply_realsense_settings
+import robot_lifecycle
 from scipy.interpolate import PchipInterpolator
 from scripted_motions import ARMS
 from scripted_motions import BIMANUAL_DIM
+from scripted_motions import GRIPPER_IDX
 from scripted_motions import HELP_ROWS
+from scripted_motions import JOINTS_PER_ARM
 from scripted_motions import ScriptedMotions
 from scripted_motions import parse_command
 import terminal_ui
+from timed_policy_client import TimedWebsocketClientPolicy
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
 
-DEFAULT_TRAINING_SIZE = (224, 224)
+
+
+def _is_stop_command(text: str) -> bool:
+    """Whether a typed line is asking the arm to stop moving now.
+
+    Used by the prompt listener to latch a stop the moment it is typed, rather
+    than when the control loop next polls. Only these two: everything else is a
+    task instruction or a motion the operator deliberately asked for.
+    """
+    command = parse_command(text)
+    return command is not None and command.name in ("hold", "quit")
+
 DEFAULT_REALSENSE_SETTINGS = Path(__file__).parent / "realsense_settings.json"
 # How often the control loop logs its rate when there is no pinned status line.
 # Anything faster competes with the operator typing instructions into the terminal.
 RATE_SUMMARY_PERIOD_S = 5.0
 # The pinned status line costs no log lines, so it can refresh briskly.
 RATE_STATUS_PERIOD_S = 1.0
+# How long the control loop will hold its pose waiting for the policy to produce
+# an action for the current step before it stops driving and pauses. One chunk at
+# 25 Hz is about a second, so half a second of nothing means the policy is behind
+# or the server is gone, not that a step was merely late.
+STARVED_HOLD_BUDGET_S = 0.5
 
 
 class TrossenOpenPIBridge:
@@ -70,21 +91,29 @@ class TrossenOpenPIBridge:
         log_dir: str | None = None,
         use_left_arm_only: bool = False,
         use_right_arm_only: bool = False,
+        allow_unlimited_motion: bool = False,
         starvla: bool = False,
         raw_gripper: bool = True,
         gripper_indices: list[int] | None = None,
         record_dir: str | None = None,
         record_repo_id: str = "local/trossen_eval",
     ):
-        self.starvla = starvla
+        if starvla:
+            # Kept so existing launch commands still start. Its only effect was to
+            # pick a PIL resize instead of cv2, and the client no longer resizes.
+            logger.warning("--starvla no longer has any effect: images are sent at native resolution")
         self.control_frequency = control_frequency
         self.max_steps = max_steps
         self.dt = 1.0 / control_frequency
         self.test_mode = test_mode
 
+        # The client itself times each phase of a call (pack / wire / unpack) and
+        # files the split here, so no caller has to wrap infer() in a timer.
+        self.latency = LatencyTracker()
+
         logger.info(f"Connecting to policy server at {policy_server_host}:{policy_server_port}")
-        self.policy_client = websocket_client_policy.WebsocketClientPolicy(
-            host=policy_server_host, port=policy_server_port
+        self.policy_client = TimedWebsocketClientPolicy(
+            host=policy_server_host, port=policy_server_port, latency=self.latency
         )
 
         robot_config = BiWidowXAIFollowerRobotConfig(
@@ -105,7 +134,13 @@ class TrossenOpenPIBridge:
             },
         )
         self.robot = make_robot_from_config(robot_config)
-        self.robot.connect()
+        if test_mode == "test":
+            # --mode test promises no movement. The driver's own connect() ends
+            # by driving both arms to the staged pose, so going through it would
+            # break that promise before a single test action is logged.
+            robot_lifecycle.connect_without_motion(self.robot)
+        else:
+            self.robot.connect()
 
         # Push the recorded exposure/gain/white balance onto the cameras so inference sees the
         # same image the policy was trained on, instead of whatever auto-exposure settles on.
@@ -117,6 +152,7 @@ class TrossenOpenPIBridge:
         self._rate_window: list[float] = []
         self._last_rate_log = time.perf_counter()
         self._last_action: np.ndarray | None = None
+        self._starved_steps = 0
         self._prompt_listener: terminal_ui.BasePromptListener | None = None
 
         self.action_chunk_size = action_chunk_size
@@ -148,6 +184,31 @@ class TrossenOpenPIBridge:
         self.use_left_arm_only = use_left_arm_only
         self.use_right_arm_only = use_right_arm_only
 
+        # Per-joint [min, max] position and max velocity, straight from the driver.
+        # Every pose that reaches the arm is checked against both by _limit_and_send(),
+        # whichever source it came from (policy step, start-position ramp, scripted
+        # motion). A table that fails validation does not silently disable the check
+        # it was protecting: motion is refused instead (see _motion_permitted below).
+        self.joint_limits = self._read_joint_limits()
+        self.joint_velocity_limits = self._read_joint_velocity_limits()
+        self._limit_warn_deadline = 0.0
+
+        self._motion_permitted = True
+        if self.joint_limits is None or self.joint_velocity_limits is None:
+            if allow_unlimited_motion:
+                logger.error(
+                    "MOTION LIMITS UNAVAILABLE and --allow_unlimited_motion was passed — the arm will be "
+                    "commanded with NO velocity or position checks. The firmware fault is the only thing "
+                    "left between a bad action and the hardware."
+                )
+            else:
+                self._motion_permitted = False
+                logger.error(
+                    "MOTION LIMITS UNAVAILABLE — refusing to command the arm. Observation, inference and "
+                    "recording still run, so this session is read-only. Fix the driver connection, or pass "
+                    "--allow_unlimited_motion to command the arm without limit checks anyway."
+                )
+
         # Keyword-triggered canned motions (home / grippers / wrist twist / wave).
         # They assume the 14-dim bimanual layout, so they stay off for anything else.
         # The arm-only flags gate the POLICY stream, not operator-commanded
@@ -158,8 +219,10 @@ class TrossenOpenPIBridge:
                 get_pose=self._read_joint_pose,
                 send_pose=self._send_scripted_pose,
                 control_frequency=control_frequency,
-                joint_limits=self._read_joint_limits(),
+                joint_limits=self.joint_limits,
+                velocity_limits=self.joint_velocity_limits,
                 enabled_arms=ARMS,
+                should_cancel=self._stop_requested,
             )
         else:
             self.motions = None
@@ -195,8 +258,10 @@ class TrossenOpenPIBridge:
         if now - self._last_rate_log < period or not self._rate_window:
             return
         mean_s = sum(self._rate_window) / len(self._rate_window)
+        latency_summary = self.latency.summary()
         if pinned:
             self._prompt_listener.set_rate(1 / mean_s)
+            self._prompt_listener.set_latency(latency_summary)
         else:
             message = f"step {self.episode_step}: {mean_s * 1e3:.1f}ms/step ({1 / mean_s:.0f} Hz avg)"
             if self._recorder is not None and self._recorder.is_recording:
@@ -205,6 +270,10 @@ class TrossenOpenPIBridge:
                 action = np.array2string(self._last_action, precision=3, max_line_width=np.inf, suppress_small=True)
                 message += f" | TEST MODE, last action: {action}"
             logger.info(message)
+            # Its own line rather than the tail of the rate message, where it was
+            # easy to miss and long enough to wrap.
+            if latency_summary is not None:
+                logger.info("inference: %s", latency_summary)
         self._reset_rate_window()
 
     def _reset_rate_window(self) -> None:
@@ -213,75 +282,213 @@ class TrossenOpenPIBridge:
         self._rate_window.clear()
         self._last_rate_log = time.perf_counter()
 
+    def _stop_requested(self) -> bool:
+        """Whether the operator has typed a stop since the last time one was handled.
+
+        Latched by the prompt listener the instant the line is typed, so a
+        blocking phase sees it on its next tick instead of when the control loop
+        next gets a turn to poll.
+        """
+        listener = self._prompt_listener
+        return listener is not None and listener.stop_requested.is_set()
+
+    def _wait_for_first_inference(self, timeout: float) -> bool:
+        """Block for the first chunk, but stay interruptible.
+
+        Waiting the full timeout in one call means a stop typed during it is not
+        seen for up to 30 seconds.
+        """
+        deadline = time.perf_counter() + timeout
+        while time.perf_counter() < deadline:
+            if self._stop_requested():
+                logger.info("Stop requested while waiting for the first inference")
+                return False
+            if self._policy_worker.wait_for_first(timeout=0.1):
+                return True
+        return False
+
     def _read_joint_pose(self) -> np.ndarray:
         """Current measured joint pose, in the same order as `robot._joint_ft`."""
         observation = self.robot.get_observation()
         return np.array([v for k, v in observation.items() if k.endswith(".pos")])
 
     def _read_joint_limits(self) -> np.ndarray | None:
-        """Per-joint [min, max] straight from the driver, so scripted motions can
-        clamp instead of hardcoding a gripper stroke that varies per end effector."""
+        """Per-joint [min, max] position, straight from the driver and validated.
+
+        None means "do not trust any position limit": the caller refuses to move
+        the arm rather than carrying on with the clamp quietly switched off.
+        """
         try:
             limits = [
                 (joint.position_min, joint.position_max)
                 for arm in (self.robot.left_arm, self.robot.right_arm)
                 for joint in arm.driver.get_joint_limits()
             ]
-            array = np.array(limits, dtype=float)
-            if array.shape != (self.action_dim, 2):
-                raise ValueError(f"expected ({self.action_dim}, 2) limits, got {array.shape}")
-        except Exception:
-            logger.warning("Could not read joint limits from the driver — using fallback values", exc_info=True)
+            array = motion_limits.validate_position_limits(limits, self.action_dim)
+        except JointLimitError as error:
+            logger.error("Driver position limits are unusable: %s", error)
             return None
+        except Exception:
+            logger.error("Could not read position limits from the driver", exc_info=True)
+            return None
+        # The gripper carriages are the pair most likely to be miscalibrated per
+        # end effector, so their stroke is worth seeing in the startup log.
+        for index in (GRIPPER_IDX, JOINTS_PER_ARM + GRIPPER_IDX):
+            if index < len(array):
+                logger.info("Driver joint %d position limits: [%.6g, %.6g]", index, *array[index])
         return array
+
+    def _read_joint_velocity_limits(self) -> np.ndarray | None:
+        """Per-joint max velocity (rad/s; m/s for the gripper carriage), validated."""
+        try:
+            limits = [
+                joint.velocity_max
+                for arm in (self.robot.left_arm, self.robot.right_arm)
+                for joint in arm.driver.get_joint_limits()
+            ]
+            return motion_limits.validate_velocity_limits(limits, self.action_dim)
+        except JointLimitError as error:
+            logger.error("Driver velocity limits are unusable: %s", error)
+            return None
+        except Exception:
+            logger.error("Could not read velocity limits from the driver", exc_info=True)
+            return None
+
+    def _warn_throttled(self, message: str, *args) -> None:
+        """Log a limit warning at most once a second.
+
+        The limiter can fire on every step of a 25 Hz loop, and a warning per
+        step buries the log and scrolls away whatever the operator is typing.
+        """
+        now = time.perf_counter()
+        if now >= self._limit_warn_deadline:
+            self._limit_warn_deadline = now + 1.0
+            logger.warning(message, *args)
+
+    def _limit_and_send(self, pose: np.ndarray, *, freeze_disabled_arms: bool) -> np.ndarray:
+        """The one path from a desired pose to the driver.
+
+        Policy steps, start-position ramps and scripted motions all come through
+        here, so a limit applies to the arm rather than to one code path: a
+        scripted "home" cannot be faster than a policy step is allowed to be.
+        Returns the pose actually commanded, which is what the episode recorder
+        must store — a clamped action that is recorded unclamped teaches the
+        trajectory a move the arm never made.
+        """
+        target = np.asarray(pose, dtype=float).copy()
+
+        if freeze_disabled_arms and (self.use_left_arm_only or self.use_right_arm_only):
+            if self.use_right_arm_only:
+                # Freeze left arm (indices 0:7) at current pose; only right arm (7:14) moves
+                target[:7] = self._frozen_arm_pose[:7]
+            elif self.use_left_arm_only:
+                # Freeze right arm (indices 7:14) at current pose; only left arm (0:7) moves
+                target[7:] = self._frozen_arm_pose[7:]
+
+        # Velocity first, then position: scaling a step down can only shorten it,
+        # so it can never push a joint back out of the range the clamp just fixed.
+        if self.joint_velocity_limits is not None and self._last_action is not None:
+            target, factor, over = motion_limits.scale_to_velocity_limits(
+                self._last_action, target, self.dt, self.joint_velocity_limits
+            )
+            if over:
+                self._warn_throttled(
+                    "Step exceeds the velocity limit on joints %s — slowing the whole step to %.0f%% "
+                    "(scaling only the fast joints would bend the path)",
+                    over,
+                    factor * 100.0,
+                )
+
+        if self.joint_limits is not None:
+            target, deviation = motion_limits.clamp_to_position_limits(target, self.joint_limits)
+            out_of_range = np.where(deviation > motion_limits.CLAMP_WARNING_TOLERANCE)[0]
+            if out_of_range.size:
+                self._warn_throttled(
+                    "Step exceeds position limits on joints %s (by up to %.4g) — clamping to range",
+                    out_of_range.tolist(),
+                    deviation[out_of_range].max(),
+                )
+
+        if not self._motion_permitted:
+            # No trustworthy limits: hold. Reported once per second rather than
+            # per step so the reason stays visible without burying the log.
+            self._warn_throttled("Motion refused: no validated joint limits (see startup log)")
+            return self._last_action if self._last_action is not None else target
+
+        if self.test_mode == "test":
+            # Per-step, so it stays at DEBUG — at 25 Hz it buries the log (and any
+            # instruction you are typing). Run with --debug to see every action.
+            logger.debug(f"TEST MODE: Would command pose: {target}")
+            self._last_action = target
+            return target
+        if self.test_mode != "autonomous":
+            logger.error(f"Unknown mode: {self.test_mode}. No action executed.")
+            return target
+
+        joint_features = list(self.robot._joint_ft.keys())
+        self.robot.send_action({k: target[i] for i, k in enumerate(joint_features)})
+        self._last_action = target
+        return target
+
+    def _hold_pose(self, *, paused: bool) -> tuple[np.ndarray, bool]:
+        """Pose to command when the policy has nothing for this step.
+
+        This used to be ``np.zeros(action_dim)``. Zero is not "do nothing": it
+        is an absolute pose — every joint folded down and both grippers shut —
+        so a starved step commanded a full sweep to the rest pose from wherever
+        the arm was, closing the gripper on whatever it was holding. Velocity
+        scaling and position clamping slow that move down; they do not change
+        where it is going.
+
+        Holding the last commanded pose is always safe, and it keeps the
+        driver's goal stream fed while the policy catches up. If the starvation
+        lasts past STARVED_HOLD_BUDGET_S the loop pauses instead, so the arm
+        sits still under a visible reason rather than silently stalling.
+
+        Returns ``(pose, paused)``.
+        """
+        self._starved_steps += 1
+        pose = self._last_action if self._last_action is not None else self._read_joint_pose()
+
+        budget = max(int(STARVED_HOLD_BUDGET_S * self.control_frequency), 1)
+        if not paused and self._starved_steps >= budget:
+            logger.warning(
+                "No policy action for %d consecutive steps (%.1fs) — holding position and pausing. "
+                "Check the policy server, then type an instruction to resume.",
+                self._starved_steps,
+                self._starved_steps * self.dt,
+            )
+            if self.async_inference:
+                self.ensemble.reset()
+                self._policy_worker.flush()
+            return pose, True
+
+        if self._starved_steps == 1:
+            logger.info("No policy action for this step — holding the last commanded pose")
+        return pose, paused
 
     def _send_scripted_pose(self, pose: np.ndarray):
         """Send one pose from a scripted motion.
 
-        Bypasses execute_action()'s arm freezing on purpose: the operator asked
-        for this motion explicitly, and ScriptedMotions already refuses commands
-        for an arm disabled by --use_left_arm_only / --use_right_arm_only.
+        Skips the arm-only freeze on purpose: the operator asked for this motion
+        explicitly, and ScriptedMotions already refuses commands for an arm
+        disabled by --use_left_arm_only / --use_right_arm_only. The velocity and
+        position limits in _limit_and_send() are NOT skipped.
         """
-        if self.test_mode == "test":
-            logger.debug(f"TEST MODE: Would send scripted pose: {pose}")
-            return
         # Scripted motions are recorded like policy steps (labeled with the
         # current task instruction) — a gripper fix mid-take must appear in the
         # episode or the saved trajectory teleports.
         recording = self._recorder is not None and self._recorder.is_recording
         observation = self.robot.get_observation() if recording else None
-        joint_features = list(self.robot._joint_ft.keys())
-        self.robot.send_action({k: pose[i] for i, k in enumerate(joint_features)})
+        sent = self._limit_and_send(pose, freeze_disabled_arms=False)
         if recording:
-            self._recorder.add(observation, pose, self._current_task)
+            self._recorder.add(observation, sent, self._current_task)
 
     def execute_action(self, action: np.ndarray) -> np.ndarray:
-        """Execute action on the arm. Returns the action actually sent (after
-        arm freezing), which is what the episode recorder must store."""
-        full_action = action.copy()
-
-        if self.use_left_arm_only or self.use_right_arm_only:
-            if self.use_right_arm_only:
-                # Freeze left arm (indices 0:7) at current pose; only right arm (7:14) moves
-                full_action[:7] = self._frozen_arm_pose[:7]
-            elif self.use_left_arm_only:
-                # Freeze right arm (indices 7:14) at current pose; only left arm (0:7) moves
-                full_action[7:] = self._frozen_arm_pose[7:]
-
-        if self.test_mode == "test":
-            # Per-step, so it stays at DEBUG — at 25 Hz it buries the log (and any
-            # instruction you are typing). Run with --debug to see every action.
-            logger.debug(f"TEST MODE: Would execute action: {full_action}")
-            self._last_action = full_action
-            return full_action
-        if self.test_mode == "autonomous":
-            joint_features = list(self.robot._joint_ft.keys())
-            action_dict = {k: full_action[i] for i, k in enumerate(joint_features)}
-
-            self.robot.send_action(action_dict)
-        else:
-            logger.error(f"Unknown mode: {self.test_mode}. No action executed.")
-        return full_action
+        """Execute one policy action. Returns the pose actually sent (after arm
+        freezing, velocity scaling and position clamping), which is what the
+        episode recorder must store."""
+        return self._limit_and_send(action, freeze_disabled_arms=True)
 
     def _build_observation(self, observation_dict: dict, task_prompt: str) -> dict:
         joint_pos_keys = [k for k in observation_dict if k.endswith(".pos")]
@@ -289,13 +496,19 @@ class TrossenOpenPIBridge:
         cameras = list(self.robot._cameras_ft.keys())
         images = {}
         for cam in cameras:
-            image_hwc = observation_dict[cam]
-            if self.starvla:
-                image_rgb = np.array(Image.fromarray(cv2.cvtColor(image_hwc, cv2.COLOR_BGR2RGB)).resize((224, 224)))
-            else:
-                image_resized = cv2.resize(image_hwc, DEFAULT_TRAINING_SIZE, interpolation=cv2.INTER_LANCZOS4)
-                image_rgb = cv2.cvtColor(image_resized, cv2.COLOR_BGR2RGB)
-            images[cam] = np.transpose(image_rgb, (2, 0, 1))
+            # Frames go out exactly as the camera produced them: native
+            # resolution, RGB channel order, untouched.
+            #
+            # Resizing is the server's job: each backend resizes the way its
+            # model was trained (openpi's ResizeImages letterboxes to 224x224,
+            # ACT resizes to its own training size), and a client-side squash to
+            # 224x224 distorted the aspect ratio and threw detail away first.
+            #
+            # No channel swap: lerobot's OpenCVCamera already returns RGB, and
+            # every model was trained on RGB. A cv2.cvtColor(BGR2RGB) here used
+            # to swap the frame into BGR on the wire, and five of seven server
+            # paths never flipped it back. Servers must not flip.
+            images[cam] = np.transpose(observation_dict[cam], (2, 0, 1))
         return {"state": joint_positions, "images": images, "prompt": task_prompt}
 
     def move_to_start_position(self, goal_position: np.ndarray, duration: float = 5.0):
@@ -306,6 +519,11 @@ class TrossenOpenPIBridge:
         jumps and triggering safety stops (velocity limits)."""
 
         self._frozen_arm_pose = self._read_joint_pose()
+        # Anchor the velocity-limit reference to the arm's real current pose, so the
+        # very first ramp sample (and thus the whole ramp) is velocity-checked too.
+        # Without this the first sample is compared against nothing and goes out
+        # unlimited, which is exactly the jump this ramp exists to avoid.
+        self._last_action = self._frozen_arm_pose
         # Example stage_pose for bimanual WidowX arms.
         # Each value corresponds to a joint position (in radians) for the 14 joints:
         # [left_joint_0, left_joint_1, left_joint_2, left_joint_3, left_joint_4, left_joint_5, left_left_carriage_joint,
@@ -320,6 +538,11 @@ class TrossenOpenPIBridge:
         end_time = start_time + timepoints[-1]
 
         while time.time() < end_time:
+            if self._stop_requested():
+                # Open-loop ramp: abandoning it part way leaves the arm where it
+                # got to, which is what "stop" asks for.
+                logger.info("Start-position ramp cancelled — holding position")
+                return
             loop_start_time = time.perf_counter()
             current_time = time.time() - start_time
             positions = interpolator_position(current_time)
@@ -390,11 +613,14 @@ class TrossenOpenPIBridge:
 
         prompt_listener = None
         paused = False
+        # Measures how late a background thread wakes, which is what separates
+        # "the server is slow" from "this process is starved".
+        self.latency.lag.start()
         if self.async_inference:
             self._policy_worker.start()
             if self.motions is not None:
                 terminal_ui.print_help(HELP_ROWS)
-            prompt_listener = terminal_ui.make_prompt_listener(task_prompt)
+            prompt_listener = terminal_ui.make_prompt_listener(task_prompt, is_stop=_is_stop_command)
             prompt_listener.start()
         self._prompt_listener = prompt_listener
         if self._recorder is not None and prompt_listener is not None:
@@ -411,6 +637,11 @@ class TrossenOpenPIBridge:
                     # task instruction.
                     typed = prompt_listener.poll() if prompt_listener is not None else None
                     if typed is not None:
+                        # The latch has done its job of interrupting whatever was
+                        # blocking; the line itself is handled below. Clearing it
+                        # here means the next scripted motion is not cancelled
+                        # before it starts.
+                        prompt_listener.clear_stop()
                         command = parse_command(typed) if self.motions is not None else None
                         if command is not None and command.name == "quit":
                             # Leave the loop so the finally below stops the worker and
@@ -469,12 +700,19 @@ class TrossenOpenPIBridge:
                     self._policy_worker.submit(obs, self.episode_step)
                     if is_first_step:
                         logger.info("Waiting for first inference result...")
-                        if not self._policy_worker.wait_for_first(timeout=30.0):
-                            logger.error("Timed out waiting for first inference — aborting")
-                            break
+                        if not self._wait_for_first_inference(timeout=30.0):
+                            logger.error("No first inference (timed out or stopped) — pausing")
+                            paused = True
+                            prompt_listener.set_paused(True)
+                            continue
                     a_t = self.ensemble.get_action(self.episode_step)
                     if a_t is None:
-                        a_t = np.zeros(self.action_dim)
+                        a_t, paused = self._hold_pose(paused=paused)
+                        if paused:
+                            prompt_listener.set_paused(True)
+                            continue
+                    else:
+                        self._starved_steps = 0
 
                 else:
                     # Synchronous: request new chunk every rate_of_inference steps
@@ -482,7 +720,7 @@ class TrossenOpenPIBridge:
                         observation = self._build_observation(self.robot.get_observation(), task_prompt)
                         logger.info(f"Step {self.episode_step}: Requesting new action chunk")
                         response = self.policy_client.infer(observation)
-                        self.current_action_chunk = response["actions"][:, : self.action_dim]
+                        self.current_action_chunk = validate_actions(response, action_dim=self.action_dim)
                         if self.ensemble is not None:
                             self.ensemble.add_chunk(self.episode_step, self.current_action_chunk)
                         self.action_chunk_idx = 0
@@ -491,9 +729,16 @@ class TrossenOpenPIBridge:
                     if self.ensemble is not None:
                         a_t = self.ensemble.get_action(self.episode_step)
                         if a_t is None:
-                            a_t = np.zeros(self.action_dim)
-                    else:
+                            a_t, _ = self._hold_pose(paused=False)
+                        else:
+                            self._starved_steps = 0
+                    elif self.action_chunk_idx < len(self.current_action_chunk):
                         a_t = self.current_action_chunk[self.action_chunk_idx]
+                    else:
+                        # The server returned a shorter horizon than --rate_of_inference
+                        # asks us to consume before the next request. Hold rather than
+                        # index past the end of the chunk.
+                        a_t, _ = self._hold_pose(paused=False)
 
                 if self.action_logger is not None and self.ensemble is not None:
                     self.action_logger.log(
@@ -536,6 +781,7 @@ class TrossenOpenPIBridge:
                 self._log_rate_summary(loop_s)
 
         finally:
+            self.latency.lag.stop()
             if self.async_inference:
                 self._policy_worker.stop()
             if prompt_listener is not None:
@@ -551,31 +797,33 @@ class TrossenOpenPIBridge:
         logger.info("Starting autonomous mode")
         self.run_episode(task_prompt=task_prompt)
 
-    def cleanup(self):
-        """Disconnect the arms and release the cameras.
+    def cleanup(self, *, park: bool = True):
+        """Release the hardware, parking the arms first only when asked to.
 
-        robot.disconnect() parks both arms (staged pose, then all joints to zero)
-        before closing the cameras — but it closes them *after* the arms, so a
-        failing arm would otherwise leave the cameras held open and the next run
-        unable to grab them.
+        *park* must be False on every failure path. Parking is a new open-loop
+        motion through the staged pose and then down to the folded pose, and the
+        reason the client is shutting down — a driver fault, a camera timeout, a
+        blocked arm, the operator hitting Ctrl+C — is usually a reason not to
+        start one. An orderly 'quit' is the case where parking is what the
+        operator actually asked for.
+
+        In test mode the arms were connected braked and never commanded, so
+        there is nothing to park and doing so would be the very motion
+        --mode test promises not to make.
         """
         logger.info("Cleaning up...")
         if self._recorder is not None:
-            # Before disconnecting: an unsaved take is discarded (with a warning)
+            # Before releasing: an unsaved take is discarded (with a warning)
             # and the parquet writers closed, or the dataset cannot be reloaded.
             try:
                 self._recorder.close()
             except Exception:
                 logger.exception("Could not finalize the recording dataset")
-        try:
-            self.robot.disconnect()
-        except Exception:
-            logger.exception("Robot disconnect failed — releasing cameras directly")
-            for name, camera in self.robot.cameras.items():
-                try:
-                    camera.disconnect()
-                except Exception:
-                    logger.warning("Could not release camera %s", name, exc_info=True)
+
+        if park and self.test_mode == "autonomous":
+            robot_lifecycle.park_and_release(self.robot)
+        else:
+            robot_lifecycle.release_without_parking(self.robot)
 
 
 if __name__ == "__main__":
@@ -615,13 +863,23 @@ if __name__ == "__main__":
         "Requires an ensemble (not 'none'). Recommended with --ensemble_type cogact.",
     )
     parser.add_argument(
-        "--starvla", action="store_true", help="Use StarVLA image resizing (224x224 via PIL) instead of default"
+        "--starvla",
+        action="store_true",
+        help="Deprecated, no effect. It used to select a PIL resize to 224x224; images are now sent at native "
+        "resolution for every backend and the server resizes.",
     )
     parser.add_argument(
         "--use_left_arm_only", action="store_true", help="Only move the left arm; right arm stays at current pose"
     )
     parser.add_argument(
         "--use_right_arm_only", action="store_true", help="Only move the right arm; left arm stays at current pose"
+    )
+    parser.add_argument(
+        "--allow_unlimited_motion",
+        action="store_true",
+        help="Command the arm even when the driver's joint limits could not be read or failed validation. "
+        "Off by default: without limits there is no velocity or position check between a bad action and "
+        "the hardware, so the client stays read-only instead.",
     )
     parser.add_argument(
         "--ensemble_gripper",
@@ -663,17 +921,26 @@ if __name__ == "__main__":
         log_dir=args.log_dir,
         use_left_arm_only=args.use_left_arm_only,
         use_right_arm_only=args.use_right_arm_only,
+        allow_unlimited_motion=args.allow_unlimited_motion,
         starvla=args.starvla,
         raw_gripper=not args.ensemble_gripper,
         record_dir=args.record_dir,
         record_repo_id=args.record_repo_id,
     )
 
+    # Parking is a new open-loop motion, so it happens only when the episode
+    # ended the way it was meant to. An interrupt or a crash releases the
+    # hardware where it stands: whatever made the client stop — a blocked arm,
+    # a driver fault, an operator reaching for Ctrl+C — is usually a reason not
+    # to start the arms moving again. Either way the devices are released, so
+    # the next run does not find them busy.
+    orderly_exit = False
     try:
         bridge.autonomous_mode(task_prompt=args.task_prompt)
+        orderly_exit = True
     except KeyboardInterrupt:
-        logger.info("Interrupted — shutting down")
+        logger.info("Interrupted — releasing the arms where they stand, not parking")
+    except Exception:
+        logger.exception("Episode failed — releasing the arms where they stand, not parking")
     finally:
-        # Ctrl+C and crashes must still park the arms and release the cameras,
-        # otherwise the next run finds the devices busy.
-        bridge.cleanup()
+        bridge.cleanup(park=orderly_exit)
