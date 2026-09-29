@@ -6,12 +6,16 @@ examples/trossen_ai/CLIENT_SCHEMA.md. One process per checkpoint; the robot clie
 
   connect   adapter.reset() if the adapter defines it (a new connection is a new episode), then the server
             sends ONE msgpack metadata dict, immediately
-  request   flat {"state": (D,) float, "images": {cam: (3,H,W) uint8 BGR}, "prompt": str}
+  request   flat {"state": (D,) float, "images": {cam: (3,H,W) uint8 RGB}, "prompt": str}
+            frames at the camera's native resolution (640x480 on the current robot), cam_high, cam_right_wrist,
+            cam_left_wrist; the client neither resizes nor swaps channels
   response  flat {"actions": (horizon, action_dim) float, ...}  2-D, top level, un-normalised
 
 Two conversions happen here and nowhere else, because getting either wrong is silent:
-  * CHW -> HWC and BGR -> RGB. The client's cv2.cvtColor(BGR2RGB) runs on an already-RGB frame, so the
-    wire carries BGR. CLIENT_SCHEMA.md documents this as unfixable client-side.
+  * CHW -> HWC, channels untouched. The wire is RGB, like the training data, so nothing is flipped. Each
+    adapter resizes the native frame exactly as its model's training pipeline did; nothing here resizes.
+    --flip-bgr is for LEGACY captures only: clients before 2026-09-29 resized to 224x224 and put BGR on the
+    wire (a cv2.cvtColor(BGR2RGB) on an already-RGB frame). --no-flip-bgr is accepted and does nothing.
   * 14-D bimanual <-> 7-D right arm. The client sends 14 joints and truncates responses with [:, :14],
     crashing on missing columns. Right-arm policies read state[7:14] and write actions back into 7:14.
 
@@ -63,6 +67,8 @@ def load_codec():
 
 
 def chw_bgr_to_hwc_rgb(a: np.ndarray, flip_bgr: bool) -> np.ndarray:
+    """(3,H,W) uint8 on the wire -> (H,W,3) uint8 for the adapter, at the size it arrived. The name is historical:
+    channels are reversed only when flip_bgr is set (--flip-bgr, legacy BGR captures). The current wire is RGB."""
     a = np.asarray(a)
     if a.ndim != 3:
         raise ValueError(f"expected a 3-D image, got {a.shape}")
@@ -118,7 +124,11 @@ class Server:
         return {"model": self.model, "checkpoint": str(self.ckpt),
                 "chunk_len": int(i["chunk_len"]), "exec_len": int(i["exec_len"]),
                 "action_dim": self.action_dim, "pad_to": self.pad_to or 0,
-                "flip_bgr": self.flip_bgr, "codec": self.codec,
+                "flip_bgr": self.flip_bgr,
+                "wire": ("legacy BGR, flipped to RGB (--flip-bgr)" if self.flip_bgr
+                         else "RGB, channels untouched"),
+                "resize": "by the adapter, from the frame size received (native 640x480 from the current client)",
+                "codec": self.codec,
                 "image": os.environ.get("VLA_BENCH_IMAGE", ""),
                 "note": "absolute joint targets, radians (gripper: carriage metres), un-normalised"}
 
@@ -238,8 +248,12 @@ def main():
     ap.add_argument("--action-dim", type=int, default=7)
     ap.add_argument("--pad-to", type=int, default=int(os.environ.get("VLA_BENCH_PAD_TO", 14)),
                     help="pad into a bimanual vector for the Trossen client (0 disables)")
+    ap.add_argument("--flip-bgr", action="store_true",
+                    help="LEGACY wire only: reverse the channels of every frame, for BGR captures made by clients "
+                         "before 2026-09-29 (e.g. captured_request_2026-08-13.msgpack). The current robot client "
+                         "sends RGB; leave this off.")
     ap.add_argument("--no-flip-bgr", action="store_true",
-                    help="client already sends RGB. The Trossen robot client does NOT; leave this off.")
+                    help="accepted so older launch commands still start; does nothing (no flip is the default)")
     ap.add_argument("--probe", action="store_true", help="load the checkpoint, report, exit")
     ap.add_argument("--probe-task", default=os.environ.get("VLA_BENCH_PROBE_TASK", "probe"),
                     help="instruction --probe sends. FastWAM is built with load_text_encoder=false and "
@@ -250,6 +264,11 @@ def main():
 
     if not a.model or not a.adapter:
         ap.error("--model and --adapter are required (or VLA_BENCH_MODEL / VLA_BENCH_ADAPTER)")
+    if a.flip_bgr and a.no_flip_bgr:
+        ap.error("--flip-bgr and --no-flip-bgr contradict each other")
+    if a.no_flip_bgr:
+        log.info("--no-flip-bgr is the default now and has no effect")
+    log.info("wire: %s", "legacy BGR, flipped to RGB (--flip-bgr)" if a.flip_bgr else "RGB, channels untouched")
     defaults = json_object(os.environ.get("VLA_BENCH_ADAPTER_KWARGS_DEFAULTS", "{}"), "VLA_BENCH_ADAPTER_KWARGS_DEFAULTS")
     user = json_object(a.adapter_kwargs, "--adapter-kwargs / VLA_BENCH_ADAPTER_KWARGS")
     kwargs = merge_adapter_kwargs(defaults, user)
@@ -263,7 +282,7 @@ def main():
     adapter = build_adapter(a.adapter, kwargs)
     adapter.warmup()
     load_s = time.time() - t0
-    srv = Server(adapter, a.model, a.checkpoint, not a.no_flip_bgr, a.action_dim, a.pad_to or None)
+    srv = Server(adapter, a.model, a.checkpoint, a.flip_bgr, a.action_dim, a.pad_to or None)
 
     if a.probe:
         # NOT a black frame. GigaBrain-0.7 builds camera pad masks and discards an all-zero image as
