@@ -131,14 +131,14 @@ no-op; an adapter that keeps history (frames, previously issued commands) clears
 first-call latency. It exits non-zero if the mount or the environment is wrong. Run it for every model at
 the start of a session; it is much cheaper than discovering a broken mount mid-experiment.
 
-Without a robot, `assets/native_request_ep039/` is one request exactly as the current client sends it (three
-640x480 RGB frames, the 14-D state, a training instruction; its README gives the byte-level recipe). The
-deployment guides' step-7 checker sends it to a running server to measure the round trip and check the chunks.
+Without a robot, each model's deployment guide ships a recorded request, `native_request_ep039/`, next to the
+weights (it is part of the model's upload set, not of this repository). It is one request exactly as the current
+client sends it: three 640x480 RGB frames, the 14-D state and a training instruction. The guide's step-7 checker
+sends it to a running server to measure the round trip and check the chunks.
 
 A stronger check, when you want it, is to replay recorded episodes through the running server and compare
-against the recorded reference numbers in `VLA-SOTA/results/deploy_eval/<model>/metrics.json` (the native wire,
-`repo/deploy_eval/client.py --wire native`; the legacy-wire references are under `_legacy_wire/<model>/`). A
-backend that does not reproduce its reference error is not correctly integrated, whatever the server reports.
+against the reference numbers in the model's deployment guide. A backend that does not reproduce its reference
+error is not correctly integrated, whatever the server reports.
 
 ## Jetson Orin
 
