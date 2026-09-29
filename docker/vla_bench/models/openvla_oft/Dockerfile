@@ -33,7 +33,7 @@ RUN pip install --no-cache-dir --no-deps -e /opt/model
 #    cached when a patch changes; `patch` rather than `git apply` because a copied submodule's .git
 #    is a dangling gitdir pointer.
 #      0001  adds the RIGHT7 embodiment block (chunk 30, action 7, proprio 7) to prismatic/vla/constants.py
-#      0002  removes this fork's second BGR->RGB flip and its per-inference PNG dumps
+#      0002  removes this fork's BGR->RGB flip (the wire is RGB; nothing may flip) and its per-inference PNG dumps
 #    The benchmark's other four source changes (RLDS/oxe registration, finetune.py) are training-side
 #    only and are deliberately not carried into a serving image.
 # ---------------------------------------------------------------------------------------------

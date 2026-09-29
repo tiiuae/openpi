@@ -1,11 +1,12 @@
 # openpi's openvla-oft submodule (tiiuae/openvla-oft-internal) carries two changes in
 # experiments/robot/openvla_utils.py::prepare_images_for_vla that must NOT be in a vla-bench image:
 #
-#  1. an extra `image = image[..., ::-1]` "BGR -> RGB" flip. docker/vla_bench/server/vla_server.py
-#     already converts the robot client's BGR frames to RGB once, at the wire boundary, so this second
-#     flip hands the model BGR. It is silent: the policy still returns plausible actions. Measured on
-#     the five reference episodes it costs +26.98 % joint MAE and +51.98 % gripper MAE against the
-#     recorded reference — the whole reason the conversion lives in exactly one place.
+#  1. an extra `image = image[..., ::-1]` "BGR -> RGB" flip. The robot client sends RGB, and
+#     docker/vla_bench/server/vla_server.py does not flip (examples/trossen_ai/CLIENT_SCHEMA.md), so
+#     this flip would hand the model BGR. Nothing between the camera and the model may flip. It is
+#     silent: the policy still returns plausible actions. Measured on the five reference episodes under
+#     the old wire (client BGR, server flipped once, this flip on top) it cost +26.98 % joint MAE and
+#     +51.98 % gripper MAE against the recorded reference.
 #  2. a debug dump of two PNGs per camera per inference into <repo>/debug/step_NNNNNN/. At 1 Hz replan
 #     that is unbounded disk growth plus four file writes in the latency path.
 #
