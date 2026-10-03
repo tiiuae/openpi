@@ -21,7 +21,8 @@ WEIGHTS_DIR=/opt/vla_weights docker/vla_bench/run.sh pi05           # serve on :
 
 Loading takes 2-5 minutes (132-300 s measured on an A100 node, warm and cold file cache): LeRobot first builds
 the 4.1 B-parameter model on the CPU with random weights, then loads `model.safetensors` over it, and the adapter
-then compares every tensor (below).
+then compares every tensor (below). The image sets `OMP_NUM_THREADS=8`, as the benchmark's host runs did: with
+torch's default thread count one inference took 351 ms instead of 308 ms on a 16-core allocation.
 
 The checkpoint is the LeRobot `pretrained_model/` directory (`config.json`, `model.safetensors`,
 `policy_{pre,post}processor*`, `train_config.json`; 9.4 GB). The benchmark's upload set

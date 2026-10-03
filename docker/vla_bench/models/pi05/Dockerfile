@@ -55,12 +55,17 @@ COPY docker/vla_bench/server /app
 # baked-in rename step map them (cam_high -> base_0_rgb, cam_right_wrist -> left_wrist_0_rgb).
 # No VLA_BENCH_HUB_PINS: nothing is loaded from the Hub by name (the tokenizer comes from tokenizer_dir), so the
 # server needs no /hf cache, no token and no network.
+# OMP_NUM_THREADS=8, as the benchmark's host runs used (and as the flexpi and flux3_action images set): with torch's
+# default CPU thread count (every core the process may use) one inference took 351 ms instead of 308 ms on a 16-core
+# SLURM allocation of an A100 node, and the image's replay round trip was 11 % slower than the host's. The predicted
+# values are identical at either setting (seeded, value by value); only the speed differs.
 ENV VLA_BENCH_MODEL=pi05 \
     VLA_BENCH_ADAPTER=pi05_policy:Pi05Adapter \
     VLA_BENCH_ADAPTER_KWARGS_DEFAULTS='{"tokenizer_dir":"/models/pi05/paligemma-3b-pt-224","device":"cuda","dtype":"bfloat16","chunk_len":30,"exec_len":30,"rename_map":{"primary":"observation.images.cam_high","wrist":"observation.images.cam_right_wrist"}}' \
     VLA_BENCH_CHECKPOINT=/models/pi05 \
     VLA_BENCH_PORT=8800 \
     VLA_BENCH_PAD_TO=14 \
+    OMP_NUM_THREADS=8 \
     HF_HOME=/hf \
     HF_HUB_OFFLINE=1
 
