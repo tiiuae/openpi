@@ -56,8 +56,10 @@ input silently. Images whose policy loads a repo by name set `VLA_BENCH_HUB_PINS
 internvla_a15, xr1, flexpi). Before the adapter is imported, the server builds an overlay of the `/hf` cache under
 `/tmp` in which each pinned repo exposes only its pinned snapshot. `/hf` itself is never written. A missing
 snapshot stops the server with the exact `hf download --revision <sha>` command. With no cache and the network
-up, the pinned revision is downloaded first. gr00t ships its backbone in the upload set. molmoact2,
-gigabrain07, walloss05 and lingbot_v2 name a snapshot directory, which fixes the revision by construction.
+up, the pinned revision is downloaded first. gr00t ships its backbone in the upload set, and pi05 its
+tokenizer (the gated `google/paligemma-3b-pt-224` at the revision it trained with, sha256-checked at load), so
+neither needs `/hf`.
+molmoact2, gigabrain07, walloss05 and lingbot_v2 name a snapshot directory, which fixes the revision by construction.
 fastwam reads Wan2.2 from a plain directory under `/hf/diffsynth`, whose revision its README gives, and
 openvla_oft reads nothing from the Hub. `server/adapters/hub_pins.py` has the details.
 
@@ -77,7 +79,7 @@ the first run corrupts the weights for every other consumer.
 
 ```
 docker/vla_bench/
-  base/          shared base per torch version — built once, reused (4 models share torch 2.11)
+  base/          shared base per torch version — built once, reused (5 models share torch 2.11)
   server/        vla_server.py + adapters/ — the wire contract and the model glue, one copy
   models/<m>/    per-model Dockerfile: model source + its pins on top of a base
   compose/       one compose file per model, for anyone who prefers compose
