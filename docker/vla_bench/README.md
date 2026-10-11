@@ -53,7 +53,7 @@ model's `models/<m>/README.md` lists the repo ids it needs.
 **Revisions are pinned.** A repo loaded by name would otherwise resolve to whatever `refs/main` the cache
 holds (or the Hub's current `main`), so a newer upstream tokenizer or processor would change the model's
 input silently. Images whose policy loads a repo by name set `VLA_BENCH_HUB_PINS` (smolvla, xvla, vla_jepa,
-internvla_a15, xr1, flexpi). Before the adapter is imported, the server builds an overlay of the `/hf` cache under
+internvla_a15, xr1, flexpi), and openwam pins the two repos its frozen VAE and text encoder come from. Before the adapter is imported, the server builds an overlay of the `/hf` cache under
 `/tmp` in which each pinned repo exposes only its pinned snapshot. `/hf` itself is never written. A missing
 snapshot stops the server with the exact `hf download --revision <sha>` command. With no cache and the network
 up, the pinned revision is downloaded first. gr00t ships its backbone in the upload set, and pi05 its
@@ -79,7 +79,8 @@ the first run corrupts the weights for every other consumer.
 
 ```
 docker/vla_bench/
-  base/          shared base per torch version — built once, reused (5 models share torch 2.11)
+  base/          shared base per torch version — built once, reused (5 models share torch 2.11 + CUDA 12.8; openwam
+                 has its own CUDA 13.0 build of torch 2.11)
   server/        vla_server.py + adapters/ — the wire contract and the model glue, one copy
   models/<m>/    per-model Dockerfile: model source + its pins on top of a base
   compose/       one compose file per model, for anyone who prefers compose

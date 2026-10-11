@@ -1,0 +1,34 @@
+# vla-bench openwam — one container, one checkpoint, the Trossen client's websocket protocol.
+#
+#   WEIGHTS_DIR=/opt/vla_weights HF_CACHE_DIR=$HOME/.cache/huggingface \
+#     docker compose -f docker/vla_bench/compose/compose.openwam.yml up --build
+#
+# Paths are host paths; both mounts are read-only. CHECKPOINT is the path INSIDE the container.
+# openwam reads the frozen Wan2.2 VAE and the UMT5-xxl text encoder + tokenizer from /hf, at the revisions pinned in
+# the image (VLA_BENCH_HUB_PINS); docker/vla_bench/models/openwam/README.md has the download commands.
+services:
+  vla-bench-openwam:
+    build:
+      context: ../../..
+      dockerfile: docker/vla_bench/models/openwam/Dockerfile
+    image: vla-bench-openwam:latest
+    container_name: vla-bench-openwam
+    ports:
+      - "${PORT:-8800}:8800"
+    command:
+      - --checkpoint
+      - ${CHECKPOINT:-/models/openwam}
+    volumes:
+      - ${WEIGHTS_DIR:-/opt/vla_weights}:/models:ro
+      - ${HF_CACHE_DIR:-/opt/vla_hf_cache}:/hf:ro
+    environment:
+      - HF_HOME=/hf
+      - HF_HUB_OFFLINE=1
+      - VLA_BENCH_IMAGE=vla-bench-openwam
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
