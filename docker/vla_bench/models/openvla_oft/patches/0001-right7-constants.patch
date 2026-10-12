@@ -1,0 +1,64 @@
+# Adds the VLA-SOTA RIGHT7 embodiment block (chunk 30, action 7, proprio 7, BOUNDS normalisation)
+# to prismatic/vla/constants.py, and makes the fork's hardcoded `constants = ALOHA_CONSTANTS`
+# apply only when the detected platform is NOT RIGHT7. Applies to openpi's openvla-oft submodule
+# at 5af3e94d40f58015b00eb08d1581fe3b6f8b5b26. Inference-only: the benchmark's four RLDS/oxe and
+# finetune.py changes are training-side and are deliberately not carried into the serving image.
+--- a/prismatic/vla/constants.py	2026-09-16 14:44:24.000000000 +0400
++++ b/prismatic/vla/constants.py	2026-09-16 14:44:24.000000000 +0400
+@@ -37,6 +37,18 @@
+     "ACTION_PROPRIO_NORMALIZATION_TYPE": NormalizationType.BOUNDS,
+ }
+ 
++# VLA-SOTA benchmark embodiment: Trossen AI Mobile RIGHT ARM ONLY.
++# 7-D absolute joint targets (6 arm joints + gripper), 7-D proprio of the same layout, two cameras
++# (cam_high -> primary, cam_right_wrist -> wrist), 30 fps, benchmark horizon 30.
++# BOUNDS (min/max -> [-1,1]) matches the authors' ALOHA choice, which is the joint-position case;
++# BOUNDS_Q99 is what they use for the EEF-delta datasets (LIBERO/Bridge) and would clip real joint travel.
++RIGHT7_CONSTANTS = {
++    "NUM_ACTIONS_CHUNK": 30,
++    "ACTION_DIM": 7,
++    "PROPRIO_DIM": 7,
++    "ACTION_PROPRIO_NORMALIZATION_TYPE": NormalizationType.BOUNDS,
++}
++
+ BRIDGE_CONSTANTS = {
+     "NUM_ACTIONS_CHUNK": 5,
+     "ACTION_DIM": 7,
+@@ -49,7 +61,11 @@
+ def detect_robot_platform():
+     cmd_args = " ".join(sys.argv).lower()
+ 
+-    if "libero" in cmd_args:
++    # "right7" is checked FIRST: the benchmark dataset is right7_2view_v1 and must never fall through
++    # to LIBERO, whose block is chunk 8 / proprio 8 and silently produces the wrong action shape.
++    if "right7" in cmd_args:
++        return "RIGHT7"
++    elif "libero" in cmd_args:
+         return "LIBERO"
+     elif "aloha" in cmd_args:
+         return "ALOHA"
+@@ -64,7 +80,9 @@
+ ROBOT_PLATFORM = detect_robot_platform()
+ 
+ # Set the appropriate constants based on the detected platform
+-if ROBOT_PLATFORM == "LIBERO":
++if ROBOT_PLATFORM == "RIGHT7":
++    constants = RIGHT7_CONSTANTS
++elif ROBOT_PLATFORM == "LIBERO":
+     constants = LIBERO_CONSTANTS
+ elif ROBOT_PLATFORM == "ALOHA":
+     constants = ALOHA_CONSTANTS
+@@ -72,8 +90,11 @@
+     constants = BRIDGE_CONSTANTS
+ 
+ 
+-# Hardcoded because we are using only aloha
+-constants = ALOHA_CONSTANTS
++# Upstream (tiiuae fork) hardcodes ALOHA here, which would override the detection above. Keep that
++# behaviour for every platform EXCEPT the benchmark embodiment, so openpi's own ALOHA deployment is
++# unchanged while vla-bench gets its 30x7 block.
++if ROBOT_PLATFORM != "RIGHT7":
++    constants = ALOHA_CONSTANTS
+ 
+ # Assign constants to global variables
+ NUM_ACTIONS_CHUNK = constants["NUM_ACTIONS_CHUNK"]

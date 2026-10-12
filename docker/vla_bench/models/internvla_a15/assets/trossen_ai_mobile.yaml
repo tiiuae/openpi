@@ -1,0 +1,19 @@
+# Added for the VLA benchmark (2026-09-15): canonical right7_2view_v1 dataset
+# ($WS/data/lerobot_v3/right7_2view_v1, LeRobot v3.0, robot_type "trossen_ai_mobile").
+# Right-arm Trossen WidowX-AI: 7-D state/action = right_joint_0..5 (rad) + right_joint_6 (gripper carriage, m).
+# Pattern copied from the author's libero.yaml (7-D, two cameras, ACTION_TYPE=abs):
+#   - image0 = scene camera (also the WAN foresight source view), image1 = wrist camera; image2 stays masked.
+#   - action_mask_spec [6, -1]: 6 joint dims would be delta, gripper absolute -- only used if action_mode=delta.
+#   - no action/state reorder: dims 0..6 of the 32-D padded vector (identity), as in libero.yaml.
+robot_type: trossen_ai_mobile
+action_mask_spec: [6, -1]
+feature_mapping:
+  observation.state:
+    - observation.state
+  action:
+    - action
+image_mapping:
+  observation.images.cam_high: observation.images.image0
+  observation.images.cam_right_wrist: observation.images.image1
+action_mode: joint
+description: "Trossen AI Mobile, right arm only (right7_2view): cam_high + cam_right_wrist, 7-D absolute joint targets"

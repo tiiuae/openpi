@@ -1,0 +1,40 @@
+# vla-bench dreamzero — one container, one checkpoint, the Trossen client's websocket protocol. TWO GPUs.
+#
+#   WEIGHTS_DIR=/opt/vla_weights HF_CACHE_DIR=$HOME/.cache/huggingface \
+#     docker compose -f docker/vla_bench/compose/compose.dreamzero.yml up --build
+#
+# Paths are host paths; both mounts are read-only. CHECKPOINT is the path INSIDE the container.
+# dreamzero rebuilds its model from DreamZero-AgiBot, Wan2.1-I2V-14B-480P (without its DiT shards) and the umt5-xxl
+# tokenizer in /hf, at the revisions pinned in the image (VLA_BENCH_HUB_PINS); docker/vla_bench/models/dreamzero/README.md
+# has the download commands.
+# GPUs: the server drives GPU 0 and starts a second process on GPU 1 (the two guidance passes in parallel), so the
+# container gets 2 GPUs. For the 1-GPU fallback (about twice as slow) set DREAMZERO_GPUS=1 and count: 1.
+services:
+  vla-bench-dreamzero:
+    build:
+      context: ../../..
+      dockerfile: docker/vla_bench/models/dreamzero/Dockerfile
+    image: vla-bench-dreamzero:latest
+    container_name: vla-bench-dreamzero
+    ports:
+      - "${PORT:-8800}:8800"
+    command:
+      - --checkpoint
+      - ${CHECKPOINT:-/models/dreamzero}
+    volumes:
+      - ${WEIGHTS_DIR:-/opt/vla_weights}:/models:ro
+      - ${HF_CACHE_DIR:-/opt/vla_hf_cache}:/hf:ro
+    shm_size: "16gb"
+    environment:
+      - HF_HOME=/hf
+      - HF_HUB_OFFLINE=1
+      - VLA_BENCH_IMAGE=vla-bench-dreamzero
+      - DREAMZERO_GPUS=${DREAMZERO_GPUS:-2}
+      - DREAMZERO_FRAME_MODE=${DREAMZERO_FRAME_MODE:-single}
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 2
+              capabilities: [gpu]

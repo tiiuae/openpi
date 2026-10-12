@@ -1,0 +1,32 @@
+# vla-bench molmoact2 — one container, one checkpoint, the Trossen client's websocket protocol.
+#
+#   WEIGHTS_DIR=/opt/vla_weights HF_CACHE_DIR=$HOME/.cache/huggingface \
+#     docker compose -f docker/vla_bench/compose/compose.molmoact2.yml up --build
+#
+# Paths are host paths; both mounts are read-only. CHECKPOINT is the path INSIDE the container.
+services:
+  vla-bench-molmoact2:
+    build:
+      context: ../../..
+      dockerfile: docker/vla_bench/models/molmoact2/Dockerfile
+    image: vla-bench-molmoact2:latest
+    container_name: vla-bench-molmoact2
+    ports:
+      - "${PORT:-8800}:8800"
+    command:
+      - --checkpoint
+      - ${CHECKPOINT:-/models/molmoact2}
+    volumes:
+      - ${WEIGHTS_DIR:-/opt/vla_weights}:/models:ro
+      - ${HF_CACHE_DIR:-/opt/vla_hf_cache}:/hf:ro
+    environment:
+      - HF_HOME=/hf
+      - HF_HUB_OFFLINE=1
+      - VLA_BENCH_IMAGE=vla-bench-molmoact2
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
