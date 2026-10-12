@@ -39,6 +39,12 @@ RUN git init -q /opt/model \
 # 2. dependencies, pinned to the venv the reference numbers were measured in (requirements.lock.txt says what is
 #    left out and why): every wheel first, then the three source-only pins without build isolation, then the
 #    flash-attn release wheel the venv has, then DreamZero itself, editable from the patched clone, --no-deps.
+#    Optional local wheel mirror (default: none, i.e. PyPI and GitHub). The benchmark's own build served its prefetched
+#    wheelhouse (each file sha256-checked against PyPI when it was fetched) over http on the build host, because that
+#    host's link throttles every TCP flow:  docker build --network host --build-arg PIP_FIND_LINKS=http://127.0.0.1:8765/
+#    --build-arg PIP_NO_INDEX=1 --build-arg FLASH_ATTN_WHL=http://127.0.0.1:8765/<the same wheel file name> ...
+ARG PIP_FIND_LINKS
+ARG PIP_NO_INDEX
 COPY docker/vla_bench/models/dreamzero/requirements.lock.txt /tmp/requirements.lock.txt
 RUN grep -v '# sdist' /tmp/requirements.lock.txt > /tmp/wheels.txt \
  && grep '# sdist' /tmp/requirements.lock.txt | sed 's/ *# sdist//' > /tmp/sdists.txt \
@@ -46,7 +52,7 @@ RUN grep -v '# sdist' /tmp/requirements.lock.txt > /tmp/wheels.txt \
  && pip install --no-cache-dir --no-deps --no-build-isolation -r /tmp/sdists.txt
 ARG FLASH_ATTN_WHL=https://github.com/Dao-AILab/flash-attention/releases/download/v2.8.3/flash_attn-2.8.3+cu12torch2.8cxx11abiTRUE-cp311-cp311-linux_x86_64.whl
 RUN pip install --no-cache-dir --no-deps "${FLASH_ATTN_WHL}"
-RUN pip install --no-cache-dir --no-deps -e /opt/model \
+RUN env -u PIP_NO_INDEX -u PIP_FIND_LINKS pip install --no-cache-dir --no-deps -e /opt/model \
  && python -c "import torch, flash_attn, transformers, deepspeed; \
 from groot.vla.data.schema import EmbodimentTag; from groot.vla.model.n1_5.sim_policy import GrootSimPolicy; \
 from groot.vla.model.dreamzero.transform.dreamzero_cotrain import trossen_right7_prompt; \
