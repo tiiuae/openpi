@@ -5,6 +5,7 @@
 #   ./run.sh smolvla --probe                         # env + checkpoint check, no robot needed
 #   ./run.sh smolvla                                 # serve on 8800
 #   ./run.sh smolvla --checkpoint /models/smolvla/020000/pretrained_model
+#   ./run.sh dreamzero                               # 2 GPUs by default; DREAMZERO_GPUS=1 for one
 #
 # WEIGHTS_DIR is the host directory holding every model's checkpoints; it is mounted read-only at
 # /models. Override with WEIGHTS_DIR=/somewhere ./run.sh ...
@@ -18,7 +19,6 @@ SELF="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 WEIGHTS_DIR="${WEIGHTS_DIR:-/opt/vla_weights}"
 HF_CACHE_DIR="${HF_CACHE_DIR:-$HOME/.cache/huggingface}"
 PORT="${PORT:-8800}"
-GPUS="${GPUS:-all}"
 
 if [ "${1:-}" = "--list" ] || [ $# -eq 0 ]; then
   echo "backends:"; ls "$SELF/models" | grep -v TEMPLATE | sed 's/^/  /'; exit 0
@@ -39,6 +39,16 @@ else
   echo "note: no Hugging Face cache at $HF_CACHE_DIR — the container will download backbones from the Hub." >&2
   EXTRA+=(-e HF_HUB_OFFLINE=0)
 fi
+
+# dreamzero runs on 2 GPUs by default (its two guidance passes in parallel, one process per GPU); DREAMZERO_GPUS=1
+# runs it on one. NCCL between its two processes needs more than Docker's default 64 MB of /dev/shm. Every other
+# model keeps GPUS=all. GPUS='"device=2,3"' picks specific cards for any model.
+if [ "$MODEL" = "dreamzero" ]; then
+  GPUS="${GPUS:-${DREAMZERO_GPUS:-2}}"
+  EXTRA+=(--shm-size=16g -e "DREAMZERO_GPUS=${DREAMZERO_GPUS:-2}")
+  if [ -n "${DREAMZERO_FRAME_MODE:-}" ]; then EXTRA+=(-e "DREAMZERO_FRAME_MODE=${DREAMZERO_FRAME_MODE}"); fi
+fi
+GPUS="${GPUS:-all}"
 
 exec docker run --rm --gpus "$GPUS" \
   -p "${PORT}:8800" \

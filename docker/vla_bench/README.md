@@ -53,7 +53,8 @@ model's `models/<m>/README.md` lists the repo ids it needs.
 **Revisions are pinned.** A repo loaded by name would otherwise resolve to whatever `refs/main` the cache
 holds (or the Hub's current `main`), so a newer upstream tokenizer or processor would change the model's
 input silently. Images whose policy loads a repo by name set `VLA_BENCH_HUB_PINS` (smolvla, xvla, vla_jepa,
-internvla_a15, xr1, flexpi), and openwam pins the two repos its frozen VAE and text encoder come from. Before the adapter is imported, the server builds an overlay of the `/hf` cache under
+internvla_a15, xr1, flexpi), openwam pins the two repos its frozen VAE and text encoder come from, and dreamzero the
+three it rebuilds its model from (DreamZero-AgiBot, Wan2.1 without its DiT, the umt5-xxl tokenizer). Before the adapter is imported, the server builds an overlay of the `/hf` cache under
 `/tmp` in which each pinned repo exposes only its pinned snapshot. `/hf` itself is never written. A missing
 snapshot stops the server with the exact `hf download --revision <sha>` command. With no cache and the network
 up, the pinned revision is downloaded first. gr00t ships its backbone in the upload set, and pi05 its
@@ -80,7 +81,7 @@ the first run corrupts the weights for every other consumer.
 ```
 docker/vla_bench/
   base/          shared base per torch version — built once, reused (5 models share torch 2.11 + CUDA 12.8; openwam
-                 has its own CUDA 13.0 build of torch 2.11)
+                 has its own CUDA 13.0 build of torch 2.11, dreamzero a torch 2.8 + CUDA 12.9 build on Python 3.11)
   server/        vla_server.py + adapters/ — the wire contract and the model glue, one copy
   models/<m>/    per-model Dockerfile: model source + its pins on top of a base
   compose/       one compose file per model, for anyone who prefers compose
@@ -122,11 +123,20 @@ to `null` reaches the adapter as `None`. The startup log and the `--probe` outpu
 Until 2026-09-28 an override *replaced* the whole JSON, which silently dropped every key it did not repeat; for
 `vla_jepa` that pinned every gripper output to 1.0 m while the server served normally.
 
+## GPUs
+
+Every image runs on one GPU except **dreamzero, which uses two by default**: its server process drives GPU 0 and
+starts a second process on GPU 1, and the two classifier-free-guidance passes of each chunk run in parallel.
+`run.sh dreamzero` therefore gives the container 2 GPUs (`GPUS=2`; every other model keeps `GPUS=all`) and a larger
+`/dev/shm` for NCCL. `DREAMZERO_GPUS=1 GPUS=1 run.sh dreamzero` runs it on one GPU, about twice as slow. Pick
+specific cards with `GPUS='"device=2,3"'`.
+
 ## Episode boundaries
 
 Each websocket connection is one episode. On every new connection the server calls the adapter's `reset()`
-before it sends the metadata dict. The twelve benchmark adapters keep no state between calls and inherit a
-no-op; an adapter that keeps history (frames, previously issued commands) clears it there.
+before it sends the metadata dict. The benchmark adapters keep no state between calls (their `reset()` does
+nothing), except dreamzero in its optional `repeat4` frame mode (off by default), whose model keeps a KV cache
+within an episode: its `reset()` makes the next request start a fresh one.
 
 ## Verifying a backend before the robot
 
