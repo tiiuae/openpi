@@ -37,8 +37,9 @@ RUN git init -q /opt/model \
  && echo "DreamZero @ $(git -C /opt/model rev-parse HEAD) + 0001 + 0003" && git -C /opt/model status --short
 
 # 2. dependencies, pinned to the venv the reference numbers were measured in (requirements.lock.txt says what is
-#    left out and why): every wheel first, then the three source-only pins without build isolation, then the
-#    flash-attn release wheel the venv has, then DreamZero itself, editable from the patched clone, --no-deps.
+#    left out and why: deepspeed, the trainer's engine, would make transformers fail at import on a GPU without a
+#    CUDA toolkit): every wheel first, then the two source-only pins without build isolation, then the flash-attn
+#    release wheel the venv has, then DreamZero itself, editable from the patched clone, --no-deps.
 #    Optional local wheel mirror (default: none, i.e. PyPI and GitHub). The benchmark's own build served its prefetched
 #    wheelhouse (each file sha256-checked against PyPI when it was fetched) over http on the build host, because that
 #    host's link throttles every TCP flow:  docker build --network host --build-arg PIP_FIND_LINKS=http://127.0.0.1:8765/
@@ -53,11 +54,12 @@ RUN grep -v '# sdist' /tmp/requirements.lock.txt > /tmp/wheels.txt \
 ARG FLASH_ATTN_WHL=https://github.com/Dao-AILab/flash-attention/releases/download/v2.8.3/flash_attn-2.8.3+cu12torch2.8cxx11abiTRUE-cp311-cp311-linux_x86_64.whl
 RUN pip install --no-cache-dir --no-deps "${FLASH_ATTN_WHL}"
 RUN env -u PIP_NO_INDEX -u PIP_FIND_LINKS pip install --no-cache-dir --no-deps -e /opt/model \
- && python -c "import torch, flash_attn, transformers, deepspeed; \
+ && python -c "import importlib.util, torch, flash_attn, transformers; \
+assert importlib.util.find_spec('deepspeed') is None, 'deepspeed must not be installed (see the lock)'; \
 from groot.vla.data.schema import EmbodimentTag; from groot.vla.model.n1_5.sim_policy import GrootSimPolicy; \
 from groot.vla.model.dreamzero.transform.dreamzero_cotrain import trossen_right7_prompt; \
 assert EmbodimentTag('trossen_right7').value == 'trossen_right7'; \
-print('groot ok | flash_attn', flash_attn.__version__, '| transformers', transformers.__version__, '| deepspeed', deepspeed.__version__)"
+print('groot ok | flash_attn', flash_attn.__version__, '| transformers', transformers.__version__)"
 
 # 3. openpi's own wire codec, so the msgpack bytes match production exactly
 COPY packages/openpi-client /opt/openpi-client

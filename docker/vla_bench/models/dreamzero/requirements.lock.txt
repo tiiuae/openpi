@@ -8,9 +8,13 @@
 #   (dreamzero0/dreamzero @ ab790c198fbce33503358efbbd4187ce9a89adf3 + patches 0001 and 0003).
 # evdev is omitted: a Linux input-device binding the authors' pyproject lists (teleoperation); nothing in groot imports
 #   it, and it is a C extension that needs a compiler the runtime image does not have.
+# deepspeed (0.16.9 in the venv) is omitted: the trainer's ZeRO-2 engine, never used at inference. Installed, it is
+#   imported by transformers.modeling_utils whenever a GPU is visible, and its op builders then require a CUDA toolkit
+#   (CUDA_HOME, nvcc), which the runtime image does not have: the server fails at import. Its pure-Python
+#   dependencies stay pinned (harmless).
 # pip/setuptools/wheel are omitted: packaging tooling, not model dependencies.
 # Lines marked `# sdist` have no wheel on PyPI: the Dockerfile builds them after every wheel is installed, without
-#   build isolation (deepspeed's setup.py imports torch), as the venv was built.
+#   build isolation, as the venv was built.
 absl-py==2.5.1
 accelerate==1.15.0
 aiohappyeyeballs==2.7.1
@@ -51,7 +55,6 @@ cryptography==50.0.2
 cycler==0.12.1
 datasets==3.6.0
 decord2==3.4.0
-deepspeed==0.16.9  # sdist
 diffusers==0.30.2
 dill==0.3.8
 distlib==0.4.3
