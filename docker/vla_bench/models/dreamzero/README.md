@@ -40,7 +40,7 @@ command, and the adapter checks the files' sizes (and the small files' sha256) b
 ## Probe, then serve — on two GPUs
 
 ```bash
-docker/vla_bench/run.sh dreamzero --probe     # 11-14 min load and warm-up on two A100s; "action_shape": [24, 7]
+docker/vla_bench/run.sh dreamzero --probe     # ~11-12 min load and warm-up on two A100s; "action_shape": [24, 7]
 docker/vla_bench/run.sh dreamzero             # serves ws://<host>:8800
 DREAMZERO_GPUS=1 docker/vla_bench/run.sh dreamzero   # the 1-GPU fallback, about twice as slow
 ```
@@ -48,8 +48,9 @@ DREAMZERO_GPUS=1 docker/vla_bench/run.sh dreamzero   # the 1-GPU fallback, about
 **Two GPUs by default.** The server process drives GPU 0 and starts a second process on GPU 1; the two
 classifier-free-guidance passes of every chunk run in parallel and meet over NCCL. `run.sh` gives the container 2 GPUs
 (`--gpus 2`) and 16 GB of `/dev/shm`; pick cards with `GPUS='"device=2,3"'`. Each GPU holds the whole model (about
-49 GiB at peak), and the host needs RAM for two copies of the 46 GB base model while both processes load it. The 1-GPU
-fallback returns the same chunks bit for bit (the guidance passes run in sequence instead of in parallel).
+49 GiB at peak). Both processes build the model on the CPU first: the container's memory peaks at about 190 GiB while
+they load (about 100 GiB on one GPU) and falls to ~16 GiB once loaded. The 1-GPU fallback returns the same chunks bit
+for bit given the same compiled kernels (the guidance passes run in sequence instead of in parallel; see 4 below).
 
 **Synchronous only.** One 24-action chunk (0.8 s of motion at 30 Hz) takes about 3.4 s on two A100s (6.4 s on one).
 Robot client: `--use_right_arm_only --control_freq 30 --rate_of_inference 24`, without `--async_inference`. The arm
@@ -68,8 +69,11 @@ moves for 0.8 s and then waits while the next chunk is computed.
    requests). `DREAMZERO_FRAME_MODE=repeat4` keeps the model's KV cache within an episode instead (reset on each new
    connection) and repeats the current frame 4 times. On the benchmark replay it was 1.9 % better on joints at the
    robot's stride 24, worse on two of five episodes, and 13 % slower at p95; the guide has the numbers.
-4. **Cold start.** The first two calls compile the encoders and capture CUDA graphs (~75 s, inside the warm-up before
-   `READY`); the first call after `READY` is already at full speed. A server that is still loading answers nothing; wait for `READY`.
+4. **Cold start.** The first two calls compile the encoders and capture CUDA graphs (~200 s in a new container, inside
+   the warm-up before `READY`); the first call after `READY` is already at full speed. A server that is still loading
+   answers nothing; wait for `READY`. The compile picks its kernels when a container first runs, so two new containers
+   can return slightly different chunks for the same request (up to ~1e-3 rad measured on a synthetic request; none on
+   the benchmark replay); within one container the answers are bit-exact.
    The compile builds Triton's launcher with a C compiler, so the image carries `build-essential`, and writes its caches
    to `/root/.triton` and `/tmp` (writable under `docker run` as root, as `run.sh` runs it).
 5. **Cameras.** `cam_high` goes to the top-left tile of the 2x2 canvas (the AgiBot head slot), `cam_right_wrist` to the
