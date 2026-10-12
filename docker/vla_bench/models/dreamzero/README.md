@@ -70,6 +70,8 @@ moves for 0.8 s and then waits while the next chunk is computed.
    robot's stride 24, worse on two of five episodes, and 13 % slower at p95; the guide has the numbers.
 4. **Cold start.** The first two calls compile the encoders and capture CUDA graphs (~75 s, inside the warm-up before
    `READY`); the first call after `READY` is already at full speed. A server that is still loading answers nothing; wait for `READY`.
+   The compile builds Triton's launcher with a C compiler, so the image carries `build-essential`, and writes its caches
+   to `/root/.triton` and `/tmp` (writable under `docker run` as root, as `run.sh` runs it).
 5. **Cameras.** `cam_high` goes to the top-left tile of the 2x2 canvas (the AgiBot head slot), `cam_right_wrist` to the
    top-right (right hand); the bottom row is black. The client's `cam_left_wrist` frame is never used.
 6. **The adapter refuses a bad folder instead of serving it**: a base file with another size or sha256, statistics in

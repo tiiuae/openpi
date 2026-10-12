@@ -61,6 +61,12 @@ from groot.vla.model.dreamzero.transform.dreamzero_cotrain import trossen_right7
 assert EmbodimentTag('trossen_right7').value == 'trossen_right7'; \
 print('groot ok | flash_attn', flash_attn.__version__, '| transformers', transformers.__version__)"
 
+# 2b. a C/C++ compiler at RUN time: the authors' policy torch.compiles its encoders, and at the first call Triton builds
+#     its kernel launcher (and Inductor any CPU kernel) with the system compiler. The -runtime base has none, so the
+#     warm-up would fail with "InductorError: Failed to find C compiler" (as for xr1, lingbot_v2 and gigabrain07).
+RUN apt-get update && apt-get install -y --no-install-recommends build-essential \
+ && rm -rf /var/lib/apt/lists/* && gcc --version | head -1
+
 # 3. openpi's own wire codec, so the msgpack bytes match production exactly
 COPY packages/openpi-client /opt/openpi-client
 
