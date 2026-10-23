@@ -50,7 +50,6 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(
 logger = logging.getLogger(__name__)
 
 
-
 def _is_stop_command(text: str) -> bool:
     """Whether a typed line is asking the arm to stop moving now.
 
@@ -61,7 +60,11 @@ def _is_stop_command(text: str) -> bool:
     command = parse_command(text)
     return command is not None and command.name in ("hold", "quit")
 
+
 DEFAULT_REALSENSE_SETTINGS = Path(__file__).parent / "realsense_settings.json"
+# The bench's arm controllers; --left_arm_ip and --right_arm_ip point at another robot.
+LEFT_ARM_IP = "192.168.1.5"
+RIGHT_ARM_IP = "192.168.1.4"
 # How often the control loop logs its rate when there is no pinned status line.
 # Anything faster competes with the operator typing instructions into the terminal.
 RATE_SUMMARY_PERIOD_S = 5.0
@@ -97,6 +100,8 @@ class TrossenOpenPIBridge:
         gripper_indices: list[int] | None = None,
         record_dir: str | None = None,
         record_repo_id: str = "local/trossen_eval",
+        left_arm_ip: str = LEFT_ARM_IP,
+        right_arm_ip: str = RIGHT_ARM_IP,
     ):
         if starvla:
             # Kept so existing launch commands still start. Its only effect was to
@@ -118,8 +123,8 @@ class TrossenOpenPIBridge:
 
         robot_config = BiWidowXAIFollowerRobotConfig(
             id="bimanual_follower",
-            left_arm_ip_address="192.168.1.5",
-            right_arm_ip_address="192.168.1.4",
+            left_arm_ip_address=left_arm_ip,
+            right_arm_ip_address=right_arm_ip,
             min_time_to_move_multiplier=3.0,
             loop_rate=30,
             cameras={
@@ -898,6 +903,8 @@ if __name__ == "__main__":
         default="local/trossen_eval",
         help="repo_id stored in the recorded dataset's metadata",
     )
+    parser.add_argument("--left_arm_ip", default=LEFT_ARM_IP, help="Left arm's controller address")
+    parser.add_argument("--right_arm_ip", default=RIGHT_ARM_IP, help="Right arm's controller address")
     parser.add_argument(
         "--debug",
         action="store_true",
@@ -926,6 +933,8 @@ if __name__ == "__main__":
         raw_gripper=not args.ensemble_gripper,
         record_dir=args.record_dir,
         record_repo_id=args.record_repo_id,
+        left_arm_ip=args.left_arm_ip,
+        right_arm_ip=args.right_arm_ip,
     )
 
     # Parking is a new open-loop motion, so it happens only when the episode
