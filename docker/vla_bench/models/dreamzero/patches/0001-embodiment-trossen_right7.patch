@@ -1,0 +1,273 @@
+diff --git a/groot/vla/configs/data/dreamzero/base_48_wan_fine_aug_relative.yaml b/groot/vla/configs/data/dreamzero/base_48_wan_fine_aug_relative.yaml
+index 99545ee..438fb27 100644
+--- a/groot/vla/configs/data/dreamzero/base_48_wan_fine_aug_relative.yaml
++++ b/groot/vla/configs/data/dreamzero/base_48_wan_fine_aug_relative.yaml
+@@ -342,6 +342,83 @@ transform_yam:
+     - ${model_specific_transform}
+ 
+ 
++################################################################################
++# trossen_right7 (VLA benchmark, aidrc demo_short_horizon: Trossen AI Mobile right arm only;
++#   state 7 = 6 joints + gripper, action 7 (same keys), 2 views cam_high + cam_right_wrist, 30 fps).
++#   Delta indices as yam (the released new-embodiment recipe, 24 actions per block; user decision B-DZ.1):
++#   video 0..24, action 0..23. The video grid puts cam_right_wrist in the AgiBot right-hand slot
++#   (DreamTransform._prepare_video, TROSSEN_RIGHT7 branch).
++################################################################################
++
++modality_config_trossen_right7:
++  video:
++    _target_: groot.vla.data.dataset.ModalityConfig
++    delta_indices: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24]
++    eval_delta_indices: [0]
++    modality_keys:
++      - video.cam_high
++      - video.cam_right_wrist
++  state:
++    _target_: groot.vla.data.dataset.ModalityConfig
++    delta_indices: [0]
++    modality_keys:
++      - state.joint_pos
++      - state.gripper_pos
++  action:
++    _target_: groot.vla.data.dataset.ModalityConfig
++    delta_indices: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23]
++    modality_keys:
++      - action.joint_pos
++      - action.gripper_pos
++  language:
++    _target_: groot.vla.data.dataset.ModalityConfig
++    delta_indices: [0]
++    modality_keys:
++      - annotation.task
++
++transform_trossen_right7:
++  _target_: groot.vla.data.transform.ComposedModalityTransform
++  transforms:
++    # Video transforms
++    - <<: *totensor_cfg
++      apply_to: ${modality_config_trossen_right7.video.modality_keys}
++    - <<: *crop_cfg
++      apply_to: ${modality_config_trossen_right7.video.modality_keys}
++    - <<: *resize_cfg
++      apply_to: ${modality_config_trossen_right7.video.modality_keys}
++    - <<: *color_jitter_cfg
++      apply_to: ${modality_config_trossen_right7.video.modality_keys}
++    - <<: *to_numpy_cfg
++      apply_to: ${modality_config_trossen_right7.video.modality_keys}
++
++    # State transforms
++    - _target_: groot.vla.data.transform.StateActionToTensor
++      apply_to: ${modality_config_trossen_right7.state.modality_keys}
++    - _target_: groot.vla.data.transform.StateActionTransform
++      apply_to: ${modality_config_trossen_right7.state.modality_keys}
++      normalization_modes:
++        state.joint_pos: q99
++        state.gripper_pos: q99
++
++    # Action transforms
++    - _target_: groot.vla.data.transform.StateActionToTensor
++      apply_to: ${modality_config_trossen_right7.action.modality_keys}
++    - _target_: groot.vla.data.transform.StateActionTransform
++      apply_to: ${modality_config_trossen_right7.action.modality_keys}
++      normalization_modes:
++        action.joint_pos: q99
++        action.gripper_pos: q99
++
++    # ConcatTransform
++    - _target_: groot.vla.data.transform.ConcatTransform
++      video_concat_order: ${modality_config_trossen_right7.video.modality_keys}
++      state_concat_order: ${modality_config_trossen_right7.state.modality_keys}
++      action_concat_order: ${modality_config_trossen_right7.action.modality_keys}
++
++    # Model-specific transform
++    - ${model_specific_transform}
++
++
+ ################################################################################
+ # Modality Configs
+ ################################################################################
+@@ -350,6 +427,7 @@ modality_configs:
+   oxe_droid: ${modality_config_oxe_droid}
+   agibot: ${modality_config_agibot}
+   yam: ${modality_config_yam}
++  trossen_right7: ${modality_config_trossen_right7}
+ 
+ ################################################################################
+ # Transforms
+@@ -359,6 +437,7 @@ transforms:
+   oxe_droid: ${transform_oxe_droid}
+   agibot: ${transform_agibot}
+   yam: ${transform_yam}
++  trossen_right7: ${transform_trossen_right7}
+ 
+ ################################################################################
+ # Metadata Versions
+@@ -368,6 +447,7 @@ metadata_versions:
+   oxe_droid: '0221'
+   agibot: '0221'
+   yam: '0221'
++  trossen_right7: '0221'
+ 
+ ################################################################################
+ # FPS (per embodiment, null means use dataset default)
+@@ -375,3 +455,4 @@ metadata_versions:
+ 
+ fps:
+   yam: 30
++  trossen_right7: 30
+diff --git a/groot/vla/configs/data/dreamzero/trossen_right7_relative.yaml b/groot/vla/configs/data/dreamzero/trossen_right7_relative.yaml
+new file mode 100644
+index 0000000..efc7cec
+--- /dev/null
++++ b/groot/vla/configs/data/dreamzero/trossen_right7_relative.yaml
+@@ -0,0 +1,54 @@
++# @package _global_
++# VLA benchmark (aidrc right7_2view): new-embodiment data config, modelled on yam_relative.yaml
++# (docs/DATASET_TO_GEAR_AND_TRAIN.md step 4). Differences from yam_relative.yaml:
++#   * embodiment trossen_right7, relative keys joint_pos + gripper_pos (the guide's example);
++#   * the mixture seed follows the run seed (benchmark seed 1000) instead of a literal 42.
++# The stock loader's 24-action chunk is used unchanged (BLOCKERS D-DZ1, user decision B-DZ.1).
++
++defaults:
++  - dreamzero/base_48_wan_fine_aug_relative
++  - _self_ # this file will override the base
++
++max_state_dim: 64
++use_global_metadata: false
++relative_action: true
++relative_action_per_horizon: false
++relative_action_keys:
++  - joint_pos
++  - gripper_pos
++max_chunk_size: 5
++# Use 10% of data in shards before moving to next shard
++dataset_shard_sampling_rate: 0.1
++mixture_dataset_cls: groot.vla.data.dataset.lerobot_sharded.ShardedLeRobotMixtureDataset.from_mixture_spec
++single_dataset_cls: groot.vla.data.dataset.lerobot_sharded.ShardedLeRobotSubLangSingleActionChunkDatasetDROID
++
++# Set via CLI: trossen_right7_data_root=/path/to/gear_dataset
++trossen_right7_data_root: ???
++
++train_dataset:
++  _target_: ${mixture_dataset_cls}
++  _convert_: object
++  mixture_spec:
++    - dataset_path:
++        trossen_right7:
++          - ${trossen_right7_data_root}
++      dataset_weight: 1.0
++      distribute_weights: true
++
++  dataset_class: ${single_dataset_cls}
++  all_modality_configs: ${modality_configs}
++  all_transforms: ${transforms}
++  metadata_versions: ${metadata_versions}
++  fps: ${fps}
++  dataset_kwargs:
++    video_backend: decord
++    use_global_metadata: ${use_global_metadata}
++    max_chunk_size: ${max_chunk_size}
++    relative_action: ${relative_action}
++    relative_action_keys: ${relative_action_keys}
++    relative_action_per_horizon: ${relative_action_per_horizon}
++  mixture_kwargs:
++    training: true
++    balance_dataset_weights: false
++    seed: ${seed}
++    shard_sampling_rate: ${dataset_shard_sampling_rate}
+diff --git a/groot/vla/configs/model/dreamzero/transform/base.yaml b/groot/vla/configs/model/dreamzero/transform/base.yaml
+index 3873b9a..621ddad 100644
+--- a/groot/vla/configs/model/dreamzero/transform/base.yaml
++++ b/groot/vla/configs/model/dreamzero/transform/base.yaml
+@@ -40,3 +40,4 @@ embodiment_tag_to_projector_index:
+   sim_behavior_r1_pro: 31
+   mecka_hands: 27
+   real_r1_pro_sharpa: 28
++  trossen_right7: 33
+diff --git a/groot/vla/data/schema/embodiment_tags.py b/groot/vla/data/schema/embodiment_tags.py
+index e7eaec0..b26b223 100755
+--- a/groot/vla/data/schema/embodiment_tags.py
++++ b/groot/vla/data/schema/embodiment_tags.py
+@@ -155,6 +155,11 @@ class EmbodimentTag(Enum):
+ 
+     YAM = "yam"
+ 
++    TROSSEN_RIGHT7 = "trossen_right7"
++    """
++    VLA benchmark (aidrc): Trossen AI Mobile right arm only, 6 joints + gripper, cam_high + cam_right_wrist.
++    """
++
+     DREAM = "dream"
+     """
+     The datasets with DREAM actions.
+diff --git a/groot/vla/model/dreamzero/transform/dreamzero_cotrain.py b/groot/vla/model/dreamzero/transform/dreamzero_cotrain.py
+index d5c23e0..f63eed9 100644
+--- a/groot/vla/model/dreamzero/transform/dreamzero_cotrain.py
++++ b/groot/vla/model/dreamzero/transform/dreamzero_cotrain.py
+@@ -29,6 +29,19 @@ def basic_clean(text):
+     text = html.unescape(html.unescape(text))
+     return text.strip()
+ 
++def trossen_right7_prompt(task: str) -> str:
++    """VLA benchmark: the AgiBot template (the pretraining layout) with the left-hand slot inactive.
++
++    Layout built by DreamTransform._prepare_video for TROSSEN_RIGHT7: top-left = cam_high (head),
++    top-right = cam_right_wrist (right hand), bottom row black.
++    """
++    task = task.lower()
++    return ("A multi-view video shows that a robot " + task + " The video is split into four views: The top-left view"
++            " shows the camera view from the robot's head, the top-right view shows the camera view from the right"
++            " hand, the bottom-left view is a black screen (inactive view), and the bottom-right view is a black"
++            " screen (inactive view). The robot " + task)
++
++
+ def whitespace_clean(text):
+     text = re.sub(r'\s+', ' ', text)
+     text = text.strip()
+@@ -124,6 +137,8 @@ def collate(features: List[dict], tokenizer: AutoTokenizer, num_views=3, embodim
+                         processed_item = "A multi-view video shows that a robot " + processed_item.lower() + " The video is split into four views: The top-left view shows the camera view from the robot's head, the top-right view shows the camera view from the right hand, the bottom-left view shows the camera view from the left hand, and the bottom-right view is a black screen (inactive view). The robot " + processed_item.lower()
+                     elif elem["embodiment_id"] == embodiment_tag_mapping[EmbodimentTag.YAM.value]:
+                         processed_item = "A multi-view video shows that a robot " + processed_item.lower() + " The video is split into four views: The top-left view shows the top camera, the top-right view shows the right camera, the bottom-left view shows the left camera, and the bottom-right view is a black screen. The robot " + processed_item.lower()
++                    elif elem["embodiment_id"] == embodiment_tag_mapping[EmbodimentTag.TROSSEN_RIGHT7.value]:
++                        processed_item = trossen_right7_prompt(processed_item)
+                     else:
+                         raise ValueError(f"Embodiment ID {elem['embodiment_id']} not supported.") 
+                     output_values.append(processed_item)  
+@@ -146,6 +161,8 @@ def collate(features: List[dict], tokenizer: AutoTokenizer, num_views=3, embodim
+                         item = "A multi-view video shows that a robot " + str(item).lower() + " The video is split into four views: The top-left view shows the camera view from the robot's head, the top-right view shows the camera view from the right hand, the bottom-left view shows the camera view from the left hand, and the bottom-right view is a black screen (inactive view). The robot " + str(item).lower()
+                     elif elem["embodiment_id"] == embodiment_tag_mapping[EmbodimentTag.YAM.value]:
+                         item = "A multi-view video shows that a robot " + str(item).lower() + " The video is split into four views: The top-left view shows the top camera, the top-right view shows the right camera, the bottom-left view shows the left camera, and the bottom-right view is a black screen. The robot " + str(item).lower()
++                    elif elem["embodiment_id"] == embodiment_tag_mapping[EmbodimentTag.TROSSEN_RIGHT7.value]:
++                        item = trossen_right7_prompt(str(item))
+                     else:
+                         raise ValueError(f"Embodiment ID {elem['embodiment_id']} not supported.")   
+                     output_values.append(item)
+@@ -354,6 +371,16 @@ class DreamTransform(InvertibleModalityTransform):
+ 
+                 return concat_images
+             
++            # VLA benchmark (TROSSEN_RIGHT7, 2 views): keep the AgiBot slot semantics of the pretrained model, i.e.
++            # head camera top-left and RIGHT-hand camera top-right; the left-hand slot and bottom-right stay black.
++            # (The generic branch below would put view 1 in the bottom-left = left-hand slot.)
++            if self.embodiment_tag == EmbodimentTag.TROSSEN_RIGHT7:
++                assert v == 2, f"trossen_right7 expects 2 views (cam_high, cam_right_wrist), got {v}"
++                concat_images = np.zeros((1, t, c, 2 * h, 2 * w), dtype=images.dtype)
++                concat_images[0, :, :, :h, :w] = images[0]  # cam_high -> top-left (head)
++                concat_images[0, :, :, :h, w:] = images[1]  # cam_right_wrist -> top-right (right hand)
++                return concat_images
++
+             # For other embodiments: use 2x2 grid layout
+             # Layout: [head, right]
+             #         [left, black]
+diff --git a/scripts/data/convert_lerobot_to_gear.py b/scripts/data/convert_lerobot_to_gear.py
+index ff7fbfe..8024412 100644
+--- a/scripts/data/convert_lerobot_to_gear.py
++++ b/scripts/data/convert_lerobot_to_gear.py
+@@ -65,6 +65,7 @@ VALID_EMBODIMENT_TAGS = [
+     "dream", "yam", "xdof",
+     "gr1_unified_segmentation", "language_table_sim", "gr1_isaac",
+     "sim_behavior_r1_pro", "mecka_hands", "real_r1_pro_sharpa",
++    "trossen_right7",
+ ]
+ 
+ 

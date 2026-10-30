@@ -1,0 +1,34 @@
+# VLA-bench shared base — torch28-cu129
+# Built once, reused by every model on this torch build (dreamzero).
+#
+#   docker build -f docker/vla_bench/base/Dockerfile.torch28-cu129 -t vla-bench-base:torch28-cu129 .
+#
+# WHY THIS ONE. DreamZero trained and was evaluated in a venv with torch 2.8.0+cu129 (cuDNN 9.10.2, NCCL 2.27.3) on
+# Python 3.11, and its flash-attn release wheel is built for cp311. The pytorch/pytorch 2.8 images are Ubuntu with
+# Python 3.11, so this base is that image with the CUDA 12.9 build, unlike torch28-cu128 (Ubuntu 24.04, Python 3.12,
+# for xr1). CUDA 12.9 needs an NVIDIA driver of the R575 series or newer on the host. Nothing is compiled here, so it
+# is the -runtime image, not -devel. Everything else is identical to the other bases.
+FROM pytorch/pytorch:2.8.0-cuda12.9-cudnn9-runtime
+
+ENV DEBIAN_FRONTEND=noninteractive \
+    PYTHONUNBUFFERED=1 \
+    PIP_BREAK_SYSTEM_PACKAGES=1 \
+    PIP_ROOT_USER_ACTION=ignore \
+    PIP_RETRIES=10 \
+    PIP_TIMEOUT=120 \
+    TOKENIZERS_PARALLELISM=false \
+    HF_HUB_DISABLE_XET=1 \
+    OPENPI_CLIENT_SRC=/opt/openpi-client/src
+
+# libglib2.0-0 was renamed libglib2.0-0t64 in Ubuntu 24.04 (noble); ask for whichever this base actually has.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        git ffmpeg libgl1 ca-certificates curl \
+    && (apt-get install -y --no-install-recommends libglib2.0-0t64 \
+        || apt-get install -y --no-install-recommends libglib2.0-0) \
+    && rm -rf /var/lib/apt/lists/*
+
+# The wire codec and the websocket layer. msgpack_numpy is copied in from openpi at build time so the
+# bytes on the wire are identical to production rather than a re-implementation.
+RUN pip install --no-cache-dir "websockets>=12" msgpack numpy pillow
+
+WORKDIR /app
