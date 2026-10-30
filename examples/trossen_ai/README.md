@@ -282,7 +282,9 @@ Successive takes append to the same dataset, across runs as well — restarting 
 The dataset is written by this venv's lerobot 0.4.x, i.e. **v3.0 format**; the openpi training environment at
 the repo root reads v2.x, so convert before training on recordings.
 
-You can change the cameras and arm ip address in the script `examples/trossen_ai/main.py` by editing
+The arms' addresses default to `192.168.1.5` (left) and `192.168.1.4` (right); point the client at another
+robot with `--left_arm_ip` and `--right_arm_ip`. You can change the cameras in the script
+`examples/trossen_ai/main.py` by editing
 
 ```python
 bi_widowx_ai_config = BiWidowXAIFollowerConfig(
